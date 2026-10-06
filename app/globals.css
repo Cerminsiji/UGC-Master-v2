@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #090d16;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #1f2a40;
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #334466;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.18s ease-out forwards;
+}
+
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+  header, aside, button, .no-print {
+    display: none !important;
+  }
+  table {
+    color: #000000 !important;
+    border-color: #cccccc !important;
+  }
+  th, td {
+    color: #000000 !important;
+    border: 1px solid #dddddd !important;
+  }
+}
