@@ -254,14 +254,14 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="hidden sm:inline font-bold">Naskah Saya</span>
           </button>
 
-          {/* Primary Action Button: Deteksi Produk */}
+          {/* Primary Action Button: Ekstrak Link Produk */}
           <button
             onClick={onOpenAIGenerator}
             className="flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-md shadow-purple-950/50 transition-all active:scale-95 border border-purple-400/30"
-            title="Deteksi produk dari link & buat storyboard otomatis"
+            title="Ekstrak data langsung dari link TikTok, Tokopedia, & Shopee untuk storyboard otomatis"
           >
             <Zap className="w-3.5 h-3.5 text-amber-300 fill-amber-300/30" />
-            <span>Deteksi Produk</span>
+            <span>Ekstrak Link Produk</span>
           </button>
 
           {/* Quick Add Scene */}

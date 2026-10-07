@@ -12,6 +12,7 @@ import { TeleprompterModal } from '@/components/TeleprompterModal';
 import { ExportModal } from '@/components/ExportModal';
 import { ProjectManagerModal } from '@/components/ProjectManagerModal';
 import { PasswordGate, AUTH_STORAGE_KEY } from '@/components/PasswordGate';
+import { DirectLinkExtractorBar } from '@/components/DirectLinkExtractorBar';
 import { UGC_CATEGORIES } from '@/data/categories';
 import {
   Scene,
@@ -21,6 +22,7 @@ import {
   AIHookOption,
   StoryboardViewMode,
   HookVariant,
+  AutoDetectResult,
 } from '@/types';
 import { copyToClipboard, generateId } from '@/utils/helpers';
 import {
@@ -183,6 +185,7 @@ export default function HomePage() {
 
   // Modals state
   const [isAIGeneratorOpen, setIsAIGeneratorOpen] = useState(false);
+  const [aiGeneratorInitialInput, setAiGeneratorInitialInput] = useState('');
   const [isHooksModalOpen, setIsHooksModalOpen] = useState(false);
   const [isTeleprompterOpen, setIsTeleprompterOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -598,6 +601,59 @@ export default function HomePage() {
     }
   };
 
+  // Generate Storyboard directly from extracted link data
+  const handleGenerateFromExtracted = async (data: AutoDetectResult) => {
+    const matchedCat =
+      UGC_CATEGORIES.find(
+        (c) =>
+          c.name.toLowerCase() === data.category.toLowerCase() ||
+          c.id.toLowerCase() === data.category.toLowerCase()
+      ) || activeCategory;
+
+    const params: AIGenerateParams = {
+      category: matchedCat.name,
+      productName: data.productName,
+      brandName: data.brandName,
+      productUrl: data.productUrl,
+      productDescription: data.productDescription,
+      targetAudience: data.targetAudience,
+      keySellingPoints: data.keySellingPoints,
+      persona: data.persona || 'Semua (Netral Universal)',
+      tone: data.tone || 'Santai, Relatable & Meyakinkan',
+      cameraAngleStyle: data.cameraAngleStyle,
+      preferredCameraAngles: data.preferredCameraAngles,
+      targetDuration: data.targetDuration || 30,
+      targetPlatform: data.targetPlatform || 'TikTok Shop',
+      language: 'id',
+    };
+
+    await handleGenerateStoryboard(params);
+  };
+
+  // Apply extracted link data to current active project
+  const handleApplyExtractedToCurrentProject = (data: AutoDetectResult) => {
+    updateCurrentProject((p) => ({
+      ...p,
+      productName: data.productName,
+      brandName: data.brandName || p.brandName,
+      productUrl: data.productUrl || p.productUrl,
+      productDescription: data.productDescription || p.productDescription,
+      keySellingPoints: data.keySellingPoints || p.keySellingPoints,
+      persona: data.persona || p.persona,
+      tone: data.tone || p.tone,
+      cameraAngleStyle: data.cameraAngleStyle || p.cameraAngleStyle,
+      preferredCameraAngles: data.preferredCameraAngles || p.preferredCameraAngles,
+      targetPlatform: data.targetPlatform || p.targetPlatform,
+      targetAudience: data.targetAudience || p.targetAudience,
+    }));
+    showToast(`✓ Data produk "${data.productName}" berhasil dipasang ke naskah aktif! ✨`);
+  };
+
+  const handleOpenGeneratorWithPrefilledInput = (input: string) => {
+    setAiGeneratorInitialInput(input);
+    setIsAIGeneratorOpen(true);
+  };
+
   // Apply viral hook to Scene 1
   const handleApplyHook = (hook: AIHookOption) => {
     if (currentProject.scenes.length === 0) return;
@@ -895,6 +951,14 @@ export default function HomePage() {
               </div>
             </div>
 
+            {/* HERO DIRECT LINK EXTRACTOR BAR (TikTok, Tokopedia, Shopee) */}
+            <DirectLinkExtractorBar
+              onApplyToProject={handleApplyExtractedToCurrentProject}
+              onGenerateWithData={handleGenerateFromExtracted}
+              onOpenGeneratorModalWithInput={handleOpenGeneratorWithPrefilledInput}
+              isGenerating={isGeneratingAI}
+            />
+
             {/* Overview Ringkas Produk Terpilih */}
             {currentProject.productName && (
               <div className="bg-gradient-to-r from-purple-950/30 via-[#0d1624] to-[#090f1a] border border-purple-500/30 rounded-2xl p-3 text-xs text-slate-300 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-md">
@@ -1096,6 +1160,7 @@ export default function HomePage() {
         currentCategoryName={activeCategory.name}
         onGenerate={handleGenerateStoryboard}
         isGenerating={isGeneratingAI}
+        initialSmartInput={aiGeneratorInitialInput}
       />
 
       <HookGeneratorModal

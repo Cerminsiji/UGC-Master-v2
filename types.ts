@@ -110,6 +110,7 @@ export interface AIGenerateParams {
 
 export interface AutoDetectResult {
   productName: string;
+  brandName?: string;
   productUrl?: string;
   category: string;
   productDescription: string;
@@ -124,6 +125,9 @@ export interface AutoDetectResult {
   suggestedCaption?: string;
   detectedTags?: string[];
   detectionSummary?: string;
+  price?: string;
+  imageUrl?: string;
+  platform?: string;
 }
 
 export interface AIHookOption {

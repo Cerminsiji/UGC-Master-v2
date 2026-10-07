@@ -378,15 +378,21 @@ export function generateRichFallback(
   };
 }
 
-export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inputNotes = '') {
-  const combined = rawInputCombined.toLowerCase();
+export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inputNotes = '', linkData?: any) {
+  const combined = (rawInputCombined + ' ' + (linkData?.cleanedSummary || '')).toLowerCase();
   const cleanTextNoUrls = rawInputCombined.replace(/https?:\/\/\S+/gi, '').replace(/[#@][\w-]+/g, '').trim();
   const urlMatch = rawInputCombined.match(/https?:\/\/\S+/i);
-  const detectedUrl = urlMatch ? urlMatch[0] : inputUrl;
+  const detectedUrl = linkData?.finalUrl || (urlMatch ? urlMatch[0] : inputUrl);
 
-  let detectedPersona: string = 'Wanita Muda / Gen Z';
+  let detectedPersona = 'Semua (Netral Universal)';
   let detectedCameraStyle = 'Dinamis & Multi-Angle (Viral Fast-Cut)';
-  let preferredCameraAngles: string[] = ['POV / Handheld (First-Person)', 'Extreme Close-up / Macro (Tekstur & Detail)', 'Over the Shoulder (OTS)', 'Medium Shot (Setengah Badan)', 'Front Camera / Selfie Mode (Curhat Langsung)'];
+  let preferredCameraAngles: string[] = [
+    'POV / Handheld (First-Person)',
+    'Extreme Close-up / Macro (Tekstur & Detail)',
+    'Over the Shoulder (OTS)',
+    'Medium Shot (Setengah Badan)',
+    'Front Camera / Selfie Mode (Curhat Langsung)',
+  ];
 
   if (
     combined.includes('tangan') ||
@@ -439,7 +445,7 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
   } else if (combined.includes('gym') || combined.includes('otot') || combined.includes('workout') || combined.includes('fitness') || combined.includes('creatine') || combined.includes('whey')) {
     detectedPersona = 'Cowok Gym & Fitness Bro';
     detectedCameraStyle = 'Low-Angle & Dynamic Hero Shot (Keren & Berwibawa)';
-    preferredCameraAngles = ['Low Angle (Hero / Powerful)', 'Tracking Following Shot (Gerak Mengikuti)', 'Medium Shot (Setengah Badan)', 'Worm\'s Eye View (Ground-Level Dramatis)'];
+    preferredCameraAngles = ['Low Angle (Hero / Powerful)', 'Tracking Following Shot (Gerak Mengikuti)', 'Medium Shot (Setengah Badan)', "Worm's Eye View (Ground-Level Dramatis)"];
   } else if (combined.includes('motor') || combined.includes('mobil') || combined.includes('bikers') || combined.includes('otomotif') || combined.includes('helm') || combined.includes('kinclong')) {
     detectedPersona = 'Otomotif & Bikers / Car Enthusiast';
     detectedCameraStyle = 'Cinematic Commercial & 360° Orbit (Iklan Mewah)';
@@ -447,11 +453,11 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
   } else if (combined.includes('gaming') || combined.includes('streamer') || combined.includes('game') || combined.includes('rgb') || combined.includes('setup')) {
     detectedPersona = 'Gamer & Streamer';
     detectedCameraStyle = 'Flat Lay & Top-Down (Unboxing Meja Estetik)';
-    preferredCameraAngles = ['Flat Lay / Top-down (Meja Estetik)', 'Bird\'s Eye View (Overhead 90°)', 'Over the Shoulder (OTS)', 'Close-up (Face / Ekspresi)'];
+    preferredCameraAngles = ['Flat Lay / Top-down (Meja Estetik)', "Bird's Eye View (Overhead 90°)", 'Over the Shoulder (OTS)', 'Close-up (Face / Ekspresi)'];
   } else if (combined.includes('gadget') || combined.includes('keyboard') || combined.includes('unboxing') || combined.includes('elektronik') || combined.includes('mouse') || combined.includes('tws') || combined.includes('headset')) {
     detectedPersona = 'Tech & Gadget Enthusiast';
     detectedCameraStyle = 'Flat Lay & Top-Down (Unboxing Meja Estetik)';
-    preferredCameraAngles = ['Flat Lay / Top-down (Meja Estetik)', 'Extreme Close-up / Macro (Tekstur & Detail)', 'Bird\'s Eye View (Overhead 90°)', 'Slow Zoom-In Push (Dramatis Fokus)'];
+    preferredCameraAngles = ['Flat Lay / Top-down (Meja Estetik)', 'Extreme Close-up / Macro (Tekstur & Detail)', "Bird's Eye View (Overhead 90°)", 'Slow Zoom-In Push (Dramatis Fokus)'];
   } else if (combined.includes('makanan') || combined.includes('camilan') || combined.includes('snack') || combined.includes('pedas') || combined.includes('keripik') || combined.includes('kuliner')) {
     detectedPersona = 'Foodie & Kuliner / Home Chef';
     detectedCameraStyle = 'Macro & Extreme Close-up Detail (Tekstur & Formula)';
@@ -486,13 +492,23 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
     preferredCameraAngles = ['POV / Handheld (First-Person)', 'Extreme Close-up / Macro (Tekstur & Detail)', 'Over the Shoulder (OTS)', 'Medium Shot (Setengah Badan)', 'Front Camera / Selfie Mode (Curhat Langsung)'];
   }
 
-  let detectedName = 'Produk Unggulan Pilihan';
-  let detectedCat = 'Before & After';
-  let detectedPlatform = 'TikTok Shop';
+  // Determine Product Name candidate
+  let detectedName = linkData?.productName || '';
+  if (!detectedName && cleanTextNoUrls) {
+    const firstPhrase = cleanTextNoUrls.split(/[\n,\.\-–—!]/)[0]?.trim();
+    if (firstPhrase && firstPhrase.length >= 3 && firstPhrase.length <= 60) {
+      detectedName = firstPhrase;
+    }
+  }
+  if (!detectedName) detectedName = 'Produk Unggulan Pilihan';
+
+  let detectedBrand = linkData?.brand || '';
+  let detectedDesc = linkData?.ogDescription || linkData?.metaDescription || (cleanTextNoUrls || inputNotes || 'Produk viral yang banyak dicari di media sosial dengan ulasan positif.');
+  let detectedCat = 'Review';
+  let detectedPlatform = linkData?.platform === 'Shopee' ? 'Shopee Video' : linkData?.platform === 'Tokopedia' ? 'Tokopedia' : 'TikTok Shop';
   let detectedDuration = 30;
   let detectedTone = 'Santai, Relatable & Meyakinkan';
   let detectedUSP = 'Kualitas terjamin, harga terjangkau, dan hasil nyata terbukti.';
-  let detectedDesc = cleanTextNoUrls || inputNotes || rawInputCombined || 'Produk viral yang banyak dicari di media sosial dengan ulasan positif.';
   let detectedAudience = 'Pengguna aktif TikTok & Shopee usia 18-35 tahun';
   const detectedTags: string[] = [];
 
@@ -570,6 +586,7 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
 
   return {
     productName: detectedName,
+    brandName: detectedBrand,
     productUrl: detectedUrl,
     category: detectedCat,
     productDescription: detectedDesc,

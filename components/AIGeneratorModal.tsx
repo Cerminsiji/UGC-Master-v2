@@ -41,6 +41,7 @@ interface AIGeneratorModalProps {
   currentCategoryName: string;
   onGenerate: (params: AIGenerateParams) => Promise<void>;
   isGenerating: boolean;
+  initialSmartInput?: string;
 }
 
 export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
@@ -49,6 +50,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   currentCategoryName,
   onGenerate,
   isGenerating,
+  initialSmartInput,
 }) => {
   // Input states
   const [category, setCategory] = useState(currentCategoryName || 'Before & After');
@@ -58,6 +60,8 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   const [productDescription, setProductDescription] = useState('');
   const [targetAudience, setTargetAudience] = useState('');
   const [keySellingPoints, setKeySellingPoints] = useState('');
+  const [detectedPrice, setDetectedPrice] = useState<string | null>(null);
+  const [detectedPlatformName, setDetectedPlatformName] = useState<string | null>(null);
   
   // Expanded Persona states (24 options)
   const [persona, setPersona] = useState<UGCPersona>('Wanita Muda / Gen Z');
@@ -92,7 +96,12 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   }
 
   // Auto-detect unified state
-  const [smartInput, setSmartInput] = useState('');
+  const [smartInput, setSmartInput] = useState(initialSmartInput || '');
+  const [prevInitialInput, setPrevInitialInput] = useState(initialSmartInput || '');
+  if (initialSmartInput && initialSmartInput !== prevInitialInput) {
+    setPrevInitialInput(initialSmartInput);
+    setSmartInput(initialSmartInput);
+  }
   const [isDetecting, setIsDetecting] = useState(false);
   const [detectStep, setDetectStep] = useState('Menganalisis...');
   const [detectSuccess, setDetectSuccess] = useState<string | null>(null);
@@ -187,17 +196,29 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
     if (extractedUrl) setProductUrl(extractedUrl);
 
     setIsDetecting(true);
-    setDetectStep('🔍 Menganalisis link & mengekstrak data...');
+    const isTikTok = extractedUrl?.toLowerCase().includes('tiktok');
+    const isTokopedia = extractedUrl?.toLowerCase().includes('tokopedia') || extractedUrl?.toLowerCase().includes('tkp.me');
+    const isShopee = extractedUrl?.toLowerCase().includes('shopee') || extractedUrl?.toLowerCase().includes('shope.ee');
+
+    setDetectStep(
+      isTikTok
+        ? '🔍 Mengakses link affiliate TikTok Shop & scraping info produk...'
+        : isTokopedia
+        ? '🔍 Mengakses link Tokopedia & scraping info produk...'
+        : isShopee
+        ? '🔍 Mengakses link Shopee & scraping info produk...'
+        : '🔍 Menganalisis link & scraping data produk...'
+    );
     setDetectError(null);
     setDetectSuccess(null);
 
     const stepTimer1 = setTimeout(() => {
-      setDetectStep('⚡ Mengekstrak USP, Persona & Target Audiens...');
-    }, 450);
+      setDetectStep('⚡ Mengekstrak Nama Produk, USP, & Spesifikasi...');
+    }, 600);
 
     const stepTimer2 = setTimeout(() => {
-      setDetectStep('✨ Menyiapkan Rekomendasi Sudut Kamera & Alur...');
-    }, 1100);
+      setDetectStep('✨ Menyiapkan Rekomendasi Sudut Kamera & Alur UGC...');
+    }, 1400);
 
     try {
       const response = await fetch('/api/auto-detect-product', {
@@ -227,6 +248,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
 
       // Apply detected values
       if (detected.productName) setProductName(detected.productName);
+      if (detected.brandName) setBrandName(detected.brandName);
       if (detected.productUrl || extractedUrl) setProductUrl(detected.productUrl || extractedUrl);
       if (detected.category) {
         const catMatch = UGC_CATEGORIES.find(
@@ -255,6 +277,8 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       if (detected.detectedTags && Array.isArray(detected.detectedTags)) {
         setDetectTags(detected.detectedTags);
       }
+      if (detected.price) setDetectedPrice(detected.price);
+      if (detected.platform) setDetectedPlatformName(detected.platform);
 
       setDetectSuccess(detected.detectionSummary || `Berhasil mendeteksi "${detected.productName}"`);
       setHighlightFields(true);
@@ -272,7 +296,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
         await onGenerate({
           category: resolvedCategory,
           productName: detected.productName.trim(),
-          brandName: brandName.trim(),
+          brandName: (detected.brandName || brandName).trim(),
           productUrl: extractedUrl,
           productDescription: (detected.productDescription || '').trim(),
           targetAudience: (detected.targetAudience || '').trim(),
@@ -414,6 +438,41 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                 />
               </div>
 
+              {/* Quick Sample Link Pills */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <span className="text-[10px] text-slate-500 font-semibold">Contoh Link:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSmartInput('https://vt.tiktok.com/ZS2mSagoDiet/ - Sago Slimming Green Coffee diet sehat');
+                    if (detectError) setDetectError(null);
+                  }}
+                  className="text-[10px] text-slate-300 hover:text-purple-200 bg-[#141b2b] hover:bg-purple-950/60 border border-[#23304d] px-2 py-0.5 rounded-lg transition-colors"
+                >
+                  🎬 TikTok: Sago Coffee
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSmartInput('https://tokopedia.link/somethinc-serum - Somethinc Niacinamide 10% Barrier Serum');
+                    if (detectError) setDetectError(null);
+                  }}
+                  className="text-[10px] text-slate-300 hover:text-purple-200 bg-[#141b2b] hover:bg-purple-950/60 border border-[#23304d] px-2 py-0.5 rounded-lg transition-colors"
+                >
+                  🛍️ Tokopedia: Somethinc Serum
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSmartInput('https://s.shopee.co.id/skintific-gel - Skintific 5X Ceramide Barrier Moisture Gel');
+                    if (detectError) setDetectError(null);
+                  }}
+                  className="text-[10px] text-slate-300 hover:text-purple-200 bg-[#141b2b] hover:bg-purple-950/60 border border-[#23304d] px-2 py-0.5 rounded-lg transition-colors"
+                >
+                  💄 Shopee: Skintific Gel
+                </button>
+              </div>
+
               <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                 <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
@@ -456,21 +515,36 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
               )}
 
               {detectSuccess && (
-                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-600/40 text-xs text-emerald-200">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <div className="flex-1 truncate">
-                    <span className="font-bold">Berhasil: </span>
-                    <span>{detectSuccess}</span>
-                  </div>
-                  {detectTags.length > 0 && (
-                    <div className="flex items-center gap-1 shrink-0">
-                      {detectTags.map((tag, i) => (
-                        <span key={i} className="text-[10px] bg-emerald-900/60 text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-700/50">
-                          #{tag}
-                        </span>
-                      ))}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-600/40 text-xs text-emerald-200">
+                  <div className="flex items-center gap-2 flex-1 truncate">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <div className="truncate">
+                      <span className="font-bold">Berhasil: </span>
+                      <span>{detectSuccess}</span>
                     </div>
-                  )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                    {detectedPlatformName && (
+                      <span className="text-[10px] bg-purple-900/60 text-purple-200 px-1.5 py-0.5 rounded border border-purple-700/50 font-bold">
+                        {detectedPlatformName}
+                      </span>
+                    )}
+                    {detectedPrice && (
+                      <span className="text-[10px] bg-amber-900/60 text-amber-200 px-1.5 py-0.5 rounded border border-amber-700/50 font-bold">
+                        💰 {detectedPrice}
+                      </span>
+                    )}
+                    {detectTags.length > 0 && (
+                      <>
+                        {detectTags.map((tag, i) => (
+                          <span key={i} className="text-[10px] bg-emerald-900/60 text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-700/50">
+                            #{tag}
+                          </span>
+                        ))}
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
 
