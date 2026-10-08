@@ -279,12 +279,11 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onLogout}
               className="p-1.5 rounded-xl bg-[#121927] hover:bg-red-950/40 text-slate-400 hover:text-red-300 border border-[#222e47] hover:border-red-800/40 transition-all active:scale-95"
-              title="Kunci Studio (Keluar)"
+              title="Kunci Studio"
             >
               <Lock className="w-3.5 h-3.5" />
             </button>
           )}
-
         </div>
       </div>
     </header>

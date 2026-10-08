@@ -5,7 +5,7 @@ interface PasswordGateProps {
   onSuccess: () => void;
 }
 
-export const AUTH_STORAGE_KEY = 'ugc_master_auth_v1';
+export const AUTH_STORAGE_KEY = 'ugc_studio_gate_auth_v2';
 export const CORRECT_PASSWORD = 'Ilalang@27';
 
 export const PasswordGate: React.FC<PasswordGateProps> = ({ onSuccess }) => {
@@ -96,18 +96,9 @@ export const PasswordGate: React.FC<PasswordGateProps> = ({ onSuccess }) => {
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            <div className="flex items-center justify-between text-[11px] pt-1 text-slate-400">
-              <span>Default Studio Password:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setPassword(CORRECT_PASSWORD);
-                  setError(false);
-                }}
-                className="text-purple-400 hover:text-purple-300 font-semibold underline underline-offset-2 flex items-center gap-1 cursor-pointer"
-              >
-                <span>Gunakan {CORRECT_PASSWORD}</span>
-              </button>
+            <div className="flex items-center justify-between text-[11px] pt-1 text-slate-500">
+              <span>Hanya pengguna terotorisasi yang dapat mengakses.</span>
+              <span className="text-purple-400 font-medium">Studio Terproteksi</span>
             </div>
           </div>
 

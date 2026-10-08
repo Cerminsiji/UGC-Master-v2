@@ -23,7 +23,8 @@ import {
   Eye,
   Info,
   Search,
-  RotateCcw
+  RotateCcw,
+  Image as ImageIcon
 } from 'lucide-react';
 import {
   UGC_CATEGORIES,
@@ -57,6 +58,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   const [productName, setProductName] = useState('');
   const [brandName, setBrandName] = useState('');
   const [productUrl, setProductUrl] = useState('');
+  const [referenceImage, setReferenceImage] = useState('');
   const [productDescription, setProductDescription] = useState('');
   const [targetAudience, setTargetAudience] = useState('');
   const [keySellingPoints, setKeySellingPoints] = useState('');
@@ -65,6 +67,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   
   // Expanded Persona states (24 options)
   const [persona, setPersona] = useState<UGCPersona>('Wanita Muda / Gen Z');
+  const [detectedPersonaExplanation, setDetectedPersonaExplanation] = useState<string | null>(null);
   const [personaFilter, setPersonaFilter] = useState<'Semua' | 'Wanita' | 'Pria' | 'Niche & Profesi'>('Semua');
   const [personaSearch, setPersonaSearch] = useState('');
   const [isCustomPersonaOpen, setIsCustomPersonaOpen] = useState(false);
@@ -72,6 +75,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
 
   // Camera Angle states
   const [cameraAngleStyle, setCameraAngleStyle] = useState<string>('Dinamis & Multi-Angle (Viral Fast-Cut)');
+  const [detectedCameraExplanation, setDetectedCameraExplanation] = useState<string | null>(null);
   const [preferredCameraAngles, setPreferredCameraAngles] = useState<string[]>([
     'POV / Handheld (First-Person)',
     'Extreme Close-up / Macro (Tekstur & Detail)',
@@ -263,12 +267,14 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       if (detected.targetAudience) setTargetAudience(detected.targetAudience);
       if (detected.keySellingPoints) setKeySellingPoints(detected.keySellingPoints);
       if (detected.persona) setPersona(detected.persona);
+      if (detected.personaExplanation) setDetectedPersonaExplanation(detected.personaExplanation);
       if (detected.tone) setTone(detected.tone);
       if (detected.cameraAngleStyle) {
         setCameraAngleStyle(detected.cameraAngleStyle);
         const styleMatch = CAMERA_ANGLE_STYLES.find((s) => s.name === detected.cameraAngleStyle);
         if (styleMatch) setPreferredCameraAngles(styleMatch.recommendedAngles);
       }
+      if (detected.cameraStyleExplanation) setDetectedCameraExplanation(detected.cameraStyleExplanation);
       if ((detected as any).preferredCameraAngles && Array.isArray((detected as any).preferredCameraAngles)) {
         setPreferredCameraAngles((detected as any).preferredCameraAngles);
       }
@@ -276,6 +282,9 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       if (detected.targetDuration) setTargetDuration(detected.targetDuration);
       if (detected.detectedTags && Array.isArray(detected.detectedTags)) {
         setDetectTags(detected.detectedTags);
+      }
+      if (detected.referenceImage || detected.imageUrl) {
+        setReferenceImage(detected.referenceImage || detected.imageUrl || '');
       }
       if (detected.price) setDetectedPrice(detected.price);
       if (detected.platform) setDetectedPlatformName(detected.platform);
@@ -298,6 +307,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
           productName: detected.productName.trim(),
           brandName: (detected.brandName || brandName).trim(),
           productUrl: extractedUrl,
+          referenceImage: (detected.referenceImage || detected.imageUrl || referenceImage).trim() || undefined,
           productDescription: (detected.productDescription || '').trim(),
           targetAudience: (detected.targetAudience || '').trim(),
           keySellingPoints: (detected.keySellingPoints || '').trim(),
@@ -342,12 +352,15 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       productName: productName.trim() || 'Produk Unggulan',
       brandName: brandName.trim(),
       productUrl: activeUrl,
+      referenceImage: referenceImage.trim() || undefined,
       productDescription: productDescription.trim(),
       targetAudience: targetAudience.trim(),
       keySellingPoints: keySellingPoints.trim(),
       persona: finalPersona,
+      personaExplanation: detectedPersonaExplanation || undefined,
       tone,
       cameraAngleStyle,
+      cameraStyleExplanation: detectedCameraExplanation || undefined,
       preferredCameraAngles,
       targetDuration,
       targetSceneCount: targetSceneCount > 0 ? targetSceneCount : undefined,
@@ -626,6 +639,47 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                   </div>
                 </div>
 
+                {/* Referensi Image Google Flow (Image-to-Video Workflow) */}
+                <div className="bg-[#0b101c] border border-cyan-900/50 rounded-2xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Referensi Image Google Flow (Konsistensi Visual Produk)</span>
+                    </label>
+                    <span className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800/80 px-2 py-0.5 rounded font-mono font-bold">
+                      Google Flow Ready
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <input
+                      type="text"
+                      value={referenceImage}
+                      onChange={(e) => setReferenceImage(e.target.value)}
+                      placeholder="URL Gambar Produk / Foto Referensi (e.g. https://...)"
+                      className="flex-1 bg-[#121929] border border-cyan-950 focus:border-cyan-500 rounded-xl px-3 py-2 text-xs text-cyan-200 placeholder-slate-500 outline-none transition-all font-mono"
+                    />
+                    {referenceImage && (
+                      <div className="flex items-center gap-2 bg-[#0d1422] border border-cyan-800/60 rounded-xl px-2.5 py-1.5 shrink-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={referenceImage}
+                          alt="Referensi Produk"
+                          className="w-6 h-6 rounded object-cover border border-cyan-700/60"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                        <span className="text-[10px] text-cyan-300 font-medium">Gambar Terhubung</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-cyan-200/80 italic">
+                    ✨ Setiap adegan storyboard dan prompt AI video Google Flow akan selalu mengikuti bentuk kemasan, label, dan warna dari gambar referensi ini secara konsisten tanpa typo.
+                  </p>
+                </div>
+
                 {/* Deskripsi & USP */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
@@ -688,6 +742,14 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
 
               {/* 9 Preset Gaya Kamera */}
               <div>
+                {detectedCameraExplanation && (
+                  <div className="mb-2.5 p-2.5 rounded-xl bg-sky-950/60 border border-sky-500/50 flex items-center gap-2 text-xs text-sky-200">
+                    <span className="text-[10px] bg-sky-900 text-sky-200 font-bold px-1.5 py-0.5 rounded border border-sky-700 shrink-0">
+                      Auto-Terdeteksi
+                    </span>
+                    <span className="text-[11px] text-sky-200 font-medium">{detectedCameraExplanation}</span>
+                  </div>
+                )}
                 <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block mb-1.5">
                   1. Pilih Gaya Sinematik Kamera Utama:
                 </label>
@@ -834,6 +896,15 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                   Aktif: {persona}
                 </span>
               </div>
+
+              {detectedPersonaExplanation && (
+                <div className="p-2.5 rounded-xl bg-purple-950/60 border border-purple-500/50 flex items-center gap-2 text-xs text-purple-200">
+                  <span className="text-[10px] bg-purple-900 text-purple-200 font-bold px-1.5 py-0.5 rounded border border-purple-700 shrink-0">
+                    Auto-Terdeteksi
+                  </span>
+                  <span className="text-[11px] text-purple-200 font-medium">{detectedPersonaExplanation}</span>
+                </div>
+              )}
 
               {/* Search Bar & Category Filter */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">

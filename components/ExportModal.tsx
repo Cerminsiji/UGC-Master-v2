@@ -13,7 +13,9 @@ import {
   Loader2,
   AlertCircle,
   Video,
-  Film
+  Film,
+  Wand2,
+  Image as ImageIcon
 } from 'lucide-react';
 import { Scene, HookVariant } from '../types';
 import { copyToClipboard, formatDuration } from '../utils/helpers';
@@ -23,10 +25,11 @@ interface ExportModalProps {
   onClose: () => void;
   title: string;
   categoryName: string;
+  referenceImage?: string;
   caption?: string;
   scenes: Scene[];
   hookVariants?: HookVariant[];
-  initialTab?: 'table' | 'caption' | 'script' | 'capcut' | 'json';
+  initialTab?: 'table' | 'caption' | 'script' | 'capcut' | 'json' | 'googleflow';
   onImportJSON: (importedScenes: Scene[], importedTitle?: string) => void;
 }
 
@@ -35,13 +38,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   onClose,
   title,
   categoryName,
+  referenceImage,
   caption: initialCaption,
   scenes,
   hookVariants,
   initialTab = 'table',
   onImportJSON,
 }) => {
-  const [activeTab, setActiveTab] = useState<'table' | 'caption' | 'script' | 'capcut' | 'json'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'table' | 'caption' | 'script' | 'capcut' | 'json' | 'googleflow'>(initialTab);
   const [prevTab, setPrevTab] = useState(initialTab);
   if (prevTab !== initialTab) {
     setPrevTab(initialTab);
@@ -107,6 +111,26 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       if (sc.soundEffect) {
         output += `  ↳ SFX: ${sc.soundEffect}\n`;
       }
+    });
+
+    return output;
+  };
+
+  // Generate Google Flow Video UGC AI Prompts
+  const getGoogleFlowPromptsText = () => {
+    let output = `🌊 GOOGLE FLOW VIDEO UGC - AI PROMPTS LIST: ${title.toUpperCase()}\n`;
+    output += `Total Adegan: ${scenes.length} Scenes | Durasi: ${totalDuration}s\n`;
+    output += `Referensi Image: ${referenceImage ? referenceImage : 'Gunakan gambar produk/kemasan resmi'}\n`;
+    output += `Panduan: Unggah referensi image produk ke Google Flow / Veo / AI Video generator, lalu masukkan prompt tiap adegan.\n`;
+    output += `--------------------------------------------------------\n\n`;
+
+    scenes.forEach((sc, i) => {
+      output += `=== ADEGAN ${i + 1} (${sc.duration}s | ${sc.cameraAngle || 'Shot'}) ===\n`;
+      output += `Prompt Google Flow (Image-to-Video):\n`;
+      output += `${sc.googleFlowPrompt || `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle}): ${sc.visualAction}. Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`}\n`;
+      output += `Kepatuhan Referensi Image: ${sc.imageReferenceNote || 'Pastikan sesuai referensi yang sudah di upload'}\n`;
+      output += `Dialog VO: "${sc.dialogVO}"\n`;
+      output += `SFX: ${sc.soundEffect || '-'}\n\n`;
     });
 
     return output;
@@ -276,6 +300,21 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           >
             <FileText className="w-3.5 h-3.5" />
             <span>Naskah VO / Script Talent</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('googleflow')}
+            className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-colors flex items-center gap-1.5 border-b-2 whitespace-nowrap ${
+              activeTab === 'googleflow'
+                ? 'text-cyan-400 border-cyan-500 bg-[#121c2d]'
+                : 'text-slate-400 border-transparent hover:text-slate-200'
+            }`}
+          >
+            <span className="text-cyan-400">🌊</span>
+            <span>Google Flow Video UGC</span>
+            <span className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-1.5 py-0.2 rounded font-mono">
+              AI Video Prompts
+            </span>
           </button>
 
           <button
@@ -512,6 +551,101 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <pre className="p-4 rounded-xl bg-[#0b0e17] border border-[#212c44] text-xs font-mono text-slate-200 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto custom-scrollbar">
                 {getPlainScript()}
               </pre>
+            </div>
+          )}
+
+          {/* TAB: GOOGLE FLOW VIDEO UGC */}
+          {activeTab === 'googleflow' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0c1322] border border-cyan-800/50 p-3.5 rounded-xl">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-cyan-300 flex items-center gap-1.5">
+                      <span>🌊 Prompt AI Video Google Flow</span>
+                      <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-700/60 px-2 py-0.5 rounded font-mono">
+                        9:16 UGC Vertikal
+                      </span>
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Prompt AI Video yang selalu mengikuti referensi image produk secara ketat dan bebas dari typo.
+                  </p>
+                  {referenceImage && (
+                    <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-cyan-200/90 bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded-lg max-w-xl truncate">
+                      <ImageIcon className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+                      <span className="truncate">Referensi Image: {referenceImage}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => handleCopyText(getGoogleFlowPromptsText(), 'googleflow_all')}
+                    className="flex items-center gap-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-md shadow-cyan-950/50 transition-all active:scale-95 border border-cyan-400/30"
+                  >
+                    {copiedType === 'googleflow_all' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-300" />
+                        <span>Semua Prompt Tersalin!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Salin Semua Prompt Google Flow</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Per-Scene Prompt Cards */}
+              <div className="space-y-3">
+                {scenes.map((sc, i) => (
+                  <div
+                    key={sc.id || i}
+                    className="bg-[#0b101d] border border-cyan-900/40 rounded-xl p-3.5 space-y-2 hover:border-cyan-600/50 transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/80 px-2 py-0.5 rounded uppercase font-mono">
+                          Adegan {i + 1} • {sc.duration}s
+                        </span>
+                        <span className="text-xs font-semibold text-slate-300">
+                          {sc.cameraAngle || 'Sudut Kamera'}
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => handleCopyText(sc.googleFlowPrompt || `[Image 1 Reference: ${title}] Scene ${i + 1}: ${sc.visualAction}`, `flow_sc_${i}`)}
+                        className="flex items-center gap-1 text-[11px] font-bold text-cyan-300 hover:text-cyan-200 bg-[#121c2e] hover:bg-[#18263e] px-2.5 py-1 rounded-lg border border-cyan-800/60 transition-colors"
+                      >
+                        {copiedType === `flow_sc_${i}` ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span>Tersalin!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Salin Prompt Scene {i + 1}</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="bg-[#060a12] p-2.5 rounded-lg border border-cyan-950">
+                      <p className="text-xs font-mono text-cyan-200/90 leading-relaxed whitespace-pre-wrap">
+                        {sc.googleFlowPrompt || `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle}): ${sc.visualAction}. Follow reference image packaging, photorealistic 9:16 vertical smartphone camera video, 4k 60fps.`}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 italic">
+                      <span className="text-cyan-400 font-semibold not-italic">🎯 Kepatuhan Visual:</span>
+                      <span>{sc.imageReferenceNote || 'Pastikan sesuai referensi yang sudah di upload'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

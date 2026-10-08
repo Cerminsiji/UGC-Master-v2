@@ -8,6 +8,8 @@ export interface Scene {
   dialogVO: string;
   notesMood: string;
   duration: number; // in seconds
+  googleFlowPrompt?: string; // Prompt Google Flow Video UGC yang selalu mengikuti referensi image
+  imageReferenceNote?: string; // Catatan kepatuhan visual terhadap referensi image
 }
 
 export interface UGCTemplateCategory {
@@ -74,11 +76,14 @@ export interface StoryboardProject {
   productName?: string;
   brandName?: string;
   productUrl?: string; // Link hasil ekstraksi produk
+  referenceImage?: string; // URL atau gambar referensi visual Google Flow
   productDescription?: string; // Deskripsi produk
   keySellingPoints?: string; // Parameter UGC / USP
   persona?: UGCPersona; // Persona talent
+  personaExplanation?: string; // Penjelasan alasan pemilihan persona talent
   tone?: string; // Voice tone
   cameraAngleStyle?: string; // Gaya angle kamera pilihan
+  cameraStyleExplanation?: string; // Penjelasan alasan pemilihan sudut kamera
   preferredCameraAngles?: string[]; // Daftar sudut kamera spesifik
   targetAudience?: string;
   targetPlatform?: string;
@@ -95,12 +100,15 @@ export interface AIGenerateParams {
   productName: string;
   brandName?: string;
   productUrl?: string;
+  referenceImage?: string;
   productDescription?: string;
   targetAudience?: string;
   keySellingPoints?: string;
   persona?: UGCPersona;
+  personaExplanation?: string;
   tone: string;
   cameraAngleStyle?: string;
+  cameraStyleExplanation?: string;
   preferredCameraAngles?: string[];
   targetDuration: number;
   targetSceneCount?: number;
@@ -112,13 +120,16 @@ export interface AutoDetectResult {
   productName: string;
   brandName?: string;
   productUrl?: string;
+  referenceImage?: string;
   category: string;
   productDescription: string;
   targetAudience: string;
   keySellingPoints: string;
   persona?: UGCPersona;
+  personaExplanation?: string;
   tone: string;
   cameraAngleStyle?: string;
+  cameraStyleExplanation?: string;
   preferredCameraAngles?: string[];
   targetPlatform: string;
   targetDuration: number;

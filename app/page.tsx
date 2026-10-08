@@ -12,7 +12,6 @@ import { TeleprompterModal } from '@/components/TeleprompterModal';
 import { ExportModal } from '@/components/ExportModal';
 import { ProjectManagerModal } from '@/components/ProjectManagerModal';
 import { PasswordGate, AUTH_STORAGE_KEY } from '@/components/PasswordGate';
-import { DirectLinkExtractorBar } from '@/components/DirectLinkExtractorBar';
 import { UGC_CATEGORIES } from '@/data/categories';
 import {
   Scene,
@@ -22,7 +21,6 @@ import {
   AIHookOption,
   StoryboardViewMode,
   HookVariant,
-  AutoDetectResult,
 } from '@/types';
 import { copyToClipboard, generateId } from '@/utils/helpers';
 import {
@@ -103,6 +101,8 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Diet gagal mulu, kancing kemeja pada lepas, pusing!',
       notesMood: 'Gaya teks: Chat Bubble. Pencahayaan redup dramatis.',
       duration: 2,
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium shot of middle-aged creator scratching head in front of mirror with tight shirt, holding Sago Green Coffee sachet, packaging branding adhering to reference image, 9:16 vertical UGC video, 4k 60fps.',
+      imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
     },
     {
       id: 'sc_2',
@@ -114,6 +114,8 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Untung nemu Sago Green Coffee, rasanya gak pahit sama sekali!',
       notesMood: 'Gaya teks: Clean Minimalist. Warm coffee morning aesthetic.',
       duration: 3,
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Close-up shot pouring coffee powder from green sachet into clear glass mug, boiling water swirling, authentic sachet color and typography matching reference image, vertical 9:16.',
+      imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
     },
     {
       id: 'sc_3',
@@ -125,6 +127,8 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Biasanya jam 10 pagi udah nyari gorengan, sekarang kenyang sampai siang!',
       notesMood: 'Gaya teks: Headline Banner. Natural window light.',
       duration: 3,
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Over-the-shoulder shot sipping hot coffee mug on cozy living room sofa, Sago Green Coffee retail packaging visible on coffee table adhering to reference image, 4k 60fps.',
+      imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
     },
     {
       id: 'sc_4',
@@ -136,6 +140,8 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Baru 3 minggu, celana lama udah pada kedodoran!',
       notesMood: 'Gaya teks: Bold Red/Green Before After. Split screen dynamic.',
       duration: 3,
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Dynamic before-after reveal, creator showing loose waistline on trousers while smiling confidently with Sago Green Coffee box, photorealistic lighting, 9:16 vertical smartphone format.',
+      imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
     },
     {
       id: 'sc_5',
@@ -147,6 +153,8 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Aman di lambung, herbal alami, udah BPOM & Halal pastinya.',
       notesMood: 'Gaya teks: Minimal White Outline. High sharpness focus.',
       duration: 2,
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Macro close-up shot rotating box packaging in hands, crystal-clear focus on BPOM seal and green brand typography matching reference image, 4k 60fps.',
+      imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
     },
     {
       id: 'sc_6',
@@ -158,6 +166,8 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Mumpung lagi promo diskon bundle, langsung klik keranjang kuning ya!',
       notesMood: 'Gaya teks: Neon Pulsing Yellow. High energy closing CTA.',
       duration: 3,
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium close-up closing shot, smiling creator pointing towards yellow shopping cart icon holding Sago Green Coffee packaging, crisp vertical 9:16 TikTok UGC video.',
+      imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
     },
   ],
 };
@@ -165,8 +175,8 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
 export default function HomePage() {
   const [mounted, setMounted] = useState(false);
 
-  // Authentication gate state
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+  // Authentication gate state (Strictly locked by default with password Ilalang@27)
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
   // Projects State with LocalStorage
   const [projects, setProjects] = useState<StoryboardProject[]>([INITIAL_BEFORE_AFTER_PROJECT]);
@@ -201,7 +211,9 @@ export default function HomePage() {
     setMounted(true);
     try {
       const auth = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (auth !== 'true') {
+      if (auth === 'true') {
+        setIsAuthenticated(true);
+      } else {
         setIsAuthenticated(false);
       }
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -454,6 +466,8 @@ export default function HomePage() {
       dialogVO: 'Gak nyangka hasilnya bisa sebagus ini.',
       notesMood: 'Gaya teks: Modern Yellow. Pencahayaan natural.',
       duration: 3,
+      googleFlowPrompt: `[Image 1 Reference: ${currentProject.productName || 'Produk'}] Scene ${newOrder} (Medium Shot): Kreator memperlihatkan manfaat produk secara natural, kemasan dan logo konsisten sesuai gambar referensi, 9:16 vertical smartphone video, 4k 60fps.`,
+      imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
     };
 
     updateCurrentProject((p) => ({
@@ -556,6 +570,8 @@ export default function HomePage() {
           dialogVO: sc.dialogVO || '',
           notesMood: sc.notesMood || '',
           duration: Number(sc.duration) || 3,
+          googleFlowPrompt: sc.googleFlowPrompt || undefined,
+          imageReferenceNote: sc.imageReferenceNote || undefined,
         }));
 
         const matchedCat =
@@ -572,11 +588,14 @@ export default function HomePage() {
           productName: params.productName,
           brandName: params.brandName,
           productUrl: params.productUrl,
+          referenceImage: params.referenceImage,
           productDescription: params.productDescription,
           keySellingPoints: params.keySellingPoints,
           persona: params.persona,
+          personaExplanation: params.personaExplanation,
           tone: params.tone,
           cameraAngleStyle: params.cameraAngleStyle,
+          cameraStyleExplanation: params.cameraStyleExplanation,
           preferredCameraAngles: params.preferredCameraAngles,
           targetPlatform: params.targetPlatform,
           targetAudience: params.targetAudience,
@@ -599,59 +618,6 @@ export default function HomePage() {
     } finally {
       setIsGeneratingAI(false);
     }
-  };
-
-  // Generate Storyboard directly from extracted link data
-  const handleGenerateFromExtracted = async (data: AutoDetectResult) => {
-    const matchedCat =
-      UGC_CATEGORIES.find(
-        (c) =>
-          c.name.toLowerCase() === data.category.toLowerCase() ||
-          c.id.toLowerCase() === data.category.toLowerCase()
-      ) || activeCategory;
-
-    const params: AIGenerateParams = {
-      category: matchedCat.name,
-      productName: data.productName,
-      brandName: data.brandName,
-      productUrl: data.productUrl,
-      productDescription: data.productDescription,
-      targetAudience: data.targetAudience,
-      keySellingPoints: data.keySellingPoints,
-      persona: data.persona || 'Semua (Netral Universal)',
-      tone: data.tone || 'Santai, Relatable & Meyakinkan',
-      cameraAngleStyle: data.cameraAngleStyle,
-      preferredCameraAngles: data.preferredCameraAngles,
-      targetDuration: data.targetDuration || 30,
-      targetPlatform: data.targetPlatform || 'TikTok Shop',
-      language: 'id',
-    };
-
-    await handleGenerateStoryboard(params);
-  };
-
-  // Apply extracted link data to current active project
-  const handleApplyExtractedToCurrentProject = (data: AutoDetectResult) => {
-    updateCurrentProject((p) => ({
-      ...p,
-      productName: data.productName,
-      brandName: data.brandName || p.brandName,
-      productUrl: data.productUrl || p.productUrl,
-      productDescription: data.productDescription || p.productDescription,
-      keySellingPoints: data.keySellingPoints || p.keySellingPoints,
-      persona: data.persona || p.persona,
-      tone: data.tone || p.tone,
-      cameraAngleStyle: data.cameraAngleStyle || p.cameraAngleStyle,
-      preferredCameraAngles: data.preferredCameraAngles || p.preferredCameraAngles,
-      targetPlatform: data.targetPlatform || p.targetPlatform,
-      targetAudience: data.targetAudience || p.targetAudience,
-    }));
-    showToast(`✓ Data produk "${data.productName}" berhasil dipasang ke naskah aktif! ✨`);
-  };
-
-  const handleOpenGeneratorWithPrefilledInput = (input: string) => {
-    setAiGeneratorInitialInput(input);
-    setIsAIGeneratorOpen(true);
   };
 
   // Apply viral hook to Scene 1
@@ -770,6 +736,8 @@ export default function HomePage() {
           dialogVO: 'Stop scrolling! Kalian wajib tahu rahasia yang satu ini!',
           notesMood: 'Gaya teks: Bold Red. High energy.',
           duration: 3,
+          googleFlowPrompt: '[Image 1 Reference: Produk Baru] POV close-up creator with surprised expression halting scroll, holding product, 9:16 vertical UGC video, 4k 60fps.',
+          imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
         },
         {
           id: generateId(),
@@ -781,6 +749,8 @@ export default function HomePage() {
           dialogVO: 'Ini dia produk yang bikin perubahan instan dan bikin nagih!',
           notesMood: 'Gaya teks: Clean Modern.',
           duration: 3,
+          googleFlowPrompt: '[Image 1 Reference: Produk Baru] Medium close-up creator demonstrating product to camera with genuine excitement, branding matching reference image, 9:16 vertical.',
+          imageReferenceNote: 'Pastikan sesuai referensi yang sudah di upload',
         },
       ],
     };
@@ -817,8 +787,8 @@ export default function HomePage() {
     showToast('Project naskah berhasil dihapus');
   };
 
-  // If not authenticated, show password gate
-  if (mounted && !isAuthenticated) {
+  // If not authenticated or not mounted yet, show password gate
+  if (!mounted || !isAuthenticated) {
     return <PasswordGate onSuccess={() => setIsAuthenticated(true)} />;
   }
 
@@ -950,14 +920,6 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
-
-            {/* HERO DIRECT LINK EXTRACTOR BAR (TikTok, Tokopedia, Shopee) */}
-            <DirectLinkExtractorBar
-              onApplyToProject={handleApplyExtractedToCurrentProject}
-              onGenerateWithData={handleGenerateFromExtracted}
-              onOpenGeneratorModalWithInput={handleOpenGeneratorWithPrefilledInput}
-              isGenerating={isGeneratingAI}
-            />
 
             {/* Overview Ringkas Produk Terpilih */}
             {currentProject.productName && (
@@ -1183,6 +1145,7 @@ export default function HomePage() {
         onClose={() => setIsExportModalOpen(false)}
         title={currentProject.title}
         categoryName={activeCategory.name}
+        referenceImage={currentProject.referenceImage}
         caption={currentProject.caption}
         scenes={currentProject.scenes}
         hookVariants={currentProject.hookVariants}

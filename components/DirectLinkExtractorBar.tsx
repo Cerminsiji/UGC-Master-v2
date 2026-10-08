@@ -17,6 +17,7 @@ import {
   Camera,
   Layers,
   Check,
+  User,
 } from 'lucide-react';
 import { AutoDetectResult } from '@/types';
 import { extractUrlFromInput } from '@/lib/link-extractor';
@@ -30,19 +31,24 @@ interface DirectLinkExtractorBarProps {
 
 const PRESET_SAMPLE_LINKS = [
   {
-    label: '🎬 TikTok Affiliate: Sago Slimming Coffee',
+    label: '🎬 TikTok Affiliate: Sago Coffee',
     platform: 'TikTok',
-    sample: 'https://vt.tiktok.com/ZS2mSagoDiet/ - Kopi hijau penurun berat badan alami & diet sehat',
+    sample: 'https://vt.tiktok.com/ZS2mSagoDiet/',
   },
   {
-    label: '🛍️ Tokopedia: Somethinc Niacinamide Serum',
+    label: '🛍️ Tokopedia Affiliate: Somethinc',
     platform: 'Tokopedia',
-    sample: 'https://tokopedia.link/somethinc-niacinamide-barrier-serum - Somethinc Niacinamide 10% Barrier Serum 20ml',
+    sample: 'https://tokopedia.link/somethinc-niacinamide-barrier-serum',
   },
   {
-    label: '💄 Shopee: Skintific 5X Ceramide Barrier',
+    label: '💄 Shopee Affiliate: Skintific',
     platform: 'Shopee',
-    sample: 'https://s.shopee.co.id/skintific-5x-ceramide - Skintific 5X Ceramide Barrier Moisture Gel 30g',
+    sample: 'https://s.shopee.co.id/skintific-5x-ceramide',
+  },
+  {
+    label: '📋 Teks Share Tokopedia Mobile',
+    platform: 'Tokopedia',
+    sample: 'Beli Somethinc Niacinamide Serum 20ml di Somethinc Official Tokopedia https://tokopedia.link/3ZkIq7m',
   },
 ];
 
@@ -397,8 +403,8 @@ export function DirectLinkExtractorBar({
                 </div>
               </div>
 
-              {/* Specs & Highlights Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-2 border-t border-[#192338] text-[11px]">
+              {/* Specs & Highlights Grid (4 Columns) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-[#192338] text-[11px]">
                 <div className="bg-[#0e1424] p-2.5 rounded-lg border border-[#1b263e]">
                   <span className="font-semibold text-slate-400 block mb-0.5">Keunggulan Utama (USP):</span>
                   <p className="text-slate-200 font-medium line-clamp-2">
@@ -407,26 +413,90 @@ export function DirectLinkExtractorBar({
                 </div>
 
                 <div className="bg-[#0e1424] p-2.5 rounded-lg border border-[#1b263e]">
-                  <span className="font-semibold text-slate-400 block mb-0.5">Rekomendasi Format & Durasi:</span>
+                  <span className="font-semibold text-slate-400 block mb-0.5">Format & Durasi Video:</span>
                   <p className="text-purple-300 font-semibold">
-                    Kategori: {extractedResult.category} ({extractedResult.targetDuration} detik)
+                    Kategori: {extractedResult.category} ({extractedResult.targetDuration}s)
                   </p>
-                  <p className="text-slate-400 text-[10px] mt-0.5">
+                  <p className="text-slate-400 text-[10px] mt-0.5 line-clamp-1">
                     Target: {extractedResult.targetAudience}
                   </p>
                 </div>
 
-                <div className="bg-[#0e1424] p-2.5 rounded-lg border border-[#1b263e]">
-                  <span className="font-semibold text-slate-400 block mb-0.5">Gaya Angle Kamera & Talent:</span>
-                  <p className="text-sky-300 font-semibold flex items-center gap-1">
-                    <Camera className="w-3 h-3 text-sky-400" />
-                    <span>{extractedResult.cameraAngleStyle || 'Dinamis & Multi-Angle'}</span>
+                {/* Sudut Kamera Storyboard Terdeteksi */}
+                <div className="bg-[#0e1424] p-2.5 rounded-lg border border-sky-900/50 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-sky-400 flex items-center gap-1">
+                      <Camera className="w-3 h-3 text-sky-400" />
+                      <span>Sudut Kamera Terdeteksi:</span>
+                    </span>
+                    <span className="text-[9px] bg-sky-950 text-sky-300 border border-sky-800 px-1.5 py-0.2 rounded font-bold">
+                      Auto
+                    </span>
+                  </div>
+                  <p className="text-white font-bold text-xs truncate">
+                    {extractedResult.cameraAngleStyle || 'Dinamis & Multi-Angle (Fast-Cut)'}
                   </p>
-                  <p className="text-slate-400 text-[10px] mt-0.5">
-                    Persona: {extractedResult.persona || 'Semua (Netral)'}
+                  {extractedResult.cameraStyleExplanation && (
+                    <p className="text-[10px] text-sky-200/80 italic line-clamp-1">
+                      {extractedResult.cameraStyleExplanation}
+                    </p>
+                  )}
+                  {extractedResult.preferredCameraAngles && extractedResult.preferredCameraAngles.length > 0 && (
+                    <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                      {extractedResult.preferredCameraAngles.slice(0, 2).map((ang, i) => (
+                        <span key={i} className="text-[9px] bg-[#141d30] text-sky-300 border border-sky-900/60 px-1.5 py-0.5 rounded truncate max-w-[130px]">
+                          {ang}
+                        </span>
+                      ))}
+                      {extractedResult.preferredCameraAngles.length > 2 && (
+                        <span className="text-[9px] text-slate-500">+{extractedResult.preferredCameraAngles.length - 2} sudut</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Persona Karakter Talent Kreator Terdeteksi */}
+                <div className="bg-[#0e1424] p-2.5 rounded-lg border border-purple-900/50 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-purple-400 flex items-center gap-1">
+                      <User className="w-3 h-3 text-purple-400" />
+                      <span>Persona Talent Kreator:</span>
+                    </span>
+                    <span className="text-[9px] bg-purple-950 text-purple-300 border border-purple-800 px-1.5 py-0.2 rounded font-bold">
+                      Auto
+                    </span>
+                  </div>
+                  <p className="text-white font-bold text-xs truncate">
+                    {extractedResult.persona || 'Semua (Netral Universal)'}
                   </p>
+                  {extractedResult.personaExplanation ? (
+                    <p className="text-[10px] text-purple-200/80 italic line-clamp-1">
+                      {extractedResult.personaExplanation}
+                    </p>
+                  ) : (
+                    <p className="text-slate-400 text-[10px] line-clamp-1">
+                      Tone: <span className="text-slate-300 font-medium">{extractedResult.tone || 'Santai & Natural'}</span>
+                    </p>
+                  )}
                 </div>
               </div>
+
+              {/* Status Referensi Image Google Flow */}
+              {(extractedResult.referenceImage || extractedResult.imageUrl) && (
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#09111e] border border-cyan-800/50 text-[11px]">
+                  <div className="flex items-center gap-2">
+                    <span className="text-cyan-400 font-bold flex items-center gap-1 shrink-0">
+                      <span>🌊 Google Flow:</span>
+                    </span>
+                    <span className="text-slate-300 truncate">
+                      Referensi image produk aktif. Setiap adegan storyboard & prompt AI video otomatis sinkron mengikuti kemasan ini tanpa typo.
+                    </span>
+                  </div>
+                  <span className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-700/60 px-2 py-0.5 rounded font-mono font-bold shrink-0">
+                    Image-to-Video Ready
+                  </span>
+                </div>
+              )}
 
               {/* Action Link to Full Studio Modal */}
               <div className="flex items-center justify-between pt-1">

@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
       category = 'Before & After',
       productName = 'Produk Unggulan',
       brandName = '',
+      referenceImage = '',
       productDescription = '',
       targetAudience = 'Pengguna TikTok / Reels usia 18-35 tahun',
       keySellingPoints = '',
@@ -43,7 +44,8 @@ Sesuaikan sudut kamera di setiap adegan dengan gaya ini secara sinematik vertika
     const productBrief = `PRODUK YANG DIPROMOSIKAN:
 - Nama Produk: "${productName}" ${brandName ? `(Brand: "${brandName}")` : ''}
 - Deskripsi: "${productDescription || '-'}"
-- Keunggulan Utama (USP): "${keySellingPoints || 'Kualitas terjamin, hasil nyata terbukti'}"`;
+- Keunggulan Utama (USP): "${keySellingPoints || 'Kualitas terjamin, hasil nyata terbukti'}"
+- Referensi Gambar Produk (Google Flow Reference Image): "${referenceImage || `Visual kemasan dan fisik asli produk ${productName}`}"`;
 
     const isHandsOnly =
       (cameraAngleStyle && (cameraAngleStyle.toLowerCase().includes('hand') || cameraAngleStyle.toLowerCase().includes('tangan'))) ||
@@ -57,10 +59,30 @@ Sesuaikan sudut kamera di setiap adegan dengan gaya ini secara sinematik vertika
 - Semua visualAction WAJIB diawali dengan aksi tangan (misal: "Tangan talent memegang...", "Kamera menyorot tangan talent yang sedang...", "Tangan talent mengoles tekstur produk di atas meja estetik...").`
       : '';
 
+    const googleFlowReferenceInstruction = `
+=== ATURAN MUTLAK KEPATUHAN REFERENSI IMAGE PADA GOOGLE FLOW VIDEO UGC ===
+Format ini WAJIB kompatibel dengan pipeline Google Flow Video UGC (Image-to-Video Workflow).
+Referensi Gambar Produk: "${referenceImage || `Kemasan dan visual asli produk ${productName}`}".
+
+SETIAP ADEGAN WAJIB:
+1. Selalu mengikuti referensi image (Product & Character Consistency): Bentuk kemasan, warna brand, proporsi kemasan, detail label, tekstur produk, dan lighting harus selalu konsisten dengan referensi image produk di atas tanpa distorsi visual.
+2. Menghasilkan 'googleFlowPrompt' (Prompt video AI untuk Google Flow / Veo / Runway / Kling):
+   Format prompt Google Flow:
+   "[Image 1 Reference: ${productName}] {Shot Type & Camera Motion} - {Subject Action & Talent Expression} - {Product Physical Interaction} - {Lighting & Background Environment} - {Aesthetic Style: Photorealistic 9:16 vertical smartphone UGC video, raw camera sensor texture, crisp focus, 4K 60fps, no morphing, no artifacts}"
+3. Menghasilkan 'imageReferenceNote':
+   Wajib persis bernilai: "Pastikan sesuai referensi yang sudah di upload"
+   Agar setiap adegan selalu mengunci konsistensi gambar referensi produk di pipeline Google Flow tanpa kesalahan.
+
+=== ATURAN BEBAS TYPO & KESALAHAN EJAAN (ZERO TYPO DISCIPLINE) ===
+- DILARANG KERAS ADA TYPO ATAU SALAH KETIK pada dialogVO, popupText, visualAction, soundEffect, notesMood, maupun googleFlowPrompt!
+- Gunakan tata bahasa Indonesia yang rapi, natural, dan ejaan yang tepat (PUEBI/EYD) untuk narasi, serta diksi gaul UGC yang tepat tanpa singkatan rusak.
+- Jangan ada huruf tertinggal atau dobel yang tidak disengaja.`;
+
     const prompt = `Kamu adalah pakar Creative Director & Scriptwriter UGC (User-Generated Content) viral TikTok Shop, Shopee Video, dan Instagram Reels di Indonesia.
 Buatkan storyboard UGC video lengkap yang terbukti memiliki Conversion Rate & Retention Rate tinggi untuk produk berikut:
 
 ${productBrief}
+${googleFlowReferenceInstruction}
 ${handsOnlyInstruction}
 
 Kategori Konten: ${category}
@@ -71,7 +93,7 @@ ${cameraInstructions}
 Target Durasi Total: ${targetDuration} detik
 Jumlah Adegan yang Diminta: ${sceneCountText}
 Platform: ${platform}
-Bahasa: ${language === 'id' ? 'Bahasa Indonesia (Gaya bicara kreator UGC TikTok santai, luwes, natural, tidak kaku)' : 'English (Casual UGC creator style)'}
+Bahasa: ${language === 'id' ? 'Bahasa Indonesia (Gaya bicara kreator UGC TikTok santai, luwes, natural, tidak kaku, tanpa typo)' : 'English (Casual UGC creator style, zero typos)'}
 
 Syarat Wajib Format Storyboard:
 1. Adegan 1 WAJIB HOOK 3 DETIK PERTAMA (Visual + Audio/SFX + On-Screen Text) yang bikin orang stop scrolling.
@@ -83,7 +105,8 @@ Syarat Wajib Format Storyboard:
 7. Pop-up Text harus huruf kapital mencolok & singkat.
 8. Durasi setiap adegan (dalam integer detik) jika dijumlahkan WAJIB bernilai total mendekati ${targetDuration} detik. Jika durasi pendek (${targetDuration}s) dan adegan banyak (hingga 9 adegan), gunakan durasi fast-cut 1-2 detik per adegan.
 9. BUATKAN AUTO CAPTION DENGAN HASHTAG: Tulis 1 caption postingan media sosial yang menarik dan menjual, LENGKAP dengan 2-4 hashtag trending.
-   PENTING: TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG HARUS MAKSIMAL 150 KARAKTER!`;
+   PENTING: TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG HARUS MAKSIMAL 150 KARAKTER!
+10. SETIAP ADEGAN WAJIB menyertakan googleFlowPrompt (mengacu ketat ke referensi image [Image 1 Reference: ProductName]) dan imageReferenceNote bernilai persis: "Pastikan sesuai referensi yang sudah di upload"! Bebas dari segala typo.`;
 
     const config = {
       responseMimeType: 'application/json',
@@ -129,7 +152,7 @@ Syarat Wajib Format Storyboard:
                 },
                 dialogVO: {
                   type: Type.STRING,
-                  description: 'Dialog yang diucapkan talent atau suara Voice Over (VO).',
+                  description: 'Dialog yang diucapkan talent atau suara Voice Over (VO). Bebas typo.',
                 },
                 notesMood: {
                   type: Type.STRING,
@@ -138,6 +161,14 @@ Syarat Wajib Format Storyboard:
                 duration: {
                   type: Type.INTEGER,
                   description: 'Durasi adegan dalam detik (integer, misal 1, 2, 3, 4, 5).',
+                },
+                googleFlowPrompt: {
+                  type: Type.STRING,
+                  description: 'Prompt video AI untuk Google Flow / Veo / Runway / Kling yang mengikuti referensi image secara ketat ([Image 1 Reference: ProductName]), dengan camera motion, action, lighting, 9:16 vertical.',
+                },
+                imageReferenceNote: {
+                  type: Type.STRING,
+                  description: 'Wajib bernilai persis: "Pastikan sesuai referensi yang sudah di upload"',
                 },
               },
               required: [
@@ -148,6 +179,8 @@ Syarat Wajib Format Storyboard:
                 'dialogVO',
                 'notesMood',
                 'duration',
+                'googleFlowPrompt',
+                'imageReferenceNote',
               ],
             },
           },
@@ -159,7 +192,7 @@ Syarat Wajib Format Storyboard:
     const rawText = await generateWithFallback(
       prompt,
       config,
-      'You are an elite UGC video strategist and storyboard scriptwriter. Always return strictly valid JSON matching the schema. Keep caption under 150 characters.'
+      'You are an elite UGC video strategist and storyboard scriptwriter. Always return strictly valid JSON matching the schema. Follow reference image consistency on Google Flow and ensure zero typos in all languages.'
     );
 
     const parsedData = parseSafeJson<any>(rawText);
@@ -169,6 +202,13 @@ Syarat Wajib Format Storyboard:
       } else if (parsedData.caption.length > 150) {
         parsedData.caption = parsedData.caption.slice(0, 147) + '...';
       }
+
+      // Ensure every scene has googleFlowPrompt & imageReferenceNote fallbacks if model missed any
+      parsedData.scenes = parsedData.scenes.map((sc: any, idx: number) => ({
+        ...sc,
+        googleFlowPrompt: sc.googleFlowPrompt || `[Image 1 Reference: ${productName}] Scene ${idx + 1} (${sc.cameraAngle}): ${sc.visualAction}. Follow physical packaging and branding in reference image, vertical 9:16 UGC smartphone camera, photorealistic 4k.`,
+        imageReferenceNote: sc.imageReferenceNote || 'Pastikan sesuai referensi yang sudah di upload',
+      }));
 
       return NextResponse.json({
         success: true,
@@ -186,7 +226,8 @@ Syarat Wajib Format Storyboard:
       keySellingPoints,
       targetSceneCount,
       cameraAngleStyle,
-      preferredCameraAngles
+      preferredCameraAngles,
+      referenceImage
     );
 
     return NextResponse.json({

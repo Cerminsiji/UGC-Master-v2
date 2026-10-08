@@ -18,9 +18,12 @@ import {
   Check,
   Flame,
   AlertCircle,
-  Layers
+  Layers,
+  Image as ImageIcon,
+  Wand2
 } from 'lucide-react';
 import { Scene, HookVariant } from '../types';
+import { copyToClipboard } from '../utils/helpers';
 import {
   CAMERA_ANGLE_PRESETS,
   SFX_PRESETS,
@@ -69,6 +72,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({
   const [showMoodMenu, setShowMoodMenu] = useState(false);
   const [showVoMenu, setShowVoMenu] = useState(false);
   const [selectedSfxCat, setSelectedSfxCat] = useState<string>('Semua');
+  const [copiedFlow, setCopiedFlow] = useState(false);
 
   const handleChange = (field: keyof Scene, value: any) => {
     onUpdate({
@@ -613,6 +617,77 @@ export const SceneCard: React.FC<SceneCardProps> = ({
               ))}
             </div>
           )}
+        </div>
+
+        {/* ZONE 4: GOOGLE FLOW VIDEO UGC (PROMPT AI VIDEO BERDASARKAN REFERENSI IMAGE) */}
+        <div className="pt-2 border-t border-[#1a233a]/80">
+          <div className="bg-gradient-to-r from-[#0d1627] to-[#121626] border border-cyan-500/30 rounded-xl p-3 space-y-2.5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-5 rounded-md bg-cyan-950 border border-cyan-600/50 flex items-center justify-center text-cyan-400">
+                  <Wand2 className="w-3 h-3" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-bold text-cyan-300 flex items-center gap-1.5">
+                    <span>Google Flow Video UGC</span>
+                    <span className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-1.5 py-0.2 rounded font-mono font-medium">
+                      Mengikuti Referensi Image
+                    </span>
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  if (scene.googleFlowPrompt) {
+                    const ok = await copyToClipboard(scene.googleFlowPrompt);
+                    if (ok) {
+                      setCopiedFlow(true);
+                      setTimeout(() => setCopiedFlow(false), 2000);
+                    }
+                  }
+                }}
+                className="flex items-center gap-1 bg-[#101c2e] hover:bg-[#16273f] text-cyan-300 text-[10px] font-bold px-2 py-1 rounded-lg border border-cyan-800/60 transition-colors"
+                title="Salin Prompt Google Flow untuk Scene ini"
+              >
+                {copiedFlow ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span>Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3 text-cyan-400" />
+                    <span>Salin Prompt</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Prompt input / editor */}
+            <div className="space-y-1">
+              <textarea
+                value={scene.googleFlowPrompt || ''}
+                onChange={(e) => handleChange('googleFlowPrompt', e.target.value)}
+                placeholder="[Image 1 Reference: Produk] Handheld POV 9:16 vertical UGC video..."
+                rows={2}
+                className="w-full bg-[#080d17] border border-cyan-950 focus:border-cyan-500 rounded-lg p-2 text-xs font-mono text-cyan-200 placeholder-slate-600 outline-none resize-none leading-relaxed"
+              />
+            </div>
+
+            {/* Catatan Kepatuhan Referensi Image */}
+            <div className="flex items-start sm:items-center gap-1.5 bg-[#09101b] border border-cyan-900/40 rounded-lg px-2.5 py-1.5 text-[10px]">
+              <ImageIcon className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5 sm:mt-0" />
+              <input
+                type="text"
+                value={scene.imageReferenceNote || ''}
+                onChange={(e) => handleChange('imageReferenceNote', e.target.value)}
+                placeholder="Pastikan sesuai referensi yang sudah di upload"
+                className="flex-1 bg-transparent text-slate-300 placeholder-slate-500 outline-none text-[10px]"
+              />
+            </div>
+          </div>
         </div>
 
       </div>
