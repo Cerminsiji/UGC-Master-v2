@@ -68,10 +68,12 @@ SETIAP ADEGAN WAJIB:
 1. Selalu mengikuti referensi image (Product & Character Consistency): Bentuk kemasan, warna brand, proporsi kemasan, detail label, tekstur produk, dan lighting harus selalu konsisten dengan referensi image produk di atas tanpa distorsi visual.
 2. Menghasilkan 'googleFlowPrompt' (Prompt video AI untuk Google Flow / Veo / Runway / Kling):
    Format prompt Google Flow:
-   "[Image 1 Reference: ${productName}] {Shot Type & Camera Motion} - {Subject Action & Talent Expression} - {Product Physical Interaction} - {Lighting & Background Environment} - {Aesthetic Style: Photorealistic 9:16 vertical smartphone UGC video, raw camera sensor texture, crisp focus, 4K 60fps, no morphing, no artifacts}"
+   "[Image 1 Reference: ${productName}] {Shot Type & Camera Motion} - {Subject Action & Talent Expression} - {Product Physical Interaction} - {Lighting & Background Environment} - {On-Screen Pop-up Text Overlay: popupText} - {Aesthetic Style: Photorealistic 9:16 vertical smartphone UGC video, raw camera sensor texture, crisp focus, 4K 60fps, no morphing, no artifacts}"
 3. Menghasilkan 'imageReferenceNote':
-   Wajib persis bernilai: "Pastikan sesuai referensi yang sudah di upload"
+   Wajib persis bernilai: "Pastikan Produk sesuai Gambar referensi yang sudah di upload"
    Agar setiap adegan selalu mengunci konsistensi gambar referensi produk di pipeline Google Flow tanpa kesalahan.
+4. Menghasilkan 'popupText' (Teks Pop-up Layar):
+   Wajib SELALU MUNCUL di dalam JSON pada setiap adegan, berupa stiker teks pop-up kapital tebal yang mencolok dan selaras dengan perintah overlay teks pada Google Flow.
 
 === ATURAN BEBAS TYPO & KESALAHAN EJAAN (ZERO TYPO DISCIPLINE) ===
 - DILARANG KERAS ADA TYPO ATAU SALAH KETIK pada dialogVO, popupText, visualAction, soundEffect, notesMood, maupun googleFlowPrompt!
@@ -102,11 +104,11 @@ Syarat Wajib Format Storyboard:
 4. Sudut kamera (cameraAngle) di setiap adegan WAJIB disesuaikan dengan instruksi sudut kamera di atas.
 5. Berikan Sound Effect (SFX) yang KAYA, BERVARIASI, dan SPESIFIK di setiap adegan (kombinasi ASMR nyata, meme viral, bass drop, swoosh, cash register, ding, crunch, water swirl, heartbeat). DILARANG menggunakan SFX yang sama berulang-ulang di tiap adegan.
 6. Naskah Voiceover (VO) harus BERVARIASI SECARA EMOSIONAL dan intonasi alami: dari penasaran, heboh, curhat, hingga meyakinkan saat closing CTA. Sesuaikan panjang kata dengan durasi adegan agar tidak terburu-buru.
-7. Pop-up Text harus huruf kapital mencolok & singkat.
+7. Pop-up Text (popupText) WAJIB SELALU TERISI di setiap adegan berupa huruf kapital mencolok & singkat, dan sinkron dengan overlay pada prompt Google Flow.
 8. Durasi setiap adegan (dalam integer detik) jika dijumlahkan WAJIB bernilai total mendekati ${targetDuration} detik. Jika durasi pendek (${targetDuration}s) dan adegan banyak (hingga 9 adegan), gunakan durasi fast-cut 1-2 detik per adegan.
 9. BUATKAN AUTO CAPTION DENGAN HASHTAG: Tulis 1 caption postingan media sosial yang menarik dan menjual, LENGKAP dengan 2-4 hashtag trending.
    PENTING: TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG HARUS MAKSIMAL 150 KARAKTER!
-10. SETIAP ADEGAN WAJIB menyertakan googleFlowPrompt (mengacu ketat ke referensi image [Image 1 Reference: ProductName]) dan imageReferenceNote bernilai persis: "Pastikan sesuai referensi yang sudah di upload"! Bebas dari segala typo.`;
+10. SETIAP ADEGAN WAJIB menyertakan googleFlowPrompt (mengacu ketat ke referensi image [Image 1 Reference: ProductName] serta On-Screen Pop-up Text Overlay) dan imageReferenceNote bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di upload"! Bebas dari segala typo.`;
 
     const config = {
       responseMimeType: 'application/json',
@@ -168,7 +170,7 @@ Syarat Wajib Format Storyboard:
                 },
                 imageReferenceNote: {
                   type: Type.STRING,
-                  description: 'Wajib bernilai persis: "Pastikan sesuai referensi yang sudah di upload"',
+                  description: 'Wajib bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di upload"',
                 },
               },
               required: [
@@ -203,12 +205,55 @@ Syarat Wajib Format Storyboard:
         parsedData.caption = parsedData.caption.slice(0, 147) + '...';
       }
 
-      // Ensure every scene has googleFlowPrompt & imageReferenceNote fallbacks if model missed any
-      parsedData.scenes = parsedData.scenes.map((sc: any, idx: number) => ({
-        ...sc,
-        googleFlowPrompt: sc.googleFlowPrompt || `[Image 1 Reference: ${productName}] Scene ${idx + 1} (${sc.cameraAngle}): ${sc.visualAction}. Follow physical packaging and branding in reference image, vertical 9:16 UGC smartphone camera, photorealistic 4k.`,
-        imageReferenceNote: sc.imageReferenceNote || 'Pastikan sesuai referensi yang sudah di upload',
-      }));
+      // Ensure every scene has popupText, googleFlowPrompt & imageReferenceNote in JSON
+      parsedData.scenes = parsedData.scenes.map((sc: any, idx: number) => {
+        let popupText =
+          sc.popupText && typeof sc.popupText === 'string' && sc.popupText.trim() && sc.popupText.trim() !== '-'
+            ? sc.popupText.trim()
+            : '';
+
+        // If popupText is missing or empty, extract from googleFlowPrompt if available, or generate a punchy contextual hook/benefit
+        if (!popupText) {
+          const overlayMatch = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string'
+            ? sc.googleFlowPrompt.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i) ||
+              sc.googleFlowPrompt.match(/Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i) ||
+              sc.googleFlowPrompt.match(/popup text:\s*["']?([^"'\-\}\]]+)["']?/i)
+            : null;
+          if (overlayMatch && overlayMatch[1] && overlayMatch[1].trim()) {
+            popupText = overlayMatch[1].trim();
+          } else {
+            popupText =
+              idx === 0
+                ? 'JANGAN SKIP DULU! 🔥'
+                : idx === parsedData.scenes.length - 1
+                ? 'CEK KERANJANG KUNING SEKARANG! 🛒'
+                : `SOLUSI: ${productName.toUpperCase()}`;
+          }
+        }
+
+        const visual = sc.visualAction || 'Kreator memperlihatkan manfaat produk secara otentik.';
+        const angle = sc.cameraAngle || 'Medium Shot';
+
+        let flowPrompt = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string' ? sc.googleFlowPrompt.trim() : '';
+        if (!flowPrompt) {
+          flowPrompt = `[Image 1 Reference: ${productName}] Scene ${idx + 1} (${angle}): ${visual} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging and branding in reference image, vertical 9:16 UGC smartphone camera, photorealistic 4k.`;
+        } else {
+          // Guarantee that Google Flow command always includes On-Screen Pop-up Text Overlay matching popupText
+          const hasOverlay = /on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt);
+          if (!hasOverlay) {
+            flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+          }
+        }
+
+        return {
+          ...sc,
+          cameraAngle: angle,
+          visualAction: visual,
+          popupText,
+          googleFlowPrompt: flowPrompt,
+          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+        };
+      });
 
       return NextResponse.json({
         success: true,

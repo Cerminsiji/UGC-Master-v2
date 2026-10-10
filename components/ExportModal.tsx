@@ -125,15 +125,88 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     output += `--------------------------------------------------------\n\n`;
 
     scenes.forEach((sc, i) => {
+      const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
+        ? sc.popupText.trim()
+        : (() => {
+            const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
+            if (match && match[1]) return match[1].trim();
+            return i === 0 ? 'JANGAN SKIP DULU! 🔥' : `SOLUSI: ${title.toUpperCase()}`;
+          })();
+
+      let flowPrompt = sc.googleFlowPrompt && sc.googleFlowPrompt.trim() ? sc.googleFlowPrompt.trim() : '';
+      if (!flowPrompt) {
+        flowPrompt = `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`;
+      } else if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
+        flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+      }
+
       output += `=== ADEGAN ${i + 1} (${sc.duration}s | ${sc.cameraAngle || 'Shot'}) ===\n`;
       output += `Prompt Google Flow (Image-to-Video):\n`;
-      output += `${sc.googleFlowPrompt || `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle}): ${sc.visualAction}. Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`}\n`;
-      output += `Kepatuhan Referensi Image: ${sc.imageReferenceNote || 'Pastikan sesuai referensi yang sudah di upload'}\n`;
+      output += `${flowPrompt}\n`;
+      output += `Teks Pop-up Layar: "${popupText}"\n`;
+      output += `Kepatuhan Referensi Image: ${sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload'}\n`;
       output += `Dialog VO: "${sc.dialogVO}"\n`;
       output += `SFX: ${sc.soundEffect || '-'}\n\n`;
     });
 
     return output;
+  };
+
+  const getGoogleFlowJSON = () => {
+    return JSON.stringify(
+      {
+        projectName: title,
+        category: categoryName,
+        referenceImage: referenceImage || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+        totalDuration,
+        googleFlowPipeline: scenes.map((sc, i) => {
+          const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
+            ? sc.popupText.trim()
+            : (() => {
+                const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
+                if (match && match[1]) return match[1].trim();
+                return i === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨';
+              })();
+
+          let flowPrompt = sc.googleFlowPrompt && sc.googleFlowPrompt.trim() ? sc.googleFlowPrompt.trim() : '';
+          if (!flowPrompt) {
+            flowPrompt = `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow reference image packaging, vertical 9:16 smartphone UGC video, 4k 60fps.`;
+          } else if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
+            flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+          }
+
+          return {
+            sceneNumber: i + 1,
+            cameraAngle: sc.cameraAngle || 'Medium Shot',
+            duration: Number(sc.duration) || 3,
+            popupText,
+            googleFlowPrompt: flowPrompt,
+            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+            visualAction: sc.visualAction,
+            dialogVO: sc.dialogVO,
+            soundEffect: sc.soundEffect || '-',
+          };
+        }),
+        exportedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    );
+  };
+
+  const handleDownloadGoogleFlowJSON = () => {
+    const dataStr =
+      'data:text/json;charset=utf-8,' +
+      encodeURIComponent(getGoogleFlowJSON());
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute(
+      'download',
+      `${title.toLowerCase().replace(/\s+/g, '_')}_google_flow.json`
+    );
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
   };
 
   const handleCopyText = async (text: string, type: string) => {
@@ -152,7 +225,30 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         totalDuration,
         caption,
         hookVariants,
-        scenes,
+        scenes: scenes.map((sc, i) => {
+          const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
+            ? sc.popupText.trim()
+            : (() => {
+                const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
+                if (match && match[1]) return match[1].trim();
+                return i === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨';
+              })();
+
+          let flowPrompt = sc.googleFlowPrompt && sc.googleFlowPrompt.trim() ? sc.googleFlowPrompt.trim() : '';
+          if (!flowPrompt) {
+            flowPrompt = `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`;
+          } else if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
+            flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+          }
+
+          return {
+            ...sc,
+            order: sc.order || i + 1,
+            popupText,
+            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+            googleFlowPrompt: flowPrompt,
+          };
+        }),
         exportedAt: new Date().toISOString(),
       },
       null,
@@ -578,7 +674,34 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <button
+                    onClick={() => handleCopyText(getGoogleFlowJSON(), 'googleflow_json')}
+                    className="flex items-center gap-1.5 bg-[#101b2e] hover:bg-[#182845] text-cyan-300 text-xs font-bold px-3 py-2 rounded-lg border border-cyan-700/50 transition-all active:scale-95"
+                    title="Salin format JSON lengkap dengan Teks Pop-up untuk integrasi Google Flow"
+                  >
+                    {copiedType === 'googleflow_json' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>JSON Flow Tersalin!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Salin JSON Google Flow</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={handleDownloadGoogleFlowJSON}
+                    className="flex items-center gap-1.5 bg-[#101b2e] hover:bg-[#182845] text-slate-300 text-xs font-bold px-3 py-2 rounded-lg border border-cyan-800/40 transition-all active:scale-95"
+                    title="Download file JSON pipeline Google Flow"
+                  >
+                    <Download className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Download JSON Flow</span>
+                  </button>
+
                   <button
                     onClick={() => handleCopyText(getGoogleFlowPromptsText(), 'googleflow_all')}
                     className="flex items-center gap-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg shadow-md shadow-cyan-950/50 transition-all active:scale-95 border border-cyan-400/30"
@@ -633,6 +756,36 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                       </button>
                     </div>
 
+                    {/* Teks Pop-up Layar */}
+                    <div className="flex items-center justify-between bg-[#0a1526] border border-cyan-800/40 px-3 py-1.5 rounded-lg text-xs">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-cyan-400 font-bold uppercase text-[10px] tracking-wider shrink-0">
+                          💬 Teks Pop-up:
+                        </span>
+                        <span className="font-extrabold text-cyan-100 truncate">
+                          {sc.popupText || '(Tanpa Teks Pop-up)'}
+                        </span>
+                      </div>
+                      {sc.popupText && (
+                        <button
+                          onClick={() => handleCopyText(sc.popupText, `flow_popup_${i}`)}
+                          className="text-[10px] font-bold text-cyan-300 hover:text-cyan-100 flex items-center gap-1 font-mono shrink-0 ml-2 bg-cyan-950 hover:bg-cyan-900 border border-cyan-800/60 px-2 py-0.5 rounded transition-colors"
+                        >
+                          {copiedType === `flow_popup_${i}` ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span>Tersalin!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Salin Teks</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+
                     <div className="bg-[#060a12] p-2.5 rounded-lg border border-cyan-950">
                       <p className="text-xs font-mono text-cyan-200/90 leading-relaxed whitespace-pre-wrap">
                         {sc.googleFlowPrompt || `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle}): ${sc.visualAction}. Follow reference image packaging, photorealistic 9:16 vertical smartphone camera video, 4k 60fps.`}
@@ -641,7 +794,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
                     <div className="flex items-center gap-1.5 text-[11px] text-slate-400 italic">
                       <span className="text-cyan-400 font-semibold not-italic">🎯 Kepatuhan Visual:</span>
-                      <span>{sc.imageReferenceNote || 'Pastikan sesuai referensi yang sudah di upload'}</span>
+                      <span>{sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload'}</span>
                     </div>
                   </div>
                 ))}
@@ -684,7 +837,48 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   </button>
 
                   <button
-                    onClick={() => handleCopyText(JSON.stringify(scenes, null, 2), 'scenes_only')}
+                    onClick={() => handleCopyText(getGoogleFlowJSON(), 'googleflow_json_tab')}
+                    className="flex items-center gap-1 bg-[#101b2e] hover:bg-[#182845] text-cyan-300 text-xs font-bold px-3 py-1.5 rounded-lg border border-cyan-700/50 transition-all active:scale-95"
+                    title="Salin JSON khusus pipeline Google Flow Video AI lengkap dengan Teks Pop-up"
+                  >
+                    {copiedType === 'googleflow_json_tab' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-300">JSON Flow Tersalin!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Salin JSON Google Flow</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      handleCopyText(
+                        JSON.stringify(
+                          scenes.map((sc, i) => {
+                            const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
+                              ? sc.popupText.trim()
+                              : (() => {
+                                  const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
+                                  if (match && match[1]) return match[1].trim();
+                                  return i === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨';
+                                })();
+                            return {
+                              ...sc,
+                              order: sc.order || i + 1,
+                              popupText,
+                              imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+                            };
+                          }),
+                          null,
+                          2
+                        ),
+                        'scenes_only'
+                      )
+                    }
                     className="flex items-center gap-1 bg-[#182133] hover:bg-[#202c42] text-purple-300 text-xs font-bold px-3 py-1.5 rounded-lg border border-purple-800/40 transition-all active:scale-95"
                     title="Hanya salin array daftar adegan"
                   >
