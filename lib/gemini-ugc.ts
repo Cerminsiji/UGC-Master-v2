@@ -143,7 +143,7 @@ export function generateRichFallback(
       dialogVO: `Stop scrolling! Ada satu rahasia ${safeName} yang wajib kalian tahu hari ini!`,
       notesMood: 'Gaya teks: Bold Red/Yellow. High energy expression.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] First-person POV handheld smartphone recording, UGC creator gasping with genuine excitement while holding ${safeName} packaging facing the camera, strict packaging and label consistency with reference image, dynamic 9:16 vertical video, natural warm indoor lighting, sharp focus, photorealistic 4k 60fps.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
@@ -153,7 +153,7 @@ export function generateRichFallback(
       dialogVO: `Dulu sering banget kesal sama masalah ini sampai akhirnya nemu solusi yang tepat.`,
       notesMood: 'Gaya teks: Chat Bubble. Pencahayaan dramatis.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro close-up slow zoom-in on the surface, texture, and physical details of ${safeName}, pristine cosmetic product details matching reference image, soft diffused studio light, vertical 9:16 UGC style, 4k 60fps.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Medium Shot (Setengah Badan)',
@@ -163,7 +163,7 @@ export function generateRichFallback(
       dialogVO: `Kenalin ${safeName}! Ini dia produk viral yang beneran mengubah rutinitas harianku!`,
       notesMood: 'Gaya teks: Bouncy Glow. Transisi cerah.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Medium shot of relatable creator holding up original ${safeName} product beside their face with a relieved, happy smile, identical branding to reference image, bright aesthetic room backdrop, vertical 9:16, crisp mobile video quality.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Close-up (Face / Ekspresi)',
@@ -173,7 +173,7 @@ export function generateRichFallback(
       dialogVO: `Packaging dan build quality ${safeName} beneran rapi dan berkelas banget.`,
       notesMood: 'Gaya teks: Gold Badge. Detail kemasan produk.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up product hero shot in creator's hand rotating slowly 45 degrees, showing authentic security seal and brand typography matching reference image, cinematic depth of field, 9:16 TikTok UGC style.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'POV / Handheld (First-Person)',
@@ -183,7 +183,7 @@ export function generateRichFallback(
       dialogVO: `Cara pakainya super gampang, teksturnya langsung nyaman dan kerasa bedanya dari pertama coba.`,
       notesMood: 'Gaya teks: Minimalist Subtitle. Lighting jernih.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Handheld POV demonstration of opening and applying formula of ${safeName}, smooth texture glide, clean aesthetic setup, visual colors and consistency matching reference image, 4k 60fps vertical 9:16.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Side Profile 45° (Angle Samping)',
@@ -193,7 +193,7 @@ export function generateRichFallback(
       dialogVO: `${safeUSP}. Beneran membuktikan kalau klaimnya bukan sekadar omong kosong.`,
       notesMood: 'Gaya teks: Clean bullet points. Natural smile.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] 45-degree side profile angle, creator actively using ${safeName} with effortless natural gestures, relaxed confidence, reference image product clearly visible, natural daylight, photorealistic UGC video.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Front Camera / Selfie Mode (Curhat Langsung)',
@@ -203,7 +203,7 @@ export function generateRichFallback(
       dialogVO: `Hasilnya di luar dugaan, beneran ngebantu banget dan bikin makin percaya diri!`,
       notesMood: 'Gaya teks: Heart pop emoji. Warm studio tone.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Front selfie camera perspective, creator smiling broadly admiring noticeable real results from ${safeName}, holding product close to camera, packaging details match reference image, glowing warm ambiance.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Over the Shoulder (OTS)',
@@ -213,7 +213,7 @@ export function generateRichFallback(
       dialogVO: `Buat kalian yang mau coba ${safeName}, menurut aku ini 10/10 dan beneran wajib punya.`,
       notesMood: 'Gaya teks: Green verified badge.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Over-the-shoulder perspective, creator giving an enthusiastic thumbs-up while displaying ${safeName} bottle/package to camera, accurate label colors adhering to reference image.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Low Angle (Hero / Powerful)',
@@ -223,7 +223,7 @@ export function generateRichFallback(
       dialogVO: `Mumpung ${safeName} lagi ada voucher diskon & gratis ongkir, langsung klik keranjang kuning ya!`,
       notesMood: 'Gaya teks: Pulsing CTA Button. Urgent offer.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Low-angle dynamic hero shot, creator smiling invitingly and pointing down toward yellow cart icon while holding ${safeName}, packaging prominently featured, vibrant lighting, vertical 9:16 UGC video.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ];
 
@@ -242,7 +242,7 @@ export function generateRichFallback(
       dialogVO: `Akhirnya paket ${safeName} yang ditunggu-tunggu sampai juga! Yuk kita unboxing bareng.`,
       notesMood: 'Gaya teks: Minimalist Subtitle. Meja estetik rapi, tanpa muka.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Faceless UGC POV hands-only shot, neat manicured hands on aesthetic wooden desk holding delivered package of ${safeName}, reference image packaging match, 9:16 smartphone video, crisp soft shadows, 4k 60fps.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Top-Down Hands-Only (Tangan di Atas Meja)',
@@ -252,7 +252,7 @@ export function generateRichFallback(
       dialogVO: `Begitu dibuka, kemasan aslinya beneran estetik dan premium banget.`,
       notesMood: 'Gaya teks: Clean Bouncy. Flat lay meja bersih.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Flat lay 90-degree overhead top-down shot, hands smoothly sliding ${safeName} physical product out of retail box, aesthetic minimal backdrop, lighting highlights pristine finish matching reference image, vertical 9:16.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
@@ -262,7 +262,7 @@ export function generateRichFallback(
       dialogVO: `Perhatikan detail segel dan ciri kemasannya, rapi dan build quality-nya berkelas.`,
       notesMood: 'Gaya teks: Gold Badge. Pencahayaan makro tajam.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro slow 360-spin in hands, fingers turning ${safeName} to display official barcode and holographic seal, razor-sharp focus on brand font matching reference image, clean 4k 60fps.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hand Swatch & Application (Tangan Mengoles Produk)',
@@ -272,7 +272,7 @@ export function generateRichFallback(
       dialogVO: `Nah ini yang paling satisfying! Teksturnya langsung nyaman, gampang diratakan, dan gak lengket sama sekali.`,
       notesMood: 'Gaya teks: Glassmorphism Tag. Fokus gerakan jari.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands-only application, finger smoothly spreading velvety formula of ${safeName} across back of hand, satisfying ASMR texture motion, lighting reveals true product viscosity, 9:16 vertical.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hands-Only / Tangan Saja (Faceless / Tanpa Wajah)',
@@ -282,7 +282,7 @@ export function generateRichFallback(
       dialogVO: `Tinggal diaplikasikan secukupnya, hasilnya instan kerasa bedanya.`,
       notesMood: 'Gaya teks: Bullet point checklist. Aksi tangan jelas.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Hands demonstrating practical use of ${safeName}, elegant hand movement, steady camera angle, product front label always oriented towards camera matching reference image, 4k 60fps.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'POV Hands-Only (Hanya Tangan & Produk)',
@@ -292,7 +292,7 @@ export function generateRichFallback(
       dialogVO: `Jujur dari segi performa dan kualitas, ini beneran melebihi ekspektasi.`,
       notesMood: 'Gaya teks: Star Rating Badge. Gestur tangan puas.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] POV shot with right hand presenting ${safeName} bottle and left hand giving satisfied thumbs-up gesture, clean cozy aesthetic desk, packaging color accuracy locked to reference image, 9:16 vertical.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Top-Down Hands-Only (Tangan di Atas Meja)',
@@ -302,7 +302,7 @@ export function generateRichFallback(
       dialogVO: `Wajar kalau produk ini sering sold out di mana-mana.`,
       notesMood: 'Gaya teks: Verified badge.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Top-down flat lay view, hands placing ${safeName} gently next to aesthetic props on linen table, studio grade softbox lighting, brand label facing up matching reference image.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hand Swatch & Application (Tangan Mengoles Produk)',
@@ -312,7 +312,7 @@ export function generateRichFallback(
       dialogVO: `Praktis dibawa ke mana-mana dan gak ribet sama sekali.`,
       notesMood: 'Gaya teks: Floating glow text.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands gently finger-tapping on ${safeName} bottle cap with crisp satisfying movement, pristine product condition adhering to reference image, hyperrealistic 4k.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hands-Only / Tangan Saja (Faceless / Tanpa Wajah)',
@@ -322,7 +322,7 @@ export function generateRichFallback(
       dialogVO: `Mumpung lagi diskon & gratis ongkir, langsung checkout di keranjang kuning sekarang sebelum kehabisan!`,
       notesMood: 'Gaya teks: Pulsing CTA Button. Tangan menunjuk keranjang kuning.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Dynamic closing shot, hands holding ${safeName} with index finger pointing directly towards bottom-left corner where yellow cart button is located, product branding in crystal clear focus matching reference image, 9:16 vertical TikTok UGC.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ];
 
@@ -419,7 +419,7 @@ export function generateRichFallback(
       duration: sceneDuration,
       popupText,
       googleFlowPrompt: flowPrompt,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     };
   });
 

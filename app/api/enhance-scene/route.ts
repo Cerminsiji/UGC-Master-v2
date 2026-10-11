@@ -81,7 +81,7 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan. Berikan efek suara S
           ...parsedScene,
           popupText,
           googleFlowPrompt: flowPrompt,
-          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         },
       });
     }
@@ -110,7 +110,7 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan. Berikan efek suara S
         notesMood: scene.notesMood || 'Gaya teks: Dynamic Bouncy. Pencahayaan terang kontras.',
         duration: Number(scene.duration) || 3,
         googleFlowPrompt: fallbackFlowPrompt,
-        imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+        imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
       },
     });
   } catch (error: any) {

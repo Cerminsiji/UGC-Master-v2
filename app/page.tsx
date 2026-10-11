@@ -102,7 +102,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       notesMood: 'Gaya teks: Chat Bubble. Pencahayaan redup dramatis.',
       duration: 2,
       googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium shot of middle-aged creator scratching head in front of mirror with tight shirt, holding Sago Green Coffee sachet - On-Screen Pop-up Text Overlay: "DIET GAGAL MULU, BAJU GAK MUAT?! 😫" - packaging branding adhering to reference image, 9:16 vertical UGC video, 4k 60fps.',
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       id: 'sc_2',
@@ -115,7 +115,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       notesMood: 'Gaya teks: Clean Minimalist. Warm coffee morning aesthetic.',
       duration: 3,
       googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Close-up shot pouring coffee powder from green sachet into clear glass mug, boiling water swirling - On-Screen Pop-up Text Overlay: "UNTUNG KETEMU KOPI SAGO INI ☕✨" - authentic sachet color and typography matching reference image, vertical 9:16.',
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       id: 'sc_3',
@@ -128,7 +128,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       notesMood: 'Gaya teks: Headline Banner. Natural window light.',
       duration: 3,
       googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Over-the-shoulder shot sipping hot coffee mug on cozy living room sofa - On-Screen Pop-up Text Overlay: "GA GAMPANG LAPER SEHARIAN 🔥" - Sago Green Coffee retail packaging visible on coffee table adhering to reference image, 4k 60fps.',
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       id: 'sc_4',
@@ -141,7 +141,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       notesMood: 'Gaya teks: Bold Red/Green Before After. Split screen dynamic.',
       duration: 3,
       googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Dynamic before-after reveal, creator showing loose waistline on trousers while smiling confidently with Sago Green Coffee box - On-Screen Pop-up Text Overlay: "3 MINGGU TURUN 4.5 KG! 📉" - photorealistic lighting, 9:16 vertical smartphone format.',
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       id: 'sc_5',
@@ -154,7 +154,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       notesMood: 'Gaya teks: Minimal White Outline. High sharpness focus.',
       duration: 2,
       googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Macro close-up shot rotating box packaging in hands - On-Screen Pop-up Text Overlay: "100% HERBAL & BPOM AMAN 🌿" - crystal-clear focus on BPOM seal and green brand typography matching reference image, 4k 60fps.',
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       id: 'sc_6',
@@ -167,7 +167,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       notesMood: 'Gaya teks: Neon Pulsing Yellow. High energy closing CTA.',
       duration: 3,
       googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium close-up closing shot, smiling creator pointing towards yellow shopping cart icon holding Sago Green Coffee packaging - On-Screen Pop-up Text Overlay: "CEK KERANJANG KUNING SEKARANG! 🛒👇" - crisp vertical 9:16 TikTok UGC video.',
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ],
 };
@@ -381,7 +381,7 @@ export default function HomePage() {
           order: idx + 1,
           duration: Number(sc.duration) || 3,
           popupText,
-          imageReferenceNote: (sc as any).imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+          imageReferenceNote: (sc as any).imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
           googleFlowPrompt: (sc as any).googleFlowPrompt || `[Image 1 Reference: ${p.productName || 'Produk'}] Scene ${idx + 1} (${sc.cameraAngle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow reference image, 9:16 vertical, 4k 60fps.`,
         };
       }),
@@ -473,7 +473,7 @@ export default function HomePage() {
       notesMood: 'Gaya teks: Modern Yellow. Pencahayaan natural.',
       duration: 3,
       googleFlowPrompt: `[Image 1 Reference: ${currentProject.productName || 'Produk'}] Scene ${newOrder} (Medium Shot): Kreator memperlihatkan manfaat produk secara natural - On-Screen Pop-up Text Overlay: "HASIL MAKSIMAL ✨" - kemasan dan logo konsisten sesuai gambar referensi, 9:16 vertical smartphone video, 4k 60fps.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     };
 
     updateCurrentProject((p) => ({
@@ -590,7 +590,7 @@ export default function HomePage() {
             notesMood: sc.notesMood || '',
             duration: Number(sc.duration) || 3,
             googleFlowPrompt: flowPrompt,
-            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
           };
         });
 
@@ -757,7 +757,7 @@ export default function HomePage() {
           notesMood: 'Gaya teks: Bold Red. High energy.',
           duration: 3,
           googleFlowPrompt: '[Image 1 Reference: Produk Baru] POV close-up creator with surprised expression halting scroll, holding product - On-Screen Pop-up Text Overlay: "JANGAN SKIP DULU! 🔥" - 9:16 vertical UGC video, 4k 60fps.',
-          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         },
         {
           id: generateId(),
@@ -770,7 +770,7 @@ export default function HomePage() {
           notesMood: 'Gaya teks: Clean Modern.',
           duration: 3,
           googleFlowPrompt: '[Image 1 Reference: Produk Baru] Medium close-up creator demonstrating product to camera with genuine excitement - On-Screen Pop-up Text Overlay: "HASIL NYATA BANGET ✨" - branding matching reference image, 9:16 vertical.',
-          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         },
       ],
     };

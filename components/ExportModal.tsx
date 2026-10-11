@@ -96,7 +96,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       accumulatedTime = end;
       const startStr = `00:${String(start).padStart(2, '0')}`;
       const endStr = `00:${String(end).padStart(2, '0')}`;
-      output += `[${startStr} - ${endStr}] Adegan ${i + 1}: ${sc.popupText || '(Tanpa Teks)'}\n`;
+      const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
+        ? sc.popupText.trim()
+        : (i === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨');
+      output += `[${startStr} - ${endStr}] Adegan ${i + 1}: ${popupText}\n`;
     });
 
     output += `\n=== 🎙️ 2. SUBTITLE / VOICE OVER TRACK ===\n`;
@@ -144,7 +147,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       output += `Prompt Google Flow (Image-to-Video):\n`;
       output += `${flowPrompt}\n`;
       output += `Teks Pop-up Layar: "${popupText}"\n`;
-      output += `Kepatuhan Referensi Image: ${sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload'}\n`;
+      output += `Kepatuhan Referensi Image: ${sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached'}\n`;
       output += `Dialog VO: "${sc.dialogVO}"\n`;
       output += `SFX: ${sc.soundEffect || '-'}\n\n`;
     });
@@ -157,7 +160,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       {
         projectName: title,
         category: categoryName,
-        referenceImage: referenceImage || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+        referenceImage: referenceImage || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         totalDuration,
         googleFlowPipeline: scenes.map((sc, i) => {
           const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
@@ -181,7 +184,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             duration: Number(sc.duration) || 3,
             popupText,
             googleFlowPrompt: flowPrompt,
-            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
             visualAction: sc.visualAction,
             dialogVO: sc.dialogVO,
             soundEffect: sc.soundEffect || '-',
@@ -245,7 +248,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             ...sc,
             order: sc.order || i + 1,
             popupText,
-            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
             googleFlowPrompt: flowPrompt,
           };
         }),
@@ -757,34 +760,43 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     </div>
 
                     {/* Teks Pop-up Layar */}
-                    <div className="flex items-center justify-between bg-[#0a1526] border border-cyan-800/40 px-3 py-1.5 rounded-lg text-xs">
-                      <div className="flex items-center gap-2 truncate">
-                        <span className="text-cyan-400 font-bold uppercase text-[10px] tracking-wider shrink-0">
-                          💬 Teks Pop-up:
-                        </span>
-                        <span className="font-extrabold text-cyan-100 truncate">
-                          {sc.popupText || '(Tanpa Teks Pop-up)'}
-                        </span>
-                      </div>
-                      {sc.popupText && (
-                        <button
-                          onClick={() => handleCopyText(sc.popupText, `flow_popup_${i}`)}
-                          className="text-[10px] font-bold text-cyan-300 hover:text-cyan-100 flex items-center gap-1 font-mono shrink-0 ml-2 bg-cyan-950 hover:bg-cyan-900 border border-cyan-800/60 px-2 py-0.5 rounded transition-colors"
-                        >
-                          {copiedType === `flow_popup_${i}` ? (
-                            <>
-                              <Check className="w-3 h-3 text-emerald-400" />
-                              <span>Tersalin!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3 h-3" />
-                              <span>Salin Teks</span>
-                            </>
-                          )}
-                        </button>
-                      )}
-                    </div>
+                    {(() => {
+                      const effectivePopup = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
+                        ? sc.popupText.trim()
+                        : (() => {
+                            const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
+                            if (match && match[1]) return match[1].trim();
+                            return i === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨';
+                          })();
+                      return (
+                        <div className="flex items-center justify-between bg-[#0a1526] border border-cyan-800/40 px-3 py-1.5 rounded-lg text-xs">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="text-cyan-400 font-bold uppercase text-[10px] tracking-wider shrink-0">
+                              💬 Teks Pop-up:
+                            </span>
+                            <span className="font-extrabold text-cyan-100 truncate">
+                              {effectivePopup}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleCopyText(effectivePopup, `flow_popup_${i}`)}
+                            className="text-[10px] font-bold text-cyan-300 hover:text-cyan-100 flex items-center gap-1 font-mono shrink-0 ml-2 bg-cyan-950 hover:bg-cyan-900 border border-cyan-800/60 px-2 py-0.5 rounded transition-colors"
+                          >
+                            {copiedType === `flow_popup_${i}` ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span>Tersalin!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span>Salin Teks</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })()}
 
                     <div className="bg-[#060a12] p-2.5 rounded-lg border border-cyan-950">
                       <p className="text-xs font-mono text-cyan-200/90 leading-relaxed whitespace-pre-wrap">
@@ -794,7 +806,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
                     <div className="flex items-center gap-1.5 text-[11px] text-slate-400 italic">
                       <span className="text-cyan-400 font-semibold not-italic">🎯 Kepatuhan Visual:</span>
-                      <span>{sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload'}</span>
+                      <span>{sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached'}</span>
                     </div>
                   </div>
                 ))}
@@ -870,7 +882,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                               ...sc,
                               order: sc.order || i + 1,
                               popupText,
-                              imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+                              imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
                             };
                           }),
                           null,

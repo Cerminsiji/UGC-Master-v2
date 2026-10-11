@@ -683,7 +683,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({
                 type="text"
                 value={scene.imageReferenceNote || ''}
                 onChange={(e) => handleChange('imageReferenceNote', e.target.value)}
-                placeholder="Pastikan Produk sesuai Gambar referensi yang sudah di upload"
+                placeholder="Pastikan Produk sesuai Gambar referensi yang sudah di attached"
                 className="flex-1 bg-transparent text-slate-300 placeholder-slate-500 outline-none text-[10px]"
               />
             </div>

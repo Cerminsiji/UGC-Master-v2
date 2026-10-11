@@ -70,7 +70,7 @@ SETIAP ADEGAN WAJIB:
    Format prompt Google Flow:
    "[Image 1 Reference: ${productName}] {Shot Type & Camera Motion} - {Subject Action & Talent Expression} - {Product Physical Interaction} - {Lighting & Background Environment} - {On-Screen Pop-up Text Overlay: popupText} - {Aesthetic Style: Photorealistic 9:16 vertical smartphone UGC video, raw camera sensor texture, crisp focus, 4K 60fps, no morphing, no artifacts}"
 3. Menghasilkan 'imageReferenceNote':
-   Wajib persis bernilai: "Pastikan Produk sesuai Gambar referensi yang sudah di upload"
+   Wajib persis bernilai: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"
    Agar setiap adegan selalu mengunci konsistensi gambar referensi produk di pipeline Google Flow tanpa kesalahan.
 4. Menghasilkan 'popupText' (Teks Pop-up Layar):
    Wajib SELALU MUNCUL di dalam JSON pada setiap adegan, berupa stiker teks pop-up kapital tebal yang mencolok dan selaras dengan perintah overlay teks pada Google Flow.
@@ -108,7 +108,7 @@ Syarat Wajib Format Storyboard:
 8. Durasi setiap adegan (dalam integer detik) jika dijumlahkan WAJIB bernilai total mendekati ${targetDuration} detik. Jika durasi pendek (${targetDuration}s) dan adegan banyak (hingga 9 adegan), gunakan durasi fast-cut 1-2 detik per adegan.
 9. BUATKAN AUTO CAPTION DENGAN HASHTAG: Tulis 1 caption postingan media sosial yang menarik dan menjual, LENGKAP dengan 2-4 hashtag trending.
    PENTING: TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG HARUS MAKSIMAL 150 KARAKTER!
-10. SETIAP ADEGAN WAJIB menyertakan googleFlowPrompt (mengacu ketat ke referensi image [Image 1 Reference: ProductName] serta On-Screen Pop-up Text Overlay) dan imageReferenceNote bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di upload"! Bebas dari segala typo.`;
+10. SETIAP ADEGAN WAJIB menyertakan googleFlowPrompt (mengacu ketat ke referensi image [Image 1 Reference: ProductName] serta On-Screen Pop-up Text Overlay) dan imageReferenceNote bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"! Bebas dari segala typo.`;
 
     const config = {
       responseMimeType: 'application/json',
@@ -170,7 +170,7 @@ Syarat Wajib Format Storyboard:
                 },
                 imageReferenceNote: {
                   type: Type.STRING,
-                  description: 'Wajib bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di upload"',
+                  description: 'Wajib bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"',
                 },
               },
               required: [
@@ -251,7 +251,7 @@ Syarat Wajib Format Storyboard:
           visualAction: visual,
           popupText,
           googleFlowPrompt: flowPrompt,
-          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di upload',
+          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         };
       });
 
