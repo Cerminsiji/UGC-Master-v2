@@ -127,7 +127,7 @@ Tugas Anda:
 3. category: Pilih 1 dari 12 kategori di atas yang paling tepat untuk mempromosikan produk ini.
 4. productDescription: Deskripsi produk yang menarik, menjelaskan manfaat utama dan cara kerjanya secara ringkas.
 5. targetAudience: Target audiens spesifik (misal: "Pria dan wanita 20-35 tahun yang ingin badan ideal tanpa lapar").
-6. keySellingPoints: Poin keunggulan utama (USP) yang persuasif dan memicu checkout di keranjang kuning.
+6. keySellingPoints: Poin keunggulan utama (USP) yang persuasif dan memicu checkout di keranjang belanja / klik keranjang di bawah.
 7. tone: Nada bicara yang paling pas ("Santai, Relatable & Meyakinkan", "Hype, Heboh & Excited", "Edukatif, Tenang & Elegan", "Drama Komedi & Sketsa Lucu", atau "ASMR Bisik & Estetik").
 8. targetPlatform: Platform yang cocok ("TikTok Shop", "Tokopedia", "Shopee Video", "Instagram Reels", "YouTube Shorts").
 9. targetDuration: Rekomendasi durasi (integer: 15, 30, 45, atau 60 detik).

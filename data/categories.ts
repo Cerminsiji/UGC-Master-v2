@@ -6,7 +6,7 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
     name: 'Affiliate',
     iconName: 'ShoppingBag',
     badgeText: 'AFFILIATE',
-    description: 'Format penjualan produk cepat untuk TikTok Shop & Shopee Video dengan fokus hook dan CTA keranjang kuning.',
+    description: 'Format penjualan produk cepat untuk TikTok Shop & Shopee Video dengan fokus hook dan CTA keranjang belanja (klik keranjang di bawah).',
     recommendedDuration: 30,
     defaultScenes: [
       {
@@ -47,11 +47,11 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
       },
       {
         cameraAngle: 'Medium Shot',
-        visualAction: 'Kreator tersenyum memegang produk sambil menunjuk ke arah kiri bawah layar.',
-        popupText: 'PROMO FLASH SALE + FREE ONGKIR 🔥',
+        visualAction: 'Kreator tersenyum memegang produk sambil menunjuk ke arah keranjang di bawah.',
+        popupText: 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇',
         soundEffect: 'Cha-ching cash register & Applause',
-        dialogVO: 'Mumpung lagi promo diskon gede dan ada gratis ongkir, langsung amankan di keranjang kuning ya!',
-        notesMood: 'Gaya teks: CTA Yellow Pulsing. Panah mengarah ke keranjang.',
+        dialogVO: 'Mumpung lagi promo diskon gede dan ada gratis ongkir, langsung klik keranjang di bawah ya!',
+        notesMood: 'Gaya teks: CTA Pulsing. Panah mengarah ke keranjang di bawah.',
         duration: 3
       }
     ]
@@ -267,10 +267,10 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
       },
       {
         cameraAngle: 'Medium Shot Karakter Berdua',
-        visualAction: 'Karakter A dan B tos tangan, lalu kompak menunjuk ke keranjang kuning sambil tertawa.',
+        visualAction: 'Karakter A dan B tos tangan, lalu kompak menunjuk ke keranjang di bawah sambil tertawa.',
         popupText: 'BELI SEBELUM KEHABISAN DI BAWAH YA 🛒',
         soundEffect: 'Cha-ching cash register & Air horn blast',
-        dialogVO: 'Beli di keranjang kuning lah! Buruan checkout sebelum teman kantor lu pada ikutan borong!',
+        dialogVO: 'Klik keranjang di bawah lah! Buruan checkout sebelum teman kantor lu pada ikutan borong!',
         notesMood: 'Gaya teks: Bouncy comic CTA.',
         duration: 3
       }
@@ -322,10 +322,10 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
       },
       {
         cameraAngle: 'POV Menunjuk Produk',
-        visualAction: 'Kamera menyorot produk di samping kopi estetik, jempol kreator menunjuk keranjang.',
-        popupText: 'LINK KERANJANG KUNING NO 1 YA 🛒',
+        visualAction: 'Kamera menyorot produk di samping kopi estetik, jempol kreator menunjuk ke keranjang di bawah.',
+        popupText: 'KLIK KERANJANG DI BAWAH NO 1 YA 🛒',
         soundEffect: 'Cha-ching cash register & Bell ding',
-        dialogVO: 'Yang mau samaan rahasia produktif aku, link-nya udah aku simpan di keranjang kuning ya.',
+        dialogVO: 'Yang mau samaan rahasia produktif aku, langsung klik keranjang di bawah ya.',
         notesMood: 'Gaya teks: Minimalist cozy CTA.',
         duration: 3
       }
@@ -378,9 +378,9 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
       {
         cameraAngle: 'Medium Shot',
         visualAction: 'Final reveal outfit lengkap dengan senyum memikat, menunjukkan produk ke kamera.',
-        popupText: 'SEMUA PRODUK DI KERANJANG KUNING 🛒',
+        popupText: 'SEMUA PRODUK DI KERANJANG DI BAWAH 🛒',
         soundEffect: 'Cha-ching cash register & Cheer',
-        dialogVO: 'Gimana look hari ini? Produk yang aku pakai ada di keranjang kuning mumpung ready stock ya!',
+        dialogVO: 'Gimana look hari ini? Produk yang aku pakai ada di keranjang di bawah mumpung ready stock ya!',
         notesMood: 'Gaya teks: Romantic soft CTA.',
         duration: 3
       }
@@ -435,7 +435,7 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
         visualAction: 'Talent tersenyum bangga memegang produk dengan gestur mengajak checkout.',
         popupText: 'GARANSI UANG KEMBALI + DISKON 🛒',
         soundEffect: 'Cha-ching cash register & Applause',
-        dialogVO: 'Ada garansi uang kembali juga lho. Buruan checkout di keranjang kuning sebelum harganya naik!',
+        dialogVO: 'Ada garansi uang kembali juga lho. Buruan checkout di keranjang di bawah sebelum harganya naik!',
         notesMood: 'Gaya teks: Urgent CTA Flash Sale.',
         duration: 3
       }
@@ -496,11 +496,11 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
       },
       {
         cameraAngle: 'Medium Close-up',
-        visualAction: 'Bapak tersenyum memegang produk sambil menunjuk ke keranjang kuning di kiri bawah.',
+        visualAction: 'Bapak tersenyum memegang produk sambil menunjuk ke keranjang di bawah.',
         popupText: 'PROMO BELI 2 GRATIS 1 + FREE ONGKIR 🛒',
         soundEffect: 'Cha-ching cash register & Applause',
-        dialogVO: 'Cobain deh di keranjang kuning mumpung ada promo beli 2 gratis 1 dan gratis ongkir!',
-        notesMood: 'Gaya teks: Flashing yellow CTA button.',
+        dialogVO: 'Cobain deh klik keranjang di bawah mumpung ada promo beli 2 gratis 1 dan gratis ongkir!',
+        notesMood: 'Gaya teks: Flashing CTA button.',
         duration: 3
       }
     ]
@@ -554,7 +554,7 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
         visualAction: 'Kreator memberi jempol ke kamera sambil menunjukkan kemasan produk yang murah meriah.',
         popupText: 'SAVE & SHARE KE TEMENMU! 📌',
         soundEffect: 'Cha-ching cash register & Bell ding',
-        dialogVO: 'Gampang banget kan? Save video ini dan checkout alatnya di keranjang kuning ya!',
+        dialogVO: 'Gampang banget kan? Save video ini dan checkout alatnya di keranjang di bawah ya!',
         notesMood: 'Gaya teks: Bookmark CTA.',
         duration: 3
       }
@@ -607,9 +607,9 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
       {
         cameraAngle: 'Medium Close-up',
         visualAction: 'Kreator tersenyum tenang memegang produk dengan gestur damai menunjuk ke bawah.',
-        popupText: 'SO CRISP & CLEAN! LINK DI KERANJANG 🛒',
+        popupText: 'SO CRISP & CLEAN! KLIK KERANJANG DI BAWAH 🛒',
         soundEffect: 'Bell counter ding & Sparkle magic ting',
-        dialogVO: 'Sensasi relaksasi terbaik. Link produk original ada di keranjang kuning ya.',
+        dialogVO: 'Sensasi relaksasi terbaik. Link produk original ada di keranjang di bawah ya.',
         notesMood: 'Gaya teks: Glowing zen badge.',
         duration: 3
       }
@@ -661,10 +661,10 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
       },
       {
         cameraAngle: 'Medium Shot',
-        visualAction: 'Kreator memegang semua barang favorit sambil menunjuk daftar keranjang kuning.',
-        popupText: 'SEMUA LINK DI KERANJANG NO 1-5 🛒',
+        visualAction: 'Kreator memegang semua barang favorit sambil menunjuk daftar keranjang di bawah.',
+        popupText: 'SEMUA LINK DI KERANJANG DI BAWAH 🛒',
         soundEffect: 'Cha-ching cash register & Applause',
-        dialogVO: 'Favorit kalian yang nomor berapa nih? Langsung klik keranjang kuning sebelum stoknya ludes!',
+        dialogVO: 'Favorit kalian yang nomor berapa nih? Langsung klik keranjang di bawah sebelum stoknya ludes!',
         notesMood: 'Gaya teks: Numbered list CTA.',
         duration: 3
       }

@@ -7,24 +7,33 @@ import {
 } from '@/lib/gemini-ugc';
 
 export async function POST(req: NextRequest) {
+  let body: any = {};
   try {
-    const body = await req.json();
+    body = await req.json();
     const {
       productName = 'Produk Viral',
       category = 'UGC',
       keySellingPoints = '',
       targetAudience = '',
-      platform = 'TikTok Shop',
     } = body;
 
-    const prompt = `Buatkan 1 caption postingan media sosial (${platform}) yang super menjual, catchy, ada call-to-action ke keranjang kuning/bio, dan 2-4 hashtag trending untuk:
+    const rawPlatform = body.targetPlatform || body.platform || 'TikTok Shop';
+    const platform = typeof rawPlatform === 'string' ? rawPlatform.trim() : 'TikTok Shop';
+    const isShopee = platform.toLowerCase().includes('shopee');
+    const isTikTok = platform.toLowerCase().includes('tiktok');
+    const ctaCart = isShopee
+      ? 'keranjang oren / klik keranjang di bawah (DILARANG KERAS menyebut keranjang kuning)'
+      : (isTikTok ? 'keranjang kuning / klik keranjang di bawah' : 'klik keranjang di bawah / link bio');
+
+    const prompt = `Buatkan 1 caption postingan media sosial (${platform}) yang super menjual, catchy, ada call-to-action ke ${ctaCart}, dan 2-4 hashtag trending (${isShopee ? '#ShopeeVideo #ShopeeHaul' : (isTikTok ? '#TikTokShop #fyp' : '#fyp #viral')}) untuk:
 Produk: ${productName}
 Kategori: ${category}
 USP: ${keySellingPoints}
 Target Audiens: ${targetAudience}
 
 ATURAN PALING KRUSIAL:
-TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG DAN SPASI HARUS MAKSIMAL 150 KARAKTER (Character Count <= 150).`;
+1. TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG DAN SPASI HARUS MAKSIMAL 150 KARAKTER (Character Count <= 150).
+${isShopee ? '2. Karena platform adalah Shopee, WAJIB gunakan "keranjang oren" atau "klik keranjang di bawah". JANGAN PERNAH gunakan istilah "keranjang kuning"!' : '2. Gunakan call-to-action yang relevan dengan platform.'}`;
 
     const config = {
       responseMimeType: 'application/json',
@@ -56,24 +65,30 @@ TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG DAN SPASI HARUS MAKSIMAL 150 KAR
     );
 
     const parsed = parseSafeJson<any>(raw);
-    let finalCaption = parsed?.caption || formatShortCaption(productName, category, keySellingPoints);
+    let finalCaption = parsed?.caption || formatShortCaption(productName, category, keySellingPoints, platform);
     if (finalCaption.length > 150) {
       finalCaption = finalCaption.slice(0, 147) + '...';
     }
+
+    const defaultHashtags = isShopee
+      ? ['#ShopeeVideo', '#ShopeeHaul', '#SpillRacunShopee']
+      : ['#TikTokShop', '#RacunTikTok', '#fyp'];
 
     return NextResponse.json({
       success: true,
       caption: finalCaption,
       characterCount: finalCaption.length,
-      hashtags: parsed?.hashtags || ['#RacunTikTok', '#fyp', '#TikTokShop'],
+      hashtags: parsed?.hashtags || defaultHashtags,
     });
   } catch (error: any) {
-    const fallbackCaption = formatShortCaption('Produk');
+    const rawPlatform = body?.targetPlatform || body?.platform || 'TikTok Shop';
+    const fallbackCaption = formatShortCaption('Produk', '', '', rawPlatform);
+    const isShopee = String(rawPlatform).toLowerCase().includes('shopee');
     return NextResponse.json({
       success: true,
       caption: fallbackCaption,
       characterCount: fallbackCaption.length,
-      hashtags: ['#RacunTikTok', '#fyp', '#TikTokShop'],
+      hashtags: isShopee ? ['#ShopeeVideo', '#ShopeeHaul'] : ['#TikTokShop', '#RacunTikTok', '#fyp'],
     });
   }
 }

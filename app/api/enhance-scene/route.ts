@@ -21,11 +21,18 @@ export async function POST(req: NextRequest) {
       ? `Gaya kamera yang diinginkan: "${cameraAngleStyle}". Pastikan cameraAngle adegan ini jelas dan dinamis.`
       : '';
 
+    const rawPlatform = body.targetPlatform || body.platform || '';
+    const isShopee = String(rawPlatform).toLowerCase().includes('shopee') || instruction.toLowerCase().includes('shopee');
+    const platformCtaRule = isShopee
+      ? `ATURAN KHUSUS PLATFORM SHOPEE: Jika adegan ini berisi Call-To-Action (CTA) / ajakan beli, WAJIB gunakan "Keranjang Oren" atau kalimat global "Klik keranjang di bawah". DILARANG KERAS menggunakan istilah "keranjang kuning"!`
+      : `ATURAN CTA: Jika adegan ini berisi Call-To-Action (CTA), gunakan ajakan yang tepat atau kalimat global "Klik keranjang di bawah".`;
+
     const prompt = `Kamu adalah Creative UGC Director profesional. Tingkatkan adegan storyboard video berikut agar lebih viral, natural, dan memicu konversi tinggi.
 Instruksi perbaikan: "${instruction}"
 Kategori video: "${category}"
 ${productInstruction}
 ${angleInstruction}
+${platformCtaRule}
 
 Adegan saat ini:
 - Sudut kamera: ${scene.cameraAngle || 'Medium Shot'}

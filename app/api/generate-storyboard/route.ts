@@ -24,9 +24,13 @@ export async function POST(req: NextRequest) {
       preferredCameraAngles = [],
       targetDuration = 30,
       targetSceneCount = 0,
-      platform = 'TikTok / Reels',
       language = 'id',
     } = body;
+
+    const rawPlatform = body.targetPlatform || body.platform || 'TikTok Shop';
+    const platform = typeof rawPlatform === 'string' ? rawPlatform.trim() : 'TikTok Shop';
+    const isShopee = platform.toLowerCase().includes('shopee');
+    const isTikTok = platform.toLowerCase().includes('tiktok');
 
     const sceneCountText = targetSceneCount && targetSceneCount >= 2 && targetSceneCount <= 9
       ? `WAJIB BUAT TEPAT ${targetSceneCount} ADEGAN (meskipun durasi hanya ${targetDuration} detik, buat ${targetSceneCount} adegan bergaya fast-cut mikro yang dinamis!).`
@@ -54,10 +58,32 @@ Sesuaikan sudut kamera di setiap adegan dengan gaya ini secara sinematik vertika
 
     const handsOnlyInstruction = isHandsOnly
       ? `\nATURAN MUTLAK KAMERA HANYA TANGAN SAJA (FACELESS UGC - 100% TANPA WAJAH):
-- Kamera HANYA merekam gerakan tangan dan interaksi produk (unboxing, membuka segel, memegang kemasan, mengoleskan tekstur/swatch, menunjuk keranjang kuning).
+- Kamera HANYA merekam gerakan tangan dan interaksi produk (unboxing, membuka segel, memegang kemasan, mengoleskan tekstur/swatch, menunjuk ${isShopee ? 'keranjang oren' : (isTikTok ? 'keranjang kuning atau keranjang di bawah' : 'keranjang di bawah')}).
 - DILARANG KERAS memunculkan wajah, ekspresi muka, tatapan mata, atau kepala talent di dalam deskripsi adegan visualAction!
 - Semua visualAction WAJIB diawali dengan aksi tangan (misal: "Tangan talent memegang...", "Kamera menyorot tangan talent yang sedang...", "Tangan talent mengoles tekstur produk di atas meja estetik...").`
       : '';
+
+    const platformCtaRule = isShopee
+      ? `\n=== ATURAN MUTLAK CTA & NARASI PLATFORM SHOPEE (ANTI KERANJANG KUNING) ===
+- Target Platform saat ini: SHOPEE (${platform}).
+- WAJIB gunakan istilah "Keranjang Oren" (Orange Cart) ATAU kalimat global seperti "Klik keranjang di bawah" / "keranjang di bawah".
+- DILARANG KERAS menyebut atau menulis "keranjang kuning"! Jika target Shopee, sebutan kuning adalah kesalahan fatal.
+- Voiceover (dialogVO) adegan penutup / CTA: "Langsung checkout di keranjang oren ya!", "Mumpung lagi promo & free ongkir, klik keranjang oren sekarang!", atau "Langsung klik keranjang di bawah ya!"
+- Floating / Pop-up Text (popupText): "KLIK KERANJANG OREN SEKARANG! 🛒👇", "CEK KERANJANG OREN DI BAWAH! 🛒👇", atau "KLIK KERANJANG DI BAWAH! 🛒👇"
+- Narasi Aksi Visual (visualAction): Talent menunjuk ke arah pojok kiri bawah ke arah keranjang oren Shopee / menunjuk keranjang di bawah.`
+      : (isTikTok
+        ? `\n=== ATURAN CTA & NARASI PLATFORM TIKTOK SHOP ===
+- Target Platform saat ini: TIKTOK SHOP (${platform}).
+- Gunakan istilah "Keranjang Kuning" ATAU kalimat global seperti "Klik keranjang di bawah" / "Cek keranjang di bawah sekarang".
+- Voiceover (dialogVO) CTA: "Langsung klik keranjang kuning ya!" atau "Langsung klik keranjang di bawah ya!"
+- Floating / Pop-up Text (popupText): "CEK KERANJANG KUNING SEKARANG! 🛒👇" atau "KLIK KERANJANG DI BAWAH! 🛒👇"
+- Narasi Aksi Visual (visualAction): Talent menunjuk ke arah keranjang kuning / keranjang di bawah.`
+        : `\n=== ATURAN CTA & NARASI PLATFORM GLOBAL (${platform}) ===
+- Target Platform saat ini: ${platform}.
+- WAJIB gunakan kalimat global / universal: "Klik keranjang di bawah", "Cek keranjang di bawah", "Checkout lewat keranjang di bawah ya!"
+- DILARANG menyebut keranjang kuning untuk platform ini.
+- Floating / Pop-up Text (popupText): "KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇"
+- Narasi Aksi Visual (visualAction): Talent menunjuk ke arah keranjang di bawah.`);
 
     const googleFlowReferenceInstruction = `
 === ATURAN MUTLAK KEPATUHAN REFERENSI IMAGE PADA GOOGLE FLOW VIDEO UGC ===
@@ -86,6 +112,7 @@ Buatkan storyboard UGC video lengkap yang terbukti memiliki Conversion Rate & Re
 ${productBrief}
 ${googleFlowReferenceInstruction}
 ${handsOnlyInstruction}
+${platformCtaRule}
 
 Kategori Konten: ${category}
 Target Audiens: ${targetAudience}
@@ -100,13 +127,13 @@ Bahasa: ${language === 'id' ? 'Bahasa Indonesia (Gaya bicara kreator UGC TikTok 
 Syarat Wajib Format Storyboard:
 1. Adegan 1 WAJIB HOOK 3 DETIK PERTAMA (Visual + Audio/SFX + On-Screen Text) yang bikin orang stop scrolling.
 2. Adegan berikutnya mendemonstrasikan masalah / unboxing / tutorial / sebelum vs sesudah / manfaat nyata produk secara dinamis.
-3. Adegan terakhir WAJIB Call To Action (CTA) yang jelas dan mendesak (misal: checkout di keranjang kuning mumpung promo diskon & gratis ongkir).
+3. Adegan terakhir WAJIB Call To Action (CTA) yang jelas dan mendesak: ${isShopee ? 'checkout di keranjang oren (BUKAN keranjang kuning!) atau gunakan kalimat global "klik keranjang di bawah"' : (isTikTok ? 'checkout di keranjang kuning atau klik keranjang di bawah' : 'checkout lewat keranjang di bawah')} mumpung promo diskon & gratis ongkir.
 4. Sudut kamera (cameraAngle) di setiap adegan WAJIB disesuaikan dengan instruksi sudut kamera di atas.
 5. Berikan Sound Effect (SFX) yang KAYA, BERVARIASI, dan SPESIFIK di setiap adegan (kombinasi ASMR nyata, meme viral, bass drop, swoosh, cash register, ding, crunch, water swirl, heartbeat). DILARANG menggunakan SFX yang sama berulang-ulang di tiap adegan.
 6. Naskah Voiceover (VO) harus BERVARIASI SECARA EMOSIONAL dan intonasi alami: dari penasaran, heboh, curhat, hingga meyakinkan saat closing CTA. Sesuaikan panjang kata dengan durasi adegan agar tidak terburu-buru.
 7. Pop-up Text (popupText) WAJIB SELALU TERISI di setiap adegan berupa huruf kapital mencolok & singkat, dan sinkron dengan overlay pada prompt Google Flow.
 8. Durasi setiap adegan (dalam integer detik) jika dijumlahkan WAJIB bernilai total mendekati ${targetDuration} detik. Jika durasi pendek (${targetDuration}s) dan adegan banyak (hingga 9 adegan), gunakan durasi fast-cut 1-2 detik per adegan.
-9. BUATKAN AUTO CAPTION DENGAN HASHTAG: Tulis 1 caption postingan media sosial yang menarik dan menjual, LENGKAP dengan 2-4 hashtag trending.
+9. BUATKAN AUTO CAPTION DENGAN HASHTAG: Tulis 1 caption postingan media sosial yang menarik dan menjual (sesuaikan CTA: ${isShopee ? 'keranjang oren / klik keranjang di bawah' : (isTikTok ? 'keranjang kuning / klik keranjang di bawah' : 'klik keranjang di bawah')}), LENGKAP dengan 2-4 hashtag trending (${isShopee ? '#ShopeeVideo #ShopeeHaul' : '#TikTokShop #fyp'}).
    PENTING: TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG HARUS MAKSIMAL 150 KARAKTER!
 10. SETIAP ADEGAN WAJIB menyertakan googleFlowPrompt (mengacu ketat ke referensi image [Image 1 Reference: ProductName] serta On-Screen Pop-up Text Overlay) dan imageReferenceNote bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"! Bebas dari segala typo.`;
 
@@ -200,7 +227,7 @@ Syarat Wajib Format Storyboard:
     const parsedData = parseSafeJson<any>(rawText);
     if (parsedData && Array.isArray(parsedData.scenes) && parsedData.scenes.length > 0) {
       if (!parsedData.caption || typeof parsedData.caption !== 'string') {
-        parsedData.caption = formatShortCaption(productName, category, keySellingPoints);
+        parsedData.caption = formatShortCaption(productName, category, keySellingPoints, platform);
       } else if (parsedData.caption.length > 150) {
         parsedData.caption = parsedData.caption.slice(0, 147) + '...';
       }
@@ -226,7 +253,7 @@ Syarat Wajib Format Storyboard:
               idx === 0
                 ? 'JANGAN SKIP DULU! 🔥'
                 : idx === parsedData.scenes.length - 1
-                ? 'CEK KERANJANG KUNING SEKARANG! 🛒'
+                ? (isShopee ? 'KLIK KERANJANG OREN DI BAWAH! 🛒👇' : (isTikTok ? 'CEK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇'))
                 : `SOLUSI: ${productName.toUpperCase()}`;
           }
         }
@@ -272,7 +299,8 @@ Syarat Wajib Format Storyboard:
       targetSceneCount,
       cameraAngleStyle,
       preferredCameraAngles,
-      referenceImage
+      referenceImage,
+      platform
     );
 
     return NextResponse.json({

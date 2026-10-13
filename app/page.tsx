@@ -23,6 +23,7 @@ import {
   HookVariant,
 } from '@/types';
 import { copyToClipboard, generateId } from '@/utils/helpers';
+import { formatShortCaption } from '@/lib/gemini-ugc';
 import {
   Plus,
   Sparkles,
@@ -55,7 +56,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
   tone: 'Santai, Mengalir & Natural (Teman Curhat)',
   targetPlatform: 'TikTok Shop',
   targetAudience: 'Pria/wanita diet & sehat',
-  caption: 'Cobain Sago Green Coffee! Bikin makin pede & hasil nyata. Cek keranjang kuning mumpung promo! ✨ #RacunTikTok #fyp #TikTokShop',
+  caption: 'Cobain Sago Green Coffee! Bikin makin pede & hasil nyata. Klik keranjang di bawah mumpung promo! ✨ #fyp #viral',
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
   hookVariants: [
@@ -160,13 +161,13 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       id: 'sc_6',
       order: 6,
       cameraAngle: 'Medium Close-up',
-      visualAction: 'Bapak tersenyum segar mengacungkan jempol sambil menunjuk ke sudut kiri bawah layar.',
-      popupText: 'CEK KERANJANG KUNING SEKARANG! 🛒👇',
+      visualAction: 'Bapak tersenyum segar mengacungkan jempol sambil menunjuk ke arah keranjang di bawah.',
+      popupText: 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇',
       soundEffect: 'Vine boom & Pop click',
-      dialogVO: 'Mumpung lagi promo diskon bundle, langsung klik keranjang kuning ya!',
-      notesMood: 'Gaya teks: Neon Pulsing Yellow. High energy closing CTA.',
+      dialogVO: 'Mumpung lagi promo diskon bundle, langsung klik keranjang di bawah ya!',
+      notesMood: 'Gaya teks: Neon Pulsing CTA. High energy closing CTA.',
       duration: 3,
-      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium close-up closing shot, smiling creator pointing towards yellow shopping cart icon holding Sago Green Coffee packaging - On-Screen Pop-up Text Overlay: "CEK KERANJANG KUNING SEKARANG! 🛒👇" - crisp vertical 9:16 TikTok UGC video.',
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium close-up closing shot, smiling creator pointing towards shopping cart icon below holding Sago Green Coffee packaging - On-Screen Pop-up Text Overlay: "KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇" - crisp vertical 9:16 UGC video.',
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ],
@@ -566,11 +567,18 @@ export default function HomePage() {
       }
 
       if (resData.success && resData.data) {
-        const genScenes: Scene[] = (resData.data.scenes || []).map((sc: any, i: number) => {
+        const isShopee = (params.targetPlatform || '').toLowerCase().includes('shopee');
+        const isTikTok = (params.targetPlatform || '').toLowerCase().includes('tiktok');
+        const defaultClosingPopup = isShopee
+          ? 'KLIK KERANJANG OREN DI BAWAH! 🛒👇'
+          : (isTikTok ? 'CEK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇');
+
+        const scenesArray = resData.data.scenes || [];
+        const genScenes: Scene[] = scenesArray.map((sc: any, i: number) => {
           const popupText =
             sc.popupText && typeof sc.popupText === 'string' && sc.popupText.trim() && sc.popupText.trim() !== '-'
               ? sc.popupText.trim()
-              : (i === 0 ? 'JANGAN SKIP DULU! 🔥' : `SOLUSI: ${params.productName.toUpperCase()}`);
+              : (i === 0 ? 'JANGAN SKIP DULU! 🔥' : (i === scenesArray.length - 1 ? defaultClosingPopup : `SOLUSI: ${params.productName.toUpperCase()}`));
 
           let flowPrompt = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string' ? sc.googleFlowPrompt.trim() : '';
           if (!flowPrompt) {
@@ -619,7 +627,7 @@ export default function HomePage() {
           preferredCameraAngles: params.preferredCameraAngles,
           targetPlatform: params.targetPlatform,
           targetAudience: params.targetAudience,
-          caption: resData.data.caption || `Cobain ${params.productName}! Hasil nyata bikin makin pede. Cek keranjang kuning sekarang! ✨ #RacunTikTok #fyp #TikTokShop`.slice(0, 150),
+          caption: resData.data.caption || formatShortCaption(params.productName, params.category, params.keySellingPoints, params.targetPlatform),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           scenes: genScenes,
@@ -742,7 +750,7 @@ export default function HomePage() {
       tone: 'Santai, Mengalir & Natural (Teman Curhat)',
       targetPlatform: 'TikTok Shop',
       keySellingPoints: 'Kualitas terbaik, hasil nyata, terjangkau.',
-      caption: 'Wajib coba produk ini! Bikin takjub & super praktis. Checkout di keranjang kuning! ✨ #fyp #viral #TikTokShop',
+      caption: 'Wajib coba produk ini! Bikin takjub & super praktis. Klik keranjang di bawah ya! ✨ #fyp #viral',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       scenes: [

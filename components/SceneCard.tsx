@@ -121,7 +121,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({
           {/* Closing / CTA Badge for Last Scene */}
           {index === totalScenes - 1 && totalScenes > 1 && (
             <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-600/40 text-[11px] font-bold px-2.5 py-0.5 rounded-lg">
-              🛒 Call to Action (Keranjang Kuning)
+              🛒 Call to Action (Klik Keranjang di Bawah)
             </span>
           )}
         </div>

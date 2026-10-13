@@ -551,7 +551,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
 
                     <div className="p-3.5 rounded-xl bg-[#090d18] border border-[#1c263c] text-xs text-slate-200 leading-relaxed font-medium">
                       {activeProject.caption ||
-                        'Cobain Sago Green Coffee! Bikin makin pede & hasil nyata. Cek keranjang kuning mumpung promo! ✨ #RacunTikTok #fyp #TikTokShop'}
+                        'Cobain Sago Green Coffee! Bikin makin pede & hasil nyata. Klik keranjang di bawah mumpung promo! ✨ #fyp #viral'}
                     </div>
                   </div>
                 )}

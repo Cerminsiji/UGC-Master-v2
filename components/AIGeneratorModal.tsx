@@ -1080,7 +1080,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                   <option value="Edukatif, Informatif & Berwibawa (Dokter / Expert)">Edukatif, Informatif & Berwibawa (Dokter / Expert)</option>
                   <option value="Soft-Spoken, Calming & Aesthetic (ASMR Vibe)">Soft-Spoken, Calming & Aesthetic (ASMR Vibe)</option>
                   <option value="Lucu, Sarkas & Blunder (Komedi Viral)">Lucu, Sarkas & Blunder (Komedi Viral)</option>
-                  <option value="FOMO & Mendesak (Promo Kilat / Keranjang Kuning)">FOMO & Mendesak (Promo Kilat / Keranjang Kuning)</option>
+                  <option value="FOMO & Mendesak (Promo Kilat / Klik Keranjang)">FOMO & Mendesak (Promo Kilat / Klik Keranjang di Bawah)</option>
                   <option value="Elegan, Mewah & Eksklusif (High-End Lifestyle)">Elegan, Mewah & Eksklusif (High-End Lifestyle)</option>
                   <option value="To-The-Point & Solutif (Hard-Selling Langsung)">To-The-Point & Solutif (Hard-Selling Langsung)</option>
                 </select>

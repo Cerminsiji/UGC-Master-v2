@@ -106,13 +106,27 @@ export function parseSafeJson<T>(rawText: string | null): T | null {
 }
 
 // Category-specific rich fallback generator with dynamic target duration allocation & up to 9 scenes
-export function formatShortCaption(productName: string, category: string = '', usp: string = ''): string {
+export function formatShortCaption(
+  productName: string,
+  category: string = '',
+  usp: string = '',
+  platform: string = 'TikTok Shop'
+): string {
   const cleanName = (productName || 'Produk Ini').replace(/\s+/g, ' ').trim().slice(0, 28);
+  const isShopee = (platform || '').toLowerCase().includes('shopee');
+  const isTikTok = (platform || '').toLowerCase().includes('tiktok');
+  const cartTerm = isShopee
+    ? 'keranjang oren'
+    : (isTikTok ? 'keranjang kuning' : 'keranjang di bawah');
+  const hashtagPlatform = isShopee
+    ? '#ShopeeVideo #ShopeeHaul #SpillRacunShopee'
+    : (isTikTok ? '#RacunTikTok #fyp #TikTokShop' : '#fyp #viral #racun');
+
   const options = [
-    `Cobain ${cleanName}! Bikin makin pede & hasil nyata. Cek keranjang kuning mumpung promo! ✨ #RacunTikTok #fyp #TikTokShop`,
-    `Stop scrolling! Ini rahasia ${cleanName} yang viral. Checkout sekarang mumpung diskon! 🔥 #TikTokShop #fyp #Viral`,
-    `Jujur ${cleanName} ini worth it banget! Hasilnya terbukti nyata. Link di keranjang kuning ya 🛒 #RacunShop #fyp #Viral`,
-    `Akhirnya nemu ${cleanName}! Praktis & kualitas juara. Cuss amankan di keranjang kuning! ⚡ #TikTokShop #fyp #UGC`,
+    `Cobain ${cleanName}! Bikin makin pede & hasil nyata. Cek ${cartTerm} mumpung promo! ✨ ${hashtagPlatform}`,
+    `Stop scrolling! Ini rahasia ${cleanName} yang viral. Checkout di ${cartTerm} sekarang mumpung diskon! 🔥 ${hashtagPlatform}`,
+    `Jujur ${cleanName} ini worth it banget! Hasilnya terbukti nyata. Klik ${cartTerm} ya 🛒 ${hashtagPlatform}`,
+    `Akhirnya nemu ${cleanName}! Praktis & kualitas juara. Cuss amankan di ${cartTerm}! ⚡ ${hashtagPlatform}`,
   ];
   const chosen = options[Math.floor(Math.random() * options.length)];
   return chosen.length <= 150 ? chosen : chosen.slice(0, 147) + '...';
@@ -127,11 +141,24 @@ export function generateRichFallback(
   requestedSceneCount: number = 0,
   cameraAngleStyle: string = '',
   preferredCameraAngles: string[] = [],
-  referenceImage: string = ''
+  referenceImage: string = '',
+  platform: string = 'TikTok Shop'
 ) {
   const normCat = (category || '').toLowerCase();
   const safeName = productName || 'Produk Pilihan';
   const safeUSP = keySellingPoints || 'Hasil terbukti nyata, praktis & aman bersertifikasi BPOM';
+
+  const isShopee = (platform || '').toLowerCase().includes('shopee');
+  const isTikTok = (platform || '').toLowerCase().includes('tiktok');
+  const cartName = isShopee
+    ? 'keranjang oren'
+    : (isTikTok ? 'keranjang kuning' : 'keranjang di bawah');
+  const cartIconPrompt = isShopee
+    ? 'orange shopping cart icon'
+    : (isTikTok ? 'yellow shopping cart icon' : 'shopping cart icon below');
+  const cartPopupText = isShopee
+    ? 'KLIK KERANJANG OREN SEKARANG! 🛒👇'
+    : (isTikTok ? 'KLIK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇');
 
   // Rich 9-step template library with Google Flow AI Video prompts following reference image
   const full9Scenes = [
@@ -217,12 +244,12 @@ export function generateRichFallback(
     },
     {
       cameraAngle: 'Low Angle (Hero / Powerful)',
-      visualAction: `Kreator tersenyum antusias menunjuk ke pojok kiri bawah layar ke arah keranjang kuning dengan produk ${safeName}.`,
-      popupText: 'BURUAN CHECKOUT DISKON! 🛒',
+      visualAction: `Kreator tersenyum antusias menunjuk ke pojok kiri bawah layar ke arah ${cartName} dengan produk ${safeName}.`,
+      popupText: cartPopupText,
       soundEffect: 'Bell ring & Cha-ching',
-      dialogVO: `Mumpung ${safeName} lagi ada voucher diskon & gratis ongkir, langsung klik keranjang kuning ya!`,
-      notesMood: 'Gaya teks: Pulsing CTA Button. Urgent offer.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Low-angle dynamic hero shot, creator smiling invitingly and pointing down toward yellow cart icon while holding ${safeName}, packaging prominently featured, vibrant lighting, vertical 9:16 UGC video.`,
+      dialogVO: `Mumpung ${safeName} lagi ada voucher diskon & gratis ongkir, langsung klik ${cartName} ya!`,
+      notesMood: `Gaya teks: Pulsing CTA Button. Urgent offer menunjuk ${cartName}.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Low-angle dynamic hero shot, creator smiling invitingly and pointing down toward ${cartIconPrompt} while holding ${safeName}, packaging prominently featured, vibrant lighting, vertical 9:16 UGC video.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ];
@@ -316,12 +343,12 @@ export function generateRichFallback(
     },
     {
       cameraAngle: 'Hands-Only / Tangan Saja (Faceless / Tanpa Wajah)',
-      visualAction: `Tangan talent memegang produk ${safeName} dan jari telunjuk menunjuk langsung ke pojok kiri bawah layar ke arah ikon keranjang kuning TikTok Shop.`,
-      popupText: 'KLIK KERANJANG KUNING SEKARANG! 🛒👇',
+      visualAction: `Tangan talent memegang produk ${safeName} dan jari telunjuk menunjuk langsung ke pojok kiri bawah layar ke arah ikon ${cartName}.`,
+      popupText: cartPopupText,
       soundEffect: 'Cash register cha-ching & Bell',
-      dialogVO: `Mumpung lagi diskon & gratis ongkir, langsung checkout di keranjang kuning sekarang sebelum kehabisan!`,
-      notesMood: 'Gaya teks: Pulsing CTA Button. Tangan menunjuk keranjang kuning.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Dynamic closing shot, hands holding ${safeName} with index finger pointing directly towards bottom-left corner where yellow cart button is located, product branding in crystal clear focus matching reference image, 9:16 vertical TikTok UGC.`,
+      dialogVO: `Mumpung lagi diskon & gratis ongkir, langsung checkout di ${cartName} sekarang sebelum kehabisan!`,
+      notesMood: `Gaya teks: Pulsing CTA Button. Tangan menunjuk ${cartName}.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Dynamic closing shot, hands holding ${safeName} with index finger pointing directly towards bottom-left corner where ${cartIconPrompt} is located, product branding in crystal clear focus matching reference image, 9:16 vertical UGC video.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ];
