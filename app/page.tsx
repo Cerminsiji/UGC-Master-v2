@@ -11,6 +11,7 @@ import { HookGeneratorModal } from '@/components/HookGeneratorModal';
 import { TeleprompterModal } from '@/components/TeleprompterModal';
 import { ExportModal } from '@/components/ExportModal';
 import { ProjectManagerModal } from '@/components/ProjectManagerModal';
+import { MetaCleanerPro } from '@/components/MetaCleanerPro';
 import { PasswordGate, AUTH_STORAGE_KEY } from '@/components/PasswordGate';
 import { UGC_CATEGORIES } from '@/data/categories';
 import {
@@ -1130,6 +1131,9 @@ export default function HomePage() {
                 categoryName={activeCategory.name}
               />
             )}
+
+            {/* VIEW MODE 4: MetaCleaner Pro - FFmpeg.wasm Remux & SEI Stripper */}
+            {viewMode === 'meta_cleaner' && <MetaCleanerPro />}
 
           </div>
         </main>

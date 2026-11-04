@@ -13,7 +13,8 @@ import {
   Check,
   Flame,
   Zap,
-  Lock
+  Lock,
+  ShieldCheck
 } from 'lucide-react';
 import { StoryboardViewMode, Scene } from '../types';
 import { formatDuration } from '../utils/helpers';
@@ -170,6 +171,18 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Coins className="w-3.5 h-3.5" />
             <span>Rate Card UGC</span>
+          </button>
+
+          <button
+            onClick={() => onViewModeChange('meta_cleaner')}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${
+              viewMode === 'meta_cleaner'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/40'
+                : 'text-emerald-400 hover:text-emerald-300'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>MetaCleaner Pro</span>
           </button>
         </div>
 

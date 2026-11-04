@@ -161,4 +161,4 @@ export interface RateCardConfig {
   notes?: string;
 }
 
-export type StoryboardViewMode = 'cards' | 'table' | 'rate_card';
+export type StoryboardViewMode = 'cards' | 'table' | 'rate_card' | 'meta_cleaner';
