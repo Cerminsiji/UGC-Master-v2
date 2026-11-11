@@ -35,6 +35,9 @@ interface HeaderProps {
   onCopyJSON?: () => void;
   isJsonCopied?: boolean;
   onLogout?: () => void;
+  saveStatus?: 'saved' | 'saving' | 'error';
+  lastSavedTime?: string | null;
+  onManualSave?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -53,6 +56,9 @@ export const Header: React.FC<HeaderProps> = ({
   onCopyJSON,
   isJsonCopied,
   onLogout,
+  saveStatus = 'saved',
+  lastSavedTime,
+  onManualSave,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState(title);
@@ -201,6 +207,40 @@ export const Header: React.FC<HeaderProps> = ({
               {formatDuration(totalDuration)}
             </span>
           </div>
+
+          {/* Auto-Save & Manual Save Status Badge */}
+          <button
+            onClick={onManualSave}
+            type="button"
+            className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs transition-all border active:scale-95 ${
+              saveStatus === 'saving'
+                ? 'bg-amber-950/50 border-amber-500/50 text-amber-300'
+                : saveStatus === 'error'
+                ? 'bg-rose-950/50 border-rose-500/50 text-rose-300'
+                : 'bg-emerald-950/40 hover:bg-emerald-900/40 border-emerald-500/40 text-emerald-300'
+            }`}
+            title="Status penyimpanan otomatis browser (IndexedDB & LocalStorage). Klik untuk simpan naskah sekarang."
+          >
+            {saveStatus === 'saving' ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                <span className="text-[11px] font-semibold">Menyimpan...</span>
+              </>
+            ) : saveStatus === 'error' ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                <span className="text-[11px] font-semibold">Gagal Simpan</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="text-[11px] font-semibold hidden sm:inline">
+                  {lastSavedTime ? `Tersimpan ${lastSavedTime}` : 'Tersimpan Otomatis'}
+                </span>
+                <span className="text-[11px] font-semibold sm:hidden">Tersimpan</span>
+              </>
+            )}
+          </button>
 
           {/* Quick Viral Hooks */}
           <button

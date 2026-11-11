@@ -11,6 +11,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { AIHookOption } from '../types';
+import { postJsonWithRetry } from '../utils/helpers';
 
 interface HookGeneratorModalProps {
   isOpen: boolean;
@@ -33,20 +34,51 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
   const fetchHooks = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/generate-hooks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productName, category }),
-      });
-      const rawText = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        data = {};
-      }
-      if (data.success && data.hooks) {
+      const data = await postJsonWithRetry<{ success?: boolean; hooks?: AIHookOption[] }>(
+        '/api/generate-hooks',
+        { productName, category }
+      );
+      if (data && data.success && Array.isArray(data.hooks) && data.hooks.length > 0) {
         setHooks(data.hooks);
+      } else {
+        const safeProd = productName || 'Produk';
+        setHooks([
+          {
+            type: 'Visual Shock',
+            hookDialog: 'Jangan kaget kalau dalam 3 hari perubahannya bisa se-drastis ini!',
+            visualAction: `Menutup kamera dengan telapak tangan lalu transisi cepat ke hasil produk ${safeProd}.`,
+            popupText: 'JANGAN KAGET DULU! 😱',
+            sfx: 'Vine boom & Swoosh',
+          },
+          {
+            type: 'Negative Hook',
+            hookDialog: `JANGAN pernah beli ${safeProd} kalau kalian belum siap ketagihan sama hasilnya!`,
+            visualAction: 'Kreator menggelengkan kepala dengan ekspresi serius di depan kamera.',
+            popupText: 'JANGAN DIBELI DULU ⚠️',
+            sfx: 'Record scratch & Warning buzzer',
+          },
+          {
+            type: 'Curiosity / Question',
+            hookDialog: 'Pernah gak sih kalian mikir, kenapa produk ini bisa selalu sold out dalam hitungan menit?',
+            visualAction: `Memperlihatkan box kemasan ${safeProd} yang baru dibuka dari paket.`,
+            popupText: 'KENAPA BISA VIRAL BANGET? 🤔',
+            sfx: 'Ding question chime',
+          },
+          {
+            type: 'FOMO / Secret',
+            hookDialog: 'Ini rahasia yang gak pernah dibocorin sama brand besar tapi beneran ampuh!',
+            visualAction: 'Mendekat ke mikrofon dengan gesture berbisik rahasia.',
+            popupText: 'RAHASIA GAK BOLEH BOCOR 🤫',
+            sfx: 'Whisper ASMR & Mystery chime',
+          },
+          {
+            type: 'Relatable Pain Point',
+            hookDialog: 'Capek gak sih buang-buang uang buat nyobain yang gak ada hasilnya?',
+            visualAction: 'Memegang kepala dengan ekspresi lelah dan frustrasi menatap dompet/cermin.',
+            popupText: 'CAPEK GAGAL MULU?! 😫',
+            sfx: 'Heartbeat & Dramatic bass',
+          },
+        ]);
       }
     } catch (e) {
       console.error('Failed to load hooks:', e);

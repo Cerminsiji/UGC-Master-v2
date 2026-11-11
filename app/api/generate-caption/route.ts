@@ -6,16 +6,14 @@ import {
   formatShortCaption,
 } from '@/lib/gemini-ugc';
 
-export async function POST(req: NextRequest) {
-  let body: any = {};
+async function handleGenerateCaptionRequest(body: any = {}) {
   try {
-    body = await req.json();
     const {
       productName = 'Produk Viral',
       category = 'UGC',
       keySellingPoints = '',
       targetAudience = '',
-    } = body;
+    } = body || {};
 
     const rawPlatform = body.targetPlatform || body.platform || 'TikTok Shop';
     const platform = typeof rawPlatform === 'string' ? rawPlatform.trim() : 'TikTok Shop';
@@ -92,3 +90,23 @@ ${isShopee ? '2. Karena platform adalah Shopee, WAJIB gunakan "keranjang oren" a
     });
   }
 }
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    return await handleGenerateCaptionRequest(body);
+  } catch {
+    return await handleGenerateCaptionRequest({});
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const payloadParam = req.nextUrl.searchParams.get('payload');
+    const body = payloadParam ? JSON.parse(payloadParam) : {};
+    return await handleGenerateCaptionRequest(body);
+  } catch {
+    return await handleGenerateCaptionRequest({});
+  }
+}
+

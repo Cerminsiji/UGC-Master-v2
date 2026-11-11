@@ -2,18 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Type } from '@google/genai';
 import { generateWithFallback, parseSafeJson } from '@/lib/gemini-ugc';
 
-export async function POST(req: NextRequest) {
+async function handleGenerateHooksRequest(body: any) {
   try {
-    const body = await req.json();
-    const { productName = 'Produk', category = 'Before & After' } = body;
+    const { productName = 'Produk', category = 'Before & After' } = body || {};
 
-    const prompt = `Buatkan 5 variasi Hook 3 detik pertama paling viral untuk video UGC produk "${productName}" dalam kategori "${category}".
-Berikan 5 jenis:
-1. Visual Shock (Hook visual dramatis)
-2. Negative Hook (Peringatan / Jangan beli sebelum...)
-3. Curiosity / Question (Pertanyaan penasaran yang relate)
-4. Secret / FOMO (Trik rahasia yang jarang orang tahu)
-5. Relatable Pain Point (Masalah nyeri audiens sehari-hari)
+    const prompt = `Buatkan 5 variasi Hook 3 detik pertama hasil riset psikologi audiens (R&D UGC) untuk video produk "${productName}" dalam kategori "${category}".
+PENTING: DILARANG KERAS menggunakan kalimat klise yang monoton seperti "Stop scrolling!" atau "Jangan skip dulu!", dan DILARANG KERAS menggunakan format listicle seperti "3 alasan kenapa...", "3 hal yang bikin...", atau menghitung angka di hook pembuka! Buat kalimat pembuka yang spesifik, emosional, segar, dan langsung relevan dengan manfaat/masalah produk "${productName}".
+Berikan 5 jenis pendekatan berbeda:
+1. Visual Shock (Bukti visual / perbandingan instan di detik pertama)
+2. Negative Hook (Reverse psychology / peringatan anti-nyesel tanpa gimik)
+3. Curiosity / Mystery Gap (Pertanyaan spesifik yang memicu rasa penasaran tinggi)
+4. FOMO / Secret Reveal (Trik / detail rahasia yang jarang orang tahu)
+5. Relatable Pain Point (Situasi masalah mikro sehari-hari yang sangat relate dengan audiens)
 
 Format JSON: array of objects dengan field: type, hookDialog, visualAction, popupText, sfx.`;
 
@@ -87,3 +87,23 @@ Format JSON: array of objects dengan field: type, hookDialog, visualAction, popu
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    return await handleGenerateHooksRequest(body);
+  } catch {
+    return await handleGenerateHooksRequest({});
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const payloadParam = req.nextUrl.searchParams.get('payload');
+    const body = payloadParam ? JSON.parse(payloadParam) : {};
+    return await handleGenerateHooksRequest(body);
+  } catch {
+    return await handleGenerateHooksRequest({});
+  }
+}
+

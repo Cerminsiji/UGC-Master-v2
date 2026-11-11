@@ -1,1 +1,2 @@
-export { POST } from '../auto-detect/route';
+export { POST, GET } from '../auto-detect/route';
+

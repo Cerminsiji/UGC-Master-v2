@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Link2,
@@ -18,9 +18,14 @@ import {
   Layers,
   Check,
   User,
+  Upload,
+  Image as ImageIcon,
+  Plus,
 } from 'lucide-react';
 import { AutoDetectResult } from '@/types';
 import { extractUrlFromInput } from '@/lib/link-extractor';
+import { postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
+import { heuristicAutoDetect } from '@/lib/gemini-ugc';
 
 interface DirectLinkExtractorBarProps {
   onApplyToProject: (data: AutoDetectResult) => void;
@@ -41,9 +46,9 @@ const PRESET_SAMPLE_LINKS = [
     sample: 'https://tokopedia.link/somethinc-niacinamide-barrier-serum',
   },
   {
-    label: '💄 Shopee Affiliate: Skintific',
+    label: '💄 Shopee Share: Setelan Arsyilla',
     platform: 'Shopee',
-    sample: 'https://s.shopee.co.id/skintific-5x-ceramide',
+    sample: 'Cek Setelan Arsyilla Klok (Restock) dengan harga Rp155.000. Dapatkan di Shopee sekarang! https://s.shopee.co.id/LoXUMhlJb',
   },
   {
     label: '📋 Teks Share Tokopedia Mobile',
@@ -59,11 +64,33 @@ export function DirectLinkExtractorBar({
   isGenerating = false,
 }: DirectLinkExtractorBarProps) {
   const [inputValue, setInputValue] = useState('');
+  const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [isUploadingRefs, setIsUploadingRefs] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractStep, setExtractStep] = useState('');
   const [extractedResult, setExtractedResult] = useState<AutoDetectResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isApplied, setIsApplied] = useState(false);
+
+  const handleUploadFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setIsUploadingRefs(true);
+    try {
+      const urls = await filesToReferenceImages(files, 8);
+      if (urls.length > 0) {
+        setReferenceImages((prev) => [...prev, ...urls].slice(0, 8));
+        setErrorMsg(null);
+      }
+    } finally {
+      setIsUploadingRefs(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveRefImage = (idx: number) => {
+    setReferenceImages((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   // Handle Clipboard Paste
   const handlePaste = async () => {
@@ -83,8 +110,8 @@ export function DirectLinkExtractorBar({
   // Perform Real Live Extraction
   const handleExtract = async (shouldAutoGenerate = false) => {
     const raw = inputValue.trim();
-    if (!raw) {
-      setErrorMsg('Masukkan atau tempel link affiliate TikTok Shop / Tokopedia terlebih dahulu.');
+    if (!raw && referenceImages.length === 0) {
+      setErrorMsg('Masukkan link affiliate TikTok Shop / Tokopedia / Shopee atau upload foto referensi terlebih dahulu.');
       return;
     }
 
@@ -105,7 +132,7 @@ export function DirectLinkExtractorBar({
         ? '🔍 Mengakses Tokopedia Affiliate & scraping metadata produk...'
         : isShopee
         ? '🔍 Mengakses Shopee & mengambil detail produk...'
-        : '🔍 Menganalisis link & scraping data spesifikasi produk...'
+        : '🔍 Menganalisis link, teks & foto referensi produk...'
     );
 
     const timer1 = setTimeout(() => {
@@ -117,21 +144,35 @@ export function DirectLinkExtractorBar({
     }, 1300);
 
     try {
-      const res = await fetch('/api/auto-detect-product', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: raw }),
-      });
+      const json = await postJsonWithRetry<{ success?: boolean; data?: AutoDetectResult; error?: string }>(
+        '/api/auto-detect-product',
+        {
+          input: raw,
+          referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+        }
+      );
 
       clearTimeout(timer1);
       clearTimeout(timer2);
 
-      const json = await res.json();
-      if (!res.ok || !json.data) {
-        throw new Error(json.error || 'Gagal mengekstrak data dari link tersebut.');
-      }
+      const baseResult: AutoDetectResult =
+        json && json.data
+          ? json.data
+          : (heuristicAutoDetect(raw, detectedUrl, raw) as unknown as AutoDetectResult);
 
-      const result: AutoDetectResult = json.data;
+      const mergedRefs =
+        referenceImages.length > 0
+          ? referenceImages
+          : baseResult.referenceImage || baseResult.imageUrl
+          ? [baseResult.referenceImage || baseResult.imageUrl!]
+          : undefined;
+
+      const result: AutoDetectResult = {
+        ...baseResult,
+        referenceImages: mergedRefs,
+        referenceImage: mergedRefs?.[0] || baseResult.referenceImage || baseResult.imageUrl,
+      };
+
       setExtractedResult(result);
 
       if (shouldAutoGenerate) {
@@ -262,37 +303,105 @@ export function DirectLinkExtractorBar({
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#1a243a]">
-          <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-            <span>Ekstraksi mencakup: Judul, Brand, USP, Harga, Persona, Durasi & Sudut Kamera.</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleExtract(false)}
-              disabled={isExtracting || isGenerating}
-              className="flex items-center gap-1.5 bg-[#172136] hover:bg-[#202c47] text-purple-200 border border-purple-500/40 text-xs font-bold px-3 py-1.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 shadow-sm"
-            >
-              {isExtracting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
-              ) : (
-                <Zap className="w-3.5 h-3.5 text-amber-400" />
+        {/* Action Controls & Multi-Image Upload */}
+        <div className="space-y-2.5 pt-1.5 border-t border-[#1a243a]">
+          {/* Multi-Image Reference Strip */}
+          {referenceImages.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap bg-[#080e1a] border border-cyan-900/50 rounded-xl p-2">
+              <span className="text-[10px] font-bold text-cyan-300 flex items-center gap-1 px-1">
+                <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{referenceImages.length} Foto Referensi (Storyboard & Google Flow):</span>
+              </span>
+              {referenceImages.map((src, i) => (
+                <div
+                  key={i}
+                  className="relative group w-11 h-11 rounded-lg overflow-hidden border border-cyan-700/60 bg-black shrink-0"
+                >
+                  <img src={src} alt={`Ref ${i + 1}`} className="w-full h-full object-cover" />
+                  <span className="absolute bottom-0 left-0 right-0 bg-black/80 text-cyan-200 text-[8px] font-mono font-bold text-center">
+                    Img {i + 1}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveRefImage(i)}
+                    className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/80 hover:bg-red-600 text-white flex items-center justify-center"
+                    title="Hapus foto ini"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              ))}
+              {referenceImages.length < 8 && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-11 h-11 rounded-lg border border-dashed border-cyan-700/60 hover:border-cyan-400 flex flex-col items-center justify-center text-cyan-400 hover:bg-cyan-950/30 transition-colors"
+                  title="Tambah foto referensi lagi"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
               )}
-              <span>{isExtracting ? 'Mengekstrak Link...' : 'Ekstrak Data Link'}</span>
-            </button>
+            </div>
+          )}
 
-            <button
-              type="button"
-              onClick={() => handleExtract(true)}
-              disabled={isExtracting || isGenerating}
-              className="flex items-center gap-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-md shadow-purple-600/20 transition-all active:scale-95 disabled:opacity-50 border border-purple-400/40"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Ekstrak & Buat Storyboard Langsung</span>
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => handleUploadFiles(e.target.files)}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploadingRefs}
+                className="flex items-center gap-1.5 bg-cyan-950/70 hover:bg-cyan-900/80 text-cyan-200 border border-cyan-600/50 text-xs font-bold px-3 py-1.5 rounded-xl transition-all active:scale-95 shadow-sm cursor-pointer"
+                title="Upload banyak gambar produk sebagai referensi pembuatan Storyboard & Google Flow"
+              >
+                {isUploadingRefs ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-300" />
+                ) : (
+                  <Upload className="w-3.5 h-3.5 text-cyan-400" />
+                )}
+                <span>
+                  {referenceImages.length > 0
+                    ? `Tambah Foto Referensi (${referenceImages.length})`
+                    : 'Upload Foto Referensi (Bisa Banyak)'}
+                </span>
+              </button>
+              <span className="text-[11px] text-slate-400 hidden md:inline">
+                • Gambar otomatis menjadi rujukan Storyboard & Google Flow
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleExtract(false)}
+                disabled={isExtracting || isGenerating}
+                className="flex items-center gap-1.5 bg-[#172136] hover:bg-[#202c47] text-purple-200 border border-purple-500/40 text-xs font-bold px-3 py-1.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 shadow-sm"
+              >
+                {isExtracting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                ) : (
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                )}
+                <span>{isExtracting ? 'Mengekstrak Link...' : 'Ekstrak Link Produk'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExtract(true)}
+                disabled={isExtracting || isGenerating}
+                className="flex items-center gap-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-md shadow-purple-600/20 transition-all active:scale-95 disabled:opacity-50 border border-purple-400/40"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span>Ekstrak & Buat Storyboard Langsung</span>
+              </button>
+            </div>
           </div>
         </div>
 

@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { persistProjects, retrieveProjects } from '@/utils/storyboardStorage';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
 import { SceneCard } from '@/components/SceneCard';
@@ -13,6 +14,7 @@ import { ExportModal } from '@/components/ExportModal';
 import { ProjectManagerModal } from '@/components/ProjectManagerModal';
 import { MetaCleanerPro } from '@/components/MetaCleanerPro';
 import { PasswordGate, AUTH_STORAGE_KEY } from '@/components/PasswordGate';
+import { DirectLinkExtractorBar } from '@/components/DirectLinkExtractorBar';
 import { UGC_CATEGORIES } from '@/data/categories';
 import {
   Scene,
@@ -22,9 +24,10 @@ import {
   AIHookOption,
   StoryboardViewMode,
   HookVariant,
+  AutoDetectResult,
 } from '@/types';
-import { copyToClipboard, generateId } from '@/utils/helpers';
-import { formatShortCaption } from '@/lib/gemini-ugc';
+import { copyToClipboard, generateId, postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
+import { formatShortCaption, generateRichFallback } from '@/lib/gemini-ugc';
 import {
   Plus,
   Sparkles,
@@ -39,6 +42,10 @@ import {
   Check,
   Zap,
   Camera,
+  Upload,
+  Image as ImageIcon,
+  X,
+  Loader2,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'ugc_master_projects_v1';
@@ -208,9 +215,17 @@ export default function HomePage() {
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [enhancingSceneId, setEnhancingSceneId] = useState<string | null>(null);
 
-  // Load from localStorage after mount
+  // Dual Storage Persistence State (IndexedDB + Quota-safe LocalStorage)
+  const [isStorageLoaded, setIsStorageLoaded] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Load from IndexedDB / LocalStorage safely after mount
   useEffect(() => {
+    let isCancelled = false;
     setMounted(true);
+
     try {
       const auth = localStorage.getItem(AUTH_STORAGE_KEY);
       if (auth === 'true') {
@@ -218,41 +233,94 @@ export default function HomePage() {
       } else {
         setIsAuthenticated(false);
       }
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setProjects(parsed);
-          const savedId = localStorage.getItem(CURRENT_PROJECT_ID_KEY);
-          if (savedId && parsed.some((p) => p.id === savedId)) {
-            setCurrentProjectId(savedId);
+    } catch {}
+
+    const initStorage = async () => {
+      try {
+        const { projects: retrieved, currentProjectId: retrievedId } = await retrieveProjects();
+        if (!isCancelled && retrieved && retrieved.length > 0) {
+          setProjects(retrieved);
+          if (retrievedId && retrieved.some((p) => p.id === retrievedId)) {
+            setCurrentProjectId(retrievedId);
           } else {
-            setCurrentProjectId(parsed[0].id);
+            setCurrentProjectId(retrieved[0].id);
           }
         }
+      } catch (e) {
+        console.error('Failed to load storyboard projects from storage:', e);
+      } finally {
+        if (!isCancelled) {
+          setIsStorageLoaded(true);
+        }
       }
-    } catch (e) {
-      console.error('Failed to load from storage:', e);
-    }
+    };
+
+    initStorage();
+
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
-  // Save projects to localStorage on change
-  useEffect(() => {
-    if (!mounted) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
-    } catch (e) {
-      console.error('Failed to save projects to localStorage:', e);
-    }
-  }, [projects, mounted]);
+  // Primary persistence worker
+  const triggerSave = useCallback(
+    async (projectsToSave: StoryboardProject[], currentId: string) => {
+      if (!isStorageLoaded) return;
+      setSaveStatus('saving');
+      try {
+        const res = await persistProjects(projectsToSave, currentId);
+        if (res.success) {
+          setSaveStatus('saved');
+          setLastSavedTime(res.timestamp);
+        } else {
+          setSaveStatus('error');
+        }
+      } catch (err) {
+        console.error('Failed to persist storyboard projects:', err);
+        setSaveStatus('error');
+      }
+    },
+    [isStorageLoaded]
+  );
 
-  // Save current project ID
+  // Debounced auto-save on project or current ID change
   useEffect(() => {
-    if (!mounted) return;
-    try {
-      localStorage.setItem(CURRENT_PROJECT_ID_KEY, currentProjectId);
-    } catch (e) {}
-  }, [currentProjectId, mounted]);
+    if (!isStorageLoaded) return;
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    setSaveStatus('saving');
+    saveTimeoutRef.current = setTimeout(() => {
+      triggerSave(projects, currentProjectId);
+    }, 400);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [projects, currentProjectId, isStorageLoaded, triggerSave]);
+
+  // Synchronous flush before page unload or refresh
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isStorageLoaded && projects.length > 0) {
+        persistProjects(projects, currentProjectId);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [projects, currentProjectId, isStorageLoaded]);
+
+  // Explicit manual save action
+  const handleManualSave = () => {
+    triggerSave(projects, currentProjectId);
+    showToast('💾 Naskah Storyboard berhasil disimpan!');
+  };
 
   // Active Project
   const currentProject = projects.find((p) => p.id === currentProjectId) || projects[0] || INITIAL_BEFORE_AFTER_PROJECT;
@@ -324,15 +392,17 @@ export default function HomePage() {
 
   // Update current project helper
   const updateCurrentProject = (updater: (prev: StoryboardProject) => StoryboardProject) => {
-    setProjects((prev) =>
-      prev.map((p) => {
+    setProjects((prev) => {
+      const updatedList = prev.map((p) => {
         if (p.id === currentProjectId) {
           const updated = updater(p);
           return { ...updated, updatedAt: new Date().toISOString() };
         }
         return p;
-      })
-    );
+      });
+      triggerSave(updatedList, currentProjectId);
+      return updatedList;
+    });
   };
 
   // Title change
@@ -490,20 +560,19 @@ export default function HomePage() {
   const handleEnhanceScene = async (targetScene: Scene) => {
     setEnhancingSceneId(targetScene.id);
     try {
-      const res = await fetch('/api/enhance-scene', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJsonWithRetry<{ success?: boolean; scene?: Partial<Scene> }>(
+        '/api/enhance-scene',
+        {
           scene: targetScene,
           category: activeCategory.name,
           productName: currentProject.productName,
           cameraAngleStyle: currentProject.cameraAngleStyle,
+          targetPlatform: currentProject.targetPlatform,
           instruction: 'make it more viral and catchy with expressive gestures, specific camera angle, and sound effect',
-        }),
-      });
+        }
+      );
 
-      const data = await res.json();
-      if (data.success && data.scene) {
+      if (data && data.success && data.scene) {
         handleUpdateScene({
           ...targetScene,
           ...data.scene,
@@ -513,7 +582,15 @@ export default function HomePage() {
         });
         showToast('✨ Adegan berhasil di-polish oleh AI!');
       } else {
-        showToast('Gagal memproses AI enhance');
+        const fallbackPopup = targetScene.popupText ? `${targetScene.popupText.toUpperCase()} 🔥` : 'RAHASIA VIRAL TERUNGKAP! ✨';
+        handleUpdateScene({
+          ...targetScene,
+          visualAction: `${targetScene.visualAction} (Gerakan dipertegas, mimik wajah lebih ekspresif & meyakinkan)`,
+          popupText: fallbackPopup,
+          soundEffect: targetScene.soundEffect ? `${targetScene.soundEffect} + Swoosh` : 'Swoosh & Sparkle Chime',
+          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+        });
+        showToast('✨ Adegan berhasil ditingkatkan!');
       }
     } catch (e) {
       console.error('Enhance scene error:', e);
@@ -550,103 +627,270 @@ export default function HomePage() {
     setIsHooksModalOpen(true);
   };
 
+  const workspaceRefInput = useRef<HTMLInputElement | null>(null);
+  const [isUploadingWorkspaceRefs, setIsUploadingWorkspaceRefs] = useState(false);
+
+  const handleWorkspaceUploadReferences = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setIsUploadingWorkspaceRefs(true);
+    try {
+      const dataUrls = await filesToReferenceImages(files, 8);
+      if (dataUrls.length > 0) {
+        updateCurrentProject((p) => {
+          const existing = p.referenceImages || (p.referenceImage ? [p.referenceImage] : []);
+          const combined = [...existing, ...dataUrls].slice(0, 8);
+          const total = combined.length;
+          const prodName = p.productName || 'Produk';
+          const updatedScenes = p.scenes.map((sc, idx) => {
+            const refIdx = (idx % total) + 1;
+            const refTag =
+              total > 1
+                ? `[Image ${refIdx} of ${total} Reference: ${prodName}]`
+                : `[Image 1 Reference: ${prodName}]`;
+            const curPrompt = sc.googleFlowPrompt || '';
+            const nextPrompt = /\[Image\s+\d+[^\]]*\]/i.test(curPrompt)
+              ? curPrompt.replace(/\[Image\s+\d+[^\]]*\]/i, refTag)
+              : `${refTag} ${curPrompt}`.trim();
+            const nextNote =
+              total > 1
+                ? `Pastikan Produk sesuai Gambar referensi #${refIdx} (dari ${total} foto referensi terlampir)`
+                : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
+            return {
+              ...sc,
+              googleFlowPrompt: nextPrompt,
+              imageReferenceNote: nextNote,
+            };
+          });
+          return {
+            ...p,
+            referenceImages: combined,
+            referenceImage: combined[0] || p.referenceImage,
+            scenes: updatedScenes,
+          };
+        });
+        showToast(`📸 ${dataUrls.length} Foto referensi berhasil ditambahkan ke Storyboard & Google Flow!`);
+      }
+    } finally {
+      setIsUploadingWorkspaceRefs(false);
+      if (workspaceRefInput.current) workspaceRefInput.current.value = '';
+    }
+  };
+
+  const handleWorkspaceRemoveReference = (removeIdx: number) => {
+    updateCurrentProject((p) => {
+      const existing = p.referenceImages || (p.referenceImage ? [p.referenceImage] : []);
+      const next = existing.filter((_, i) => i !== removeIdx);
+      return {
+        ...p,
+        referenceImages: next,
+        referenceImage: next[0] || undefined,
+      };
+    });
+    showToast('Foto referensi dihapus');
+  };
+
   // AI Full Storyboard Generate
   const handleGenerateStoryboard = async (params: AIGenerateParams) => {
     setIsGeneratingAI(true);
     try {
-      const res = await fetch('/api/generate-storyboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-      const rawText = await res.text();
-      let resData: any = {};
-      try {
-        resData = JSON.parse(rawText);
-      } catch {
-        resData = {};
-      }
+      const resData = await postJsonWithRetry<{ success?: boolean; data?: any }>(
+        '/api/generate-storyboard',
+        params as unknown as Record<string, any>
+      );
 
-      if (resData.success && resData.data) {
-        const isShopee = (params.targetPlatform || '').toLowerCase().includes('shopee');
-        const isTikTok = (params.targetPlatform || '').toLowerCase().includes('tiktok');
-        const defaultClosingPopup = isShopee
-          ? 'KLIK KERANJANG OREN DI BAWAH! 🛒👇'
-          : (isTikTok ? 'CEK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇');
+      const allParamRefs =
+        params.referenceImages && params.referenceImages.length > 0
+          ? params.referenceImages
+          : params.referenceImage
+          ? [params.referenceImage]
+          : [];
+      const refTotal = Math.max(1, allParamRefs.length);
 
-        const scenesArray = resData.data.scenes || [];
-        const genScenes: Scene[] = scenesArray.map((sc: any, i: number) => {
-          const popupText =
-            sc.popupText && typeof sc.popupText === 'string' && sc.popupText.trim() && sc.popupText.trim() !== '-'
-              ? sc.popupText.trim()
-              : (i === 0 ? 'JANGAN SKIP DULU! 🔥' : (i === scenesArray.length - 1 ? defaultClosingPopup : `SOLUSI: ${params.productName.toUpperCase()}`));
+      const resolvedData =
+        resData && resData.success && resData.data && Array.isArray(resData.data.scenes) && resData.data.scenes.length > 0
+          ? resData.data
+          : generateRichFallback(
+              params.category,
+              params.productName,
+              params.targetDuration || 30,
+              params.targetAudience || '',
+              params.keySellingPoints || '',
+              params.targetSceneCount || 0,
+              params.cameraAngleStyle || '',
+              params.preferredCameraAngles || [],
+              params.referenceImage && !params.referenceImage.startsWith('data:')
+                ? params.referenceImage
+                : `Gambar Referensi Produk ${params.productName}`,
+              params.targetPlatform || 'TikTok Shop',
+              allParamRefs
+            );
 
-          let flowPrompt = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string' ? sc.googleFlowPrompt.trim() : '';
-          if (!flowPrompt) {
-            flowPrompt = `[Image 1 Reference: ${params.productName}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - 9:16 vertical UGC video, 4k 60fps.`;
-          } else if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
+      const isShopee = (params.targetPlatform || '').toLowerCase().includes('shopee');
+      const isTikTok = (params.targetPlatform || '').toLowerCase().includes('tiktok');
+      const defaultClosingPopup = isShopee
+        ? 'KLIK KERANJANG OREN DI BAWAH! 🛒👇'
+        : (isTikTok ? 'CEK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇');
+
+      const scenesArray = resolvedData.scenes || [];
+      const genScenes: Scene[] = scenesArray.map((sc: any, i: number) => {
+        const refIdx = (i % refTotal) + 1;
+        const refTag =
+          refTotal > 1
+            ? `[Image ${refIdx} of ${refTotal} Reference: ${params.productName}]`
+            : `[Image 1 Reference: ${params.productName}]`;
+
+        const popupText =
+          sc.popupText && typeof sc.popupText === 'string' && sc.popupText.trim() && sc.popupText.trim() !== '-'
+            ? sc.popupText.trim()
+            : (i === 0 ? ` FAKTA ${params.productName.toUpperCase().slice(0, 20)} ✨` : (i === scenesArray.length - 1 ? defaultClosingPopup : `SOLUSI: ${params.productName.toUpperCase()}`));
+
+        let flowPrompt = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string' ? sc.googleFlowPrompt.trim() : '';
+        if (!flowPrompt) {
+          flowPrompt = `${refTag} Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - 9:16 vertical UGC video, 4k 60fps.`;
+        } else {
+          if (refTotal > 1 && /\[Image 1 Reference:/i.test(flowPrompt)) {
+            flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
+          }
+          if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
             flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
           }
+        }
 
-          return {
-            id: generateId(),
-            order: i + 1,
-            cameraAngle: sc.cameraAngle || 'Medium Shot',
-            visualAction: sc.visualAction || '',
-            popupText,
-            soundEffect: sc.soundEffect || '',
-            dialogVO: sc.dialogVO || '',
-            notesMood: sc.notesMood || '',
-            duration: Number(sc.duration) || 3,
-            googleFlowPrompt: flowPrompt,
-            imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-          };
-        });
+        const defaultRefNote =
+          refTotal > 1
+            ? `Pastikan Produk sesuai Gambar referensi #${refIdx} (dari ${refTotal} foto referensi terlampir)`
+            : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
 
-        const matchedCat =
-          UGC_CATEGORIES.find(
-            (c) =>
-              c.name.toLowerCase() === params.category.toLowerCase() ||
-              c.id.toLowerCase() === params.category.toLowerCase()
-          ) || activeCategory;
-
-        const newProj: StoryboardProject = {
+        return {
           id: generateId(),
-          title: resData.data.title || `Storyboard ${params.category} - ${params.productName}`,
-          categoryId: matchedCat.id,
-          productName: params.productName,
-          brandName: params.brandName,
-          productUrl: params.productUrl,
-          referenceImage: params.referenceImage,
-          productDescription: params.productDescription,
-          keySellingPoints: params.keySellingPoints,
-          persona: params.persona,
-          personaExplanation: params.personaExplanation,
-          tone: params.tone,
-          cameraAngleStyle: params.cameraAngleStyle,
-          cameraStyleExplanation: params.cameraStyleExplanation,
-          preferredCameraAngles: params.preferredCameraAngles,
-          targetPlatform: params.targetPlatform,
-          targetAudience: params.targetAudience,
-          caption: resData.data.caption || formatShortCaption(params.productName, params.category, params.keySellingPoints, params.targetPlatform),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          scenes: genScenes,
+          order: i + 1,
+          cameraAngle: sc.cameraAngle || 'Medium Shot',
+          visualAction: sc.visualAction || '',
+          popupText,
+          soundEffect: sc.soundEffect || '',
+          dialogVO: sc.dialogVO || '',
+          notesMood: sc.notesMood || '',
+          duration: Number(sc.duration) || 3,
+          googleFlowPrompt: flowPrompt,
+          imageReferenceNote: sc.imageReferenceNote || defaultRefNote,
         };
+      });
 
-        setProjects((prev) => [newProj, ...prev]);
-        setCurrentProjectId(newProj.id);
-        setIsAIGeneratorOpen(false);
-        showToast('🎉 Storyboard AI berhasil dibuat!');
-      } else {
-        showToast('Gagal membuat storyboard AI. Coba lagi.');
-      }
+      const matchedCat =
+        UGC_CATEGORIES.find(
+          (c) =>
+            c.name.toLowerCase() === params.category.toLowerCase() ||
+            c.id.toLowerCase() === params.category.toLowerCase()
+        ) || activeCategory;
+
+      const newProj: StoryboardProject = {
+        id: generateId(),
+        title: resolvedData.title || `Storyboard ${params.category} - ${params.productName}`,
+        categoryId: matchedCat.id,
+        productName: params.productName,
+        brandName: params.brandName,
+        productUrl: params.productUrl,
+        referenceImage: allParamRefs[0] || params.referenceImage,
+        referenceImages: allParamRefs.length > 0 ? allParamRefs : undefined,
+        productDescription: params.productDescription,
+        keySellingPoints: params.keySellingPoints,
+        persona: params.persona,
+        personaExplanation: params.personaExplanation,
+        tone: params.tone,
+        cameraAngleStyle: params.cameraAngleStyle,
+        cameraStyleExplanation: params.cameraStyleExplanation,
+        preferredCameraAngles: params.preferredCameraAngles,
+        targetPlatform: params.targetPlatform,
+        targetAudience: params.targetAudience,
+        caption: resolvedData.caption || formatShortCaption(params.productName, params.category, params.keySellingPoints, params.targetPlatform),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        scenes: genScenes,
+      };
+
+      setProjects((prev) => {
+        const next = [newProj, ...prev];
+        triggerSave(next, newProj.id);
+        return next;
+      });
+      setCurrentProjectId(newProj.id);
+      setIsAIGeneratorOpen(false);
+      showToast('🎉 Storyboard AI berhasil dibuat!');
     } catch (e) {
       console.error('Generate storyboard error:', e);
       showToast('Gagal terhubung ke generator AI.');
     } finally {
       setIsGeneratingAI(false);
     }
+  };
+
+  // Generate Storyboard directly from extracted link data
+  const handleGenerateFromExtracted = async (data: AutoDetectResult) => {
+    const matchedCat =
+      UGC_CATEGORIES.find(
+        (c) =>
+          c.name.toLowerCase() === data.category.toLowerCase() ||
+          c.id.toLowerCase() === data.category.toLowerCase()
+      ) || activeCategory;
+
+    const params: AIGenerateParams = {
+      category: matchedCat.name,
+      productName: data.productName,
+      brandName: data.brandName,
+      productUrl: data.productUrl,
+      referenceImage: data.referenceImage || data.imageUrl,
+      referenceImages: data.referenceImages || (data.referenceImage || data.imageUrl ? [data.referenceImage || data.imageUrl!] : undefined),
+      productDescription: data.productDescription,
+      targetAudience: data.targetAudience,
+      keySellingPoints: data.keySellingPoints,
+      persona: data.persona || 'Semua (Netral Universal)',
+      personaExplanation: data.personaExplanation,
+      tone: data.tone || 'Santai, Relatable & Meyakinkan',
+      cameraAngleStyle: data.cameraAngleStyle,
+      cameraStyleExplanation: data.cameraStyleExplanation,
+      preferredCameraAngles: data.preferredCameraAngles,
+      targetDuration: data.targetDuration || 30,
+      targetPlatform: data.targetPlatform || 'TikTok Shop',
+      language: 'id',
+    };
+
+    await handleGenerateStoryboard(params);
+  };
+
+  // Apply extracted link data to current active project
+  const handleApplyExtractedToCurrentProject = (data: AutoDetectResult) => {
+    updateCurrentProject((p) => {
+      const mergedRefs =
+        data.referenceImages && data.referenceImages.length > 0
+          ? data.referenceImages
+          : data.referenceImage || data.imageUrl
+          ? [data.referenceImage || data.imageUrl!]
+          : p.referenceImages;
+      return {
+        ...p,
+        productName: data.productName,
+        brandName: data.brandName || p.brandName,
+        productUrl: data.productUrl || p.productUrl,
+        referenceImage: mergedRefs?.[0] || data.referenceImage || data.imageUrl || p.referenceImage,
+        referenceImages: mergedRefs,
+        productDescription: data.productDescription || p.productDescription,
+        keySellingPoints: data.keySellingPoints || p.keySellingPoints,
+        persona: data.persona || p.persona,
+        personaExplanation: data.personaExplanation || p.personaExplanation,
+        tone: data.tone || p.tone,
+        cameraAngleStyle: data.cameraAngleStyle || p.cameraAngleStyle,
+        cameraStyleExplanation: data.cameraStyleExplanation || p.cameraStyleExplanation,
+        preferredCameraAngles: data.preferredCameraAngles || p.preferredCameraAngles,
+        targetPlatform: data.targetPlatform || p.targetPlatform,
+        targetAudience: data.targetAudience || p.targetAudience,
+      };
+    });
+    showToast(`✓ Data produk "${data.productName}" berhasil dipasang ke naskah aktif! ✨`);
+  };
+
+  const handleOpenGeneratorWithPrefilledInput = (input: string) => {
+    setAiGeneratorInitialInput(input);
+    setIsAIGeneratorOpen(true);
   };
 
   // Apply viral hook to Scene 1
@@ -718,20 +962,27 @@ export default function HomePage() {
   const handleGenerateNewCaption = async () => {
     setIsGeneratingCaption(true);
     try {
-      const res = await fetch('/api/generate-caption', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJsonWithRetry<{ success?: boolean; caption?: string }>(
+        '/api/generate-caption',
+        {
           productName: currentProject.productName || 'Produk Unggulan',
           category: activeCategory.name,
+          keySellingPoints: currentProject.keySellingPoints || '',
           targetAudience: currentProject.targetAudience || '',
-        }),
-      });
-      const data = await res.json();
-      if (data.success && data.caption) {
-        updateCurrentProject((p) => ({ ...p, caption: data.caption }));
-        showToast('✨ Caption viral baru berhasil dibuat!');
-      }
+          targetPlatform: currentProject.targetPlatform || 'TikTok Shop',
+        }
+      );
+      const nextCaption =
+        data && data.success && data.caption
+          ? data.caption
+          : formatShortCaption(
+              currentProject.productName || 'Produk Unggulan',
+              activeCategory.name,
+              currentProject.keySellingPoints || '',
+              currentProject.targetPlatform || 'TikTok Shop'
+            );
+      updateCurrentProject((p) => ({ ...p, caption: nextCaption }));
+      showToast('✨ Caption viral baru berhasil dibuat!');
     } catch (e) {
       console.error('Caption generate error:', e);
       showToast('Gagal membuat caption');
@@ -784,7 +1035,11 @@ export default function HomePage() {
       ],
     };
 
-    setProjects((prev) => [newProj, ...prev]);
+    setProjects((prev) => {
+      const next = [newProj, ...prev];
+      triggerSave(next, newProj.id);
+      return next;
+    });
     setCurrentProjectId(newProj.id);
     setIsProjectsModalOpen(false);
     showToast('Naskah baru dibuat!');
@@ -798,7 +1053,11 @@ export default function HomePage() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    setProjects((prev) => [duplicated, ...prev]);
+    setProjects((prev) => {
+      const next = [duplicated, ...prev];
+      triggerSave(next, duplicated.id);
+      return next;
+    });
     setCurrentProjectId(duplicated.id);
     showToast(`Project "${proj.title}" berhasil diduplikasi!`);
   };
@@ -810,9 +1069,11 @@ export default function HomePage() {
     }
     const filtered = projects.filter((p) => p.id !== projId);
     setProjects(filtered);
+    const nextId = currentProjectId === projId ? filtered[0].id : currentProjectId;
     if (currentProjectId === projId) {
       setCurrentProjectId(filtered[0].id);
     }
+    triggerSave(filtered, nextId);
     showToast('Project naskah berhasil dihapus');
   };
 
@@ -841,6 +1102,9 @@ export default function HomePage() {
         onCopyJSON={handleCopyJSON}
         isJsonCopied={isJsonCopied}
         onLogout={handleLogout}
+        saveStatus={saveStatus}
+        lastSavedTime={lastSavedTime}
+        onManualSave={handleManualSave}
       />
 
       {/* Main Workspace Layout */}
@@ -938,56 +1202,130 @@ export default function HomePage() {
                   <span>5 Hook Viral</span>
                 </button>
 
-                {/* Primary Button: Deteksi Produk */}
+                {/* Primary Button: Ekstrak Link Produk */}
                 <button
                   onClick={() => setIsAIGeneratorOpen(true)}
                   className="flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-md transition-all active:scale-95 border border-purple-400/30"
-                  title="Deteksi produk dari link & buat storyboard otomatis"
+                  title="Ekstrak produk dari link, upload foto referensi & buat storyboard otomatis"
                 >
                   <Zap className="w-3.5 h-3.5 text-amber-300 fill-amber-300/30" />
-                  <span>Deteksi Produk</span>
+                  <span>Ekstrak Link Produk</span>
                 </button>
               </div>
             </div>
 
-            {/* Overview Ringkas Produk Terpilih */}
-            {currentProject.productName && (
-              <div className="bg-gradient-to-r from-purple-950/30 via-[#0d1624] to-[#090f1a] border border-purple-500/30 rounded-2xl p-3 text-xs text-slate-300 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-md">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-purple-900/60 border border-purple-500/60 flex items-center justify-center text-purple-300 shrink-0">
-                    <Sparkles className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-white text-xs">
-                        Produk:
-                      </span>
-                      <span className="font-bold text-purple-200 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-700/60 font-mono">
-                        {currentProject.productName}
-                      </span>
-                      {currentProject.brandName && (
-                        <span className="text-[11px] text-slate-400">
-                          ({currentProject.brandName})
+            {/* HERO DIRECT LINK EXTRACTOR BAR (TikTok, Tokopedia, Shopee + Multi-Image Reference Upload) */}
+            {viewMode !== 'meta_cleaner' && (
+              <DirectLinkExtractorBar
+                onApplyToProject={handleApplyExtractedToCurrentProject}
+                onGenerateWithData={handleGenerateFromExtracted}
+                onOpenGeneratorModalWithInput={handleOpenGeneratorWithPrefilledInput}
+                isGenerating={isGeneratingAI}
+              />
+            )}
+
+            {/* Overview Ringkas Produk Terpilih + Multi-Image Reference Bar */}
+            {viewMode !== 'meta_cleaner' && currentProject.productName && (
+              <div className="bg-gradient-to-r from-purple-950/30 via-[#0d1624] to-[#090f1a] border border-purple-500/30 rounded-2xl p-3.5 text-xs text-slate-300 space-y-3 shadow-md">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-purple-900/60 border border-purple-500/60 flex items-center justify-center text-purple-300 shrink-0">
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-white text-xs">
+                          Produk:
                         </span>
+                        <span className="font-bold text-purple-200 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-700/60 font-mono">
+                          {currentProject.productName}
+                        </span>
+                        {currentProject.brandName && (
+                          <span className="text-[11px] text-slate-400">
+                            ({currentProject.brandName})
+                          </span>
+                        )}
+                      </div>
+                      {currentProject.keySellingPoints && (
+                        <p className="text-[11px] text-slate-400 line-clamp-1">
+                          <span className="font-semibold text-slate-300">USP:</span> {currentProject.keySellingPoints}
+                        </p>
                       )}
                     </div>
-                    {currentProject.keySellingPoints && (
-                      <p className="text-[11px] text-slate-400 line-clamp-1">
-                        <span className="font-semibold text-slate-300">USP:</span> {currentProject.keySellingPoints}
-                      </p>
-                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap shrink-0 self-end md:self-auto">
+                    <input
+                      ref={workspaceRefInput}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => handleWorkspaceUploadReferences(e.target.files)}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => workspaceRefInput.current?.click()}
+                      disabled={isUploadingWorkspaceRefs}
+                      className="text-[11px] font-bold text-cyan-200 hover:text-white px-2.5 py-1 rounded-lg bg-cyan-950/80 border border-cyan-600/50 hover:bg-cyan-900 transition-colors flex items-center gap-1.5 cursor-pointer"
+                      title="Upload banyak foto produk sebagai referensi pembuatan Storyboard & Google Flow"
+                    >
+                      {isUploadingWorkspaceRefs ? (
+                        <Loader2 className="w-3 h-3 animate-spin text-cyan-300" />
+                      ) : (
+                        <Upload className="w-3 h-3 text-cyan-400" />
+                      )}
+                      <span>Upload Referensi Image (Multi-Foto)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsAIGeneratorOpen(true)}
+                      className="text-[11px] font-semibold text-purple-300 hover:text-white px-2.5 py-1 rounded-lg bg-purple-950/80 border border-purple-700/60 hover:bg-purple-900 transition-colors"
+                    >
+                      Generate Ulang AI
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
-                  <button
-                    type="button"
-                    onClick={() => setIsAIGeneratorOpen(true)}
-                    className="text-[11px] font-semibold text-purple-300 hover:text-white px-2.5 py-1 rounded-lg bg-purple-950/80 border border-purple-700/60 hover:bg-purple-900 transition-colors"
-                  >
-                    Generate Ulang AI
-                  </button>
-                </div>
+                {/* Active Multi-Image References Gallery in Workspace */}
+                {((currentProject.referenceImages && currentProject.referenceImages.length > 0) ||
+                  currentProject.referenceImage) && (
+                  <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-purple-900/30">
+                    <span className="text-[10px] font-bold text-cyan-300 flex items-center gap-1">
+                      <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Referensi Image Google Flow & Storyboard:</span>
+                    </span>
+                    {(currentProject.referenceImages && currentProject.referenceImages.length > 0
+                      ? currentProject.referenceImages
+                      : currentProject.referenceImage
+                      ? [currentProject.referenceImage]
+                      : []
+                    ).map((src, idx) => (
+                      <div
+                        key={idx}
+                        className="relative group flex items-center gap-1.5 bg-[#091220] border border-cyan-800/60 rounded-lg px-2 py-1"
+                      >
+                        <img
+                          src={src}
+                          alt={`Ref ${idx + 1}`}
+                          className="w-6 h-6 rounded object-cover border border-cyan-600/50"
+                        />
+                        <span className="text-[10px] font-mono font-bold text-cyan-200">
+                          [Image {idx + 1}]
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleWorkspaceRemoveReference(idx)}
+                          className="text-slate-400 hover:text-red-400 transition-colors ml-0.5"
+                          title="Hapus foto referensi ini"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1083,6 +1421,14 @@ export default function HomePage() {
                         scene={scene}
                         index={index}
                         totalScenes={currentProject.scenes.length}
+                        productName={currentProject.productName}
+                        referenceImages={
+                          currentProject.referenceImages && currentProject.referenceImages.length > 0
+                            ? currentProject.referenceImages
+                            : currentProject.referenceImage
+                            ? [currentProject.referenceImage]
+                            : []
+                        }
                         onUpdate={handleUpdateScene}
                         onDelete={() => handleDeleteScene(scene.id)}
                         onDuplicate={() => handleDuplicateScene(scene)}

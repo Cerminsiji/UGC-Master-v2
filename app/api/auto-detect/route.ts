@@ -5,56 +5,72 @@ import {
   parseSafeJson,
   heuristicAutoDetect,
 } from '@/lib/gemini-ugc';
-import { extractProductFromLink, extractUrlFromInput } from '@/lib/link-extractor';
+import {
+  extractProductFromLink,
+  extractUrlFromInput,
+  extractShareTextIntelligence,
+  isLikelyShortcodeOrHash,
+} from '@/lib/link-extractor';
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    let { url = '', notes = '', input = '' } = body;
+async function handleAutoDetectRequest(body: any) {
+  let { url = '', notes = '', input = '', referenceImages = [] } = body || {};
+  const attachedImages: string[] = Array.isArray(referenceImages) ? referenceImages.filter(Boolean) : [];
 
-    // Support unified input or bare shortlinks (e.g. vt.tiktok.com/..., tokopedia.link/...)
-    const foundUrl = extractUrlFromInput(input || url);
-    if (foundUrl) {
-      url = foundUrl;
-      notes = input ? input.replace(foundUrl, '').replace(/https?:\/\/\S+/gi, '').trim() : notes;
-    } else if (input && typeof input === 'string') {
-      notes = input.trim();
-    }
+  // Support unified input or bare shortlinks (e.g. vt.tiktok.com/..., tokopedia.link/...)
+  const combinedSource = (input || `${url} ${notes}`).trim();
+  const foundUrl = extractUrlFromInput(combinedSource);
+  if (foundUrl) {
+    url = foundUrl;
+    notes = combinedSource.replace(foundUrl, '').replace(/https?:\/\/\S+/gi, '').trim() || notes;
+  } else if (input && typeof input === 'string') {
+    notes = input.trim();
+  }
 
-    const rawInputCombined = (input || `${url} ${notes}`).trim();
+  const rawInputCombined = (input || `${url} ${notes}`).trim();
 
-    if (!rawInputCombined && !url) {
-      return NextResponse.json(
-        { error: 'Masukkan link produk atau keterangan produk terlebih dahulu' },
-        { status: 400 }
-      );
-    }
+  if (!rawInputCombined && !url && attachedImages.length === 0) {
+    return NextResponse.json(
+      { error: 'Masukkan link produk, keterangan, atau upload foto referensi terlebih dahulu' },
+      { status: 400 }
+    );
+  }
 
-    // 1. REAL LIVE LINK EXTRACTION: Follow redirects (shortlinks), TikTok oEmbed, OpenGraph & JSON-LD
-    let linkData: any = null;
-    let linkContext = '';
+  // Extract explicit share-text intelligence (e.g. "Cek Setelan Arsyilla Klok (Restock) dengan harga Rp155.000. Dapatkan di Shopee sekarang!")
+  const shareIntel = extractShareTextIntelligence(rawInputCombined);
 
-    if (url) {
-      try {
-        linkData = await extractProductFromLink(rawInputCombined || url, 7500);
-        if (linkData && (linkData.success || linkData.productName || linkData.title)) {
-          linkContext = `
+  // 1. REAL LIVE LINK EXTRACTION: Follow redirects (shortlinks), TikTok oEmbed, OpenGraph & JSON-LD
+  let linkData: any = null;
+  let linkContext = '';
+
+  if (url) {
+    try {
+      linkData = await extractProductFromLink(rawInputCombined || url, 7500);
+      if (linkData && (linkData.success || linkData.productName || linkData.title)) {
+        linkContext = `
 HASIL FETCH & EKSTRAKSI LANGSUNG DARI LINK PLATFORM (${linkData.platform}):
 - URL Sumber: ${linkData.originalUrl}
 - URL Final (Resolved Redirect): ${linkData.finalUrl}
-- Nama Produk Hasil Scraping: "${linkData.productName || linkData.ogTitle || linkData.title || '-'}"
-${linkData.brand ? `- Brand / Toko Resmi: "${linkData.brand}"` : ''}
-${linkData.price ? `- Harga: ${linkData.currency || 'Rp'} ${linkData.price}` : ''}
+- Nama Produk Hasil Scraping/Share-Text: "${shareIntel.shareProductName || linkData.productName || linkData.ogTitle || linkData.title || '-'}"
+${shareIntel.shareBrand || linkData.brand ? `- Brand / Koleksi / Toko Resmi: "${shareIntel.shareBrand || linkData.brand}"` : ''}
+${shareIntel.sharePrice || linkData.price ? `- Harga Produk: Rp ${shareIntel.sharePrice || linkData.price}` : ''}
 ${linkData.ogDescription || linkData.metaDescription ? `- Deskripsi/Snippet Halaman: "${linkData.ogDescription || linkData.metaDescription}"` : ''}
 ${linkData.cleanedSummary ? `- Ringkasan Terstruktur:\n${linkData.cleanedSummary}` : ''}
 
 INSTRUKSI PENTING:
-Gunakan hasil ekstraksi link di atas sebagai fakta utama produk. Bersihkan kata-kata sampah marketplace seperti "Jual", "Beli", "Promo", "Termurah", "Original 100%", "Bebas Ongkir", "COD", dsb. Ambil nama produk dan brand aslinya secara presisi!`;
-        }
-      } catch (scrapeErr) {
-        console.warn('Scraping error (continuing with input text):', scrapeErr);
+Gunakan Nama Produk "${shareIntel.shareProductName || linkData.productName || ''}" dan fakta di atas sebagai acuan utama produk. Jangan pernah mengubah kode acak shortlink (seperti LoXUMhlJb) menjadi nama produk!`;
       }
+    } catch (scrapeErr) {
+      console.warn('Scraping error (continuing with input text):', scrapeErr);
     }
+  }
+
+  if (!linkContext && (shareIntel.shareProductName || shareIntel.sharePrice)) {
+    linkContext = `
+HASIL EKSTRAKSI KALIMAT SHARE MARKETPLACE:
+${shareIntel.shareProductName ? `- Nama Produk Asli: "${shareIntel.shareProductName}"` : ''}
+${shareIntel.shareBrand ? `- Brand / Koleksi: "${shareIntel.shareBrand}"` : ''}
+${shareIntel.sharePrice ? `- Harga Produk: Rp ${shareIntel.sharePrice}` : ''}`;
+  }
 
     const prompt = `Kamu adalah AI UGC Product & Link Analyzer profesional dengan tingkat akurasi tinggi untuk platform TikTok Shop, Tokopedia, Shopee Video, Instagram Reels, dan YouTube Shorts.
 Analisis input link produk dan/atau keterangan berikut, lalu lakukan ekstraksi data produk secara spesifik, akurat, dan mendalam:
@@ -188,27 +204,34 @@ Tugas Anda:
     const rawText = await generateWithFallback(
       prompt,
       config,
-      'You are a professional UGC Ecommerce strategist in Southeast Asia. Return pure JSON with accurate product extraction from Indonesian eCommerce and TikTok links.',
-      20000
+      'You are a professional UGC Ecommerce strategist in Southeast Asia. Analyze the input link/text and any attached product reference images to return pure JSON with accurate product extraction.',
+      20000,
+      attachedImages
     );
 
     const parsed = parseSafeJson<any>(rawText);
     if (parsed && parsed.productName) {
-      // If linkData gave a specific product name and Gemini returned a fallback placeholder, merge them
-      if (linkData?.productName && (!parsed.productName || parsed.productName.toLowerCase().includes('produk unggulan'))) {
-        parsed.productName = linkData.productName;
+      const bestKnownName = shareIntel.shareProductName || linkData?.productName;
+      if (
+        bestKnownName &&
+        (!parsed.productName ||
+          parsed.productName.toLowerCase().includes('produk unggulan') ||
+          isLikelyShortcodeOrHash(parsed.productName))
+      ) {
+        parsed.productName = bestKnownName;
       }
-      if (linkData?.brand && !parsed.brandName) {
-        parsed.brandName = linkData.brand;
+      if ((shareIntel.shareBrand || linkData?.brand) && !parsed.brandName) {
+        parsed.brandName = shareIntel.shareBrand || linkData?.brand;
       }
-      if (linkData?.finalUrl) {
-        parsed.productUrl = linkData.finalUrl;
+      if (linkData?.finalUrl || url) {
+        parsed.productUrl = linkData?.finalUrl || url;
       }
       if (linkData?.ogImage) {
         parsed.imageUrl = linkData.ogImage;
       }
-      if (linkData?.price) {
-        parsed.price = `${linkData.currency || 'Rp'} ${linkData.price}`;
+      if (linkData?.price || shareIntel.sharePrice) {
+        const rawP = linkData?.price || shareIntel.sharePrice;
+        parsed.price = String(rawP).startsWith('Rp') ? rawP : `${linkData?.currency || 'Rp'} ${rawP}`;
       }
       if (linkData?.platform) {
         parsed.platform = linkData.platform;
@@ -248,8 +271,27 @@ Tugas Anda:
       linkData: linkData || null,
       source: 'smart-heuristic',
     });
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    return await handleAutoDetectRequest(body);
   } catch (error: any) {
-    console.error('Server error in auto-detect:', error);
+    console.error('Server error in auto-detect POST:', error);
     return NextResponse.json({ error: error.message || 'Gagal mendeteksi link produk' }, { status: 500 });
   }
 }
+
+export async function GET(req: NextRequest) {
+  try {
+    const payloadParam = req.nextUrl.searchParams.get('payload');
+    const inputParam = req.nextUrl.searchParams.get('input');
+    const body = payloadParam ? JSON.parse(payloadParam) : { input: inputParam || '' };
+    return await handleAutoDetectRequest(body);
+  } catch (error: any) {
+    console.error('Server error in auto-detect GET:', error);
+    return NextResponse.json({ error: error.message || 'Gagal mendeteksi link produk' }, { status: 500 });
+  }
+}
+

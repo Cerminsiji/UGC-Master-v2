@@ -76,7 +76,8 @@ export interface StoryboardProject {
   productName?: string;
   brandName?: string;
   productUrl?: string; // Link hasil ekstraksi produk
-  referenceImage?: string; // URL atau gambar referensi visual Google Flow
+  referenceImage?: string; // Gambar referensi utama Google Flow
+  referenceImages?: string[]; // Multi-gambar referensi visual (untuk pembuatan storyboard & Google Flow)
   productDescription?: string; // Deskripsi produk
   keySellingPoints?: string; // Parameter UGC / USP
   persona?: UGCPersona; // Persona talent
@@ -101,6 +102,7 @@ export interface AIGenerateParams {
   brandName?: string;
   productUrl?: string;
   referenceImage?: string;
+  referenceImages?: string[];
   productDescription?: string;
   targetAudience?: string;
   keySellingPoints?: string;
@@ -121,6 +123,7 @@ export interface AutoDetectResult {
   brandName?: string;
   productUrl?: string;
   referenceImage?: string;
+  referenceImages?: string[];
   category: string;
   productDescription: string;
   targetAudience: string;

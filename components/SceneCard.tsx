@@ -36,6 +36,8 @@ interface SceneCardProps {
   scene: Scene;
   index: number;
   totalScenes: number;
+  productName?: string;
+  referenceImages?: string[];
   onUpdate: (updatedScene: Scene) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -54,6 +56,8 @@ export const SceneCard: React.FC<SceneCardProps> = ({
   scene,
   index,
   totalScenes,
+  productName = 'Produk',
+  referenceImages = [],
   onUpdate,
   onMoveUp,
   onMoveDown,
@@ -622,16 +626,18 @@ export const SceneCard: React.FC<SceneCardProps> = ({
         {/* ZONE 4: GOOGLE FLOW VIDEO UGC (PROMPT AI VIDEO BERDASARKAN REFERENSI IMAGE) */}
         <div className="pt-2 border-t border-[#1a233a]/80">
           <div className="bg-gradient-to-r from-[#0d1627] to-[#121626] border border-cyan-500/30 rounded-xl p-3 space-y-2.5 shadow-sm">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-md bg-cyan-950 border border-cyan-600/50 flex items-center justify-center text-cyan-400">
                   <Wand2 className="w-3 h-3" />
                 </div>
                 <div>
-                  <span className="text-[11px] font-bold text-cyan-300 flex items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-cyan-300 flex items-center gap-1.5 flex-wrap">
                     <span>Google Flow Video UGC</span>
                     <span className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-1.5 py-0.2 rounded font-mono font-medium">
-                      Mengikuti Referensi Image
+                      {referenceImages.length > 0
+                        ? `${referenceImages.length} Referensi Image Terhubung`
+                        : 'Mengikuti Referensi Image'}
                     </span>
                   </span>
                 </div>
@@ -664,6 +670,58 @@ export const SceneCard: React.FC<SceneCardProps> = ({
                 )}
               </button>
             </div>
+
+            {/* Multi-Image Reference Selector Badges for Google Flow */}
+            {referenceImages.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap bg-[#080d17]/90 border border-cyan-950 rounded-lg p-1.5">
+                <span className="text-[10px] text-cyan-400 font-semibold px-1">
+                  Pilih Referensi Google Flow:
+                </span>
+                {referenceImages.map((imgSrc, refIdx) => {
+                  const refNum = refIdx + 1;
+                  const totalRefs = referenceImages.length;
+                  const tagText =
+                    totalRefs > 1
+                      ? `[Image ${refNum} of ${totalRefs} Reference: ${productName}]`
+                      : `[Image 1 Reference: ${productName}]`;
+                  const isActiveRef = (scene.googleFlowPrompt || '').includes(`Image ${refNum}`);
+                  return (
+                    <button
+                      key={refIdx}
+                      type="button"
+                      onClick={() => {
+                        const currentPrompt = scene.googleFlowPrompt || '';
+                        const updatedPrompt = /\[Image\s+\d+[^\]]*\]/i.test(currentPrompt)
+                          ? currentPrompt.replace(/\[Image\s+\d+[^\]]*\]/i, tagText)
+                          : `${tagText} ${currentPrompt}`.trim();
+                        const updatedNote =
+                          totalRefs > 1
+                            ? `Pastikan Produk sesuai Gambar referensi #${refNum} (dari ${totalRefs} foto referensi terlampir)`
+                            : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
+                        onUpdate({
+                          ...scene,
+                          googleFlowPrompt: updatedPrompt,
+                          imageReferenceNote: updatedNote,
+                        });
+                      }}
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-mono font-bold transition-all ${
+                        isActiveRef
+                          ? 'bg-cyan-900/70 border-cyan-400 text-white shadow-sm'
+                          : 'bg-[#0d1526] border-cyan-900/60 text-cyan-300 hover:border-cyan-600'
+                      }`}
+                      title={`Gunakan Foto Referensi #${refNum} pada Scene ${index + 1}`}
+                    >
+                      <img
+                        src={imgSrc}
+                        alt={`Ref ${refNum}`}
+                        className="w-4 h-4 rounded object-cover border border-cyan-600/50"
+                      />
+                      <span>Image {refNum}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Prompt input / editor */}
             <div className="space-y-1">

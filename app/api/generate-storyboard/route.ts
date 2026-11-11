@@ -5,16 +5,19 @@ import {
   parseSafeJson,
   formatShortCaption,
   generateRichFallback,
+  pickDynamicHookArchetype,
+  sanitizeClicheSceneOne,
 } from '@/lib/gemini-ugc';
 
-export async function POST(req: NextRequest) {
+async function handleGenerateStoryboardRequest(body: any) {
   try {
-    const body = await req.json();
     const {
       category = 'Before & After',
       productName = 'Produk Unggulan',
       brandName = '',
-      referenceImage = '',
+      referenceImage: rawReferenceImage = '',
+      referenceImages: rawReferenceImages = [],
+      referenceImageCount = 0,
       productDescription = '',
       targetAudience = 'Pengguna TikTok / Reels usia 18-35 tahun',
       keySellingPoints = '',
@@ -25,9 +28,23 @@ export async function POST(req: NextRequest) {
       targetDuration = 30,
       targetSceneCount = 0,
       language = 'id',
-    } = body;
+    } = body || {};
 
-    const rawPlatform = body.targetPlatform || body.platform || 'TikTok Shop';
+    const allReferenceImages: string[] = Array.isArray(rawReferenceImages) && rawReferenceImages.length > 0
+      ? rawReferenceImages.filter(Boolean)
+      : (rawReferenceImage ? [rawReferenceImage] : []);
+
+    const totalRefCount = Math.max(
+      allReferenceImages.length,
+      Number(referenceImageCount) || (rawReferenceImage ? 1 : 0)
+    );
+
+    const referenceImage =
+      typeof rawReferenceImage === 'string' && rawReferenceImage.startsWith('data:')
+        ? `Gambar Referensi Produk ${productName} (${Math.max(1, totalRefCount)} foto referensi terlampir)`
+        : (rawReferenceImage || (totalRefCount > 0 ? `${totalRefCount} Gambar Referensi Produk ${productName}` : ''));
+
+    const rawPlatform = body?.targetPlatform || body?.platform || 'TikTok Shop';
     const platform = typeof rawPlatform === 'string' ? rawPlatform.trim() : 'TikTok Shop';
     const isShopee = platform.toLowerCase().includes('shopee');
     const isTikTok = platform.toLowerCase().includes('tiktok');
@@ -56,6 +73,16 @@ Sesuaikan sudut kamera di setiap adegan dengan gaya ini secara sinematik vertika
       (persona && persona.toLowerCase().includes('tangan')) ||
       (preferredCameraAngles && preferredCameraAngles.some((a: string) => a.toLowerCase().includes('tangan') || a.toLowerCase().includes('hand')));
 
+    const chosenHookArchetype = pickDynamicHookArchetype(category, productName);
+
+    const rdHookInstruction = `
+=== RISET & PENGEMBANGAN (R&D) HOOK ADEGAN 1 — ANTI-MONOTON & ANTI "3 ALASAN" & ANTI "STOP SCROLLING" ===
+- Arketipe Hook Terpilih: "${chosenHookArchetype.name}" (${chosenHookArchetype.psychology})
+- Arahan R&D Adegan 1: ${chosenHookArchetype.promptDirective}
+- LARANGAN MUTLAK 1 (ANTI LISTICLE & ANTI "3 ALASAN"): DILARANG KERAS membuat hook pembuka bertipe listicle monoton seperti "3 alasan kenapa...", "3 alasan wajib punya...", "Ini 3 alasan...", "3 hal yang bikin...", atau format menghitung poin/jari di Adegan 1! Format "3 alasan" sudah usang, klise, dan membuat audiens bosan.
+- LARANGAN MUTLAK 2 (ANTI "STOP SCROLLING"): DILARANG KERAS memulai Adegan 1 dengan kalimat klise yang monoton seperti "Stop scrolling!", "Jangan skip dulu!", "Tunggu dulu jangan di-scroll!", atau aksi visual klise "gesture tangan menyetop layar"!
+- SEBAGAI GANTINYA: Adegan 1 WAJIB langsung masuk secara alami, organik, dan emosional ke substansi produk "${productName}" sesuai arketipe "${chosenHookArchetype.name}" (misal: visual shock hasil nyata sebelum/sesudah, empati masalah spesifik sehari-hari, rasa penasaran misterius / curiosity gap, cerita pengalaman nyata ditanya orang kantor, uji klaim ekstrem tanpa cut di depan lensa, atau reverse psychology peringatan anti-nyesel).`;
+
     const handsOnlyInstruction = isHandsOnly
       ? `\nATURAN MUTLAK KAMERA HANYA TANGAN SAJA (FACELESS UGC - 100% TANPA WAJAH):
 - Kamera HANYA merekam gerakan tangan dan interaksi produk (unboxing, membuka segel, memegang kemasan, mengoleskan tekstur/swatch, menunjuk ${isShopee ? 'keranjang oren' : (isTikTok ? 'keranjang kuning atau keranjang di bawah' : 'keranjang di bawah')}).
@@ -64,7 +91,7 @@ Sesuaikan sudut kamera di setiap adegan dengan gaya ini secara sinematik vertika
       : '';
 
     const platformCtaRule = isShopee
-      ? `\n=== ATURAN MUTLAK CTA & NARASI PLATFORM SHOPEE (ANTI KERANJANG KUNING) ===
+      ? `\n=== ATURAN MUTLAK CTA & NARASI PLATFORM SHOPEE (ANTI KERANANG KUNING) ===
 - Target Platform saat ini: SHOPEE (${platform}).
 - WAJIB gunakan istilah "Keranjang Oren" (Orange Cart) ATAU kalimat global seperti "Klik keranjang di bawah" / "keranjang di bawah".
 - DILARANG KERAS menyebut atau menulis "keranjang kuning"! Jika target Shopee, sebutan kuning adalah kesalahan fatal.
@@ -86,9 +113,10 @@ Sesuaikan sudut kamera di setiap adegan dengan gaya ini secara sinematik vertika
 - Narasi Aksi Visual (visualAction): Talent menunjuk ke arah keranjang di bawah.`);
 
     const googleFlowReferenceInstruction = `
-=== ATURAN MUTLAK KEPATUHAN REFERENSI IMAGE PADA GOOGLE FLOW VIDEO UGC ===
-Format ini WAJIB kompatibel dengan pipeline Google Flow Video UGC (Image-to-Video Workflow).
-Referensi Gambar Produk: "${referenceImage || `Kemasan dan visual asli produk ${productName}`}".
+=== ATURAN MUTLAK KEPATUHAN MULTI-REFERENSI IMAGE PADA STORYBOARD & GOOGLE FLOW VIDEO UGC ===
+Format ini WAJIB kompatibel dengan pipeline Google Flow Video UGC (Image-to-Video & Multi-Image Ingredients Workflow).
+Jumlah Gambar Referensi Produk Terlampir: ${Math.max(1, totalRefCount)} gambar (${referenceImage || `Kemasan dan visual asli produk ${productName}`}).
+${totalRefCount > 1 ? `Catatan Penting: Pengguna telah mengunggah ${totalRefCount} foto referensi produk ([Image 1 Reference] s/d [Image ${totalRefCount} Reference]). Analisis detail visual dari semua foto referensi yang dilampirkan dan distribusikan referensi gambar tersebut ke dalam adegan-adegan storyboard secara relevan!` : ''}
 
 SETIAP ADEGAN WAJIB:
 1. Selalu mengikuti referensi image (Product & Character Consistency): Bentuk kemasan, warna brand, proporsi kemasan, detail label, tekstur produk, dan lighting harus selalu konsisten dengan referensi image produk di atas tanpa distorsi visual.
@@ -106,10 +134,11 @@ SETIAP ADEGAN WAJIB:
 - Gunakan tata bahasa Indonesia yang rapi, natural, dan ejaan yang tepat (PUEBI/EYD) untuk narasi, serta diksi gaul UGC yang tepat tanpa singkatan rusak.
 - Jangan ada huruf tertinggal atau dobel yang tidak disengaja.`;
 
-    const prompt = `Kamu adalah pakar Creative Director & Scriptwriter UGC (User-Generated Content) viral TikTok Shop, Shopee Video, dan Instagram Reels di Indonesia.
-Buatkan storyboard UGC video lengkap yang terbukti memiliki Conversion Rate & Retention Rate tinggi untuk produk berikut:
+    const prompt = `Kamu adalah pakar Creative Director & R&D Scriptwriter UGC (User-Generated Content) viral TikTok Shop, Shopee Video, dan Instagram Reels di Indonesia.
+Buatkan storyboard UGC video lengkap yang kaya riset produk, variatif, tidak monoton, dan terbukti memiliki Conversion Rate & Retention Rate tinggi untuk produk berikut:
 
 ${productBrief}
+${rdHookInstruction}
 ${googleFlowReferenceInstruction}
 ${handsOnlyInstruction}
 ${platformCtaRule}
@@ -122,15 +151,15 @@ ${cameraInstructions}
 Target Durasi Total: ${targetDuration} detik
 Jumlah Adegan yang Diminta: ${sceneCountText}
 Platform: ${platform}
-Bahasa: ${language === 'id' ? 'Bahasa Indonesia (Gaya bicara kreator UGC TikTok santai, luwes, natural, tidak kaku, tanpa typo)' : 'English (Casual UGC creator style, zero typos)'}
+Bahasa: ${language === 'id' ? 'Bahasa Indonesia (Gaya bicara kreator UGC natural, luwes, spesifik membahas manfaat produk, tanpa kalimat klise "Stop scrolling", tanpa typo)' : 'English (Casual UGC creator style, zero clichés, zero typos)'}
 
 Syarat Wajib Format Storyboard:
-1. Adegan 1 WAJIB HOOK 3 DETIK PERTAMA (Visual + Audio/SFX + On-Screen Text) yang bikin orang stop scrolling.
-2. Adegan berikutnya mendemonstrasikan masalah / unboxing / tutorial / sebelum vs sesudah / manfaat nyata produk secara dinamis.
+1. Adegan 1 WAJIB menerapkan strategi R&D Hook "${chosenHookArchetype.name}" (${chosenHookArchetype.promptDirective}). JANGAN gunakan kata "Stop scrolling", "Jangan skip dulu", dan DILARANG KERAS menggunakan format "3 alasan" atau listicle berhitung angka di Adegan 1!
+2. Adegan berikutnya membedah masalah spesifik, demonstrasi pemakaian nyata, tekstur/fitur fisik produk, dan bukti hasil secara dinamis.
 3. Adegan terakhir WAJIB Call To Action (CTA) yang jelas dan mendesak: ${isShopee ? 'checkout di keranjang oren (BUKAN keranjang kuning!) atau gunakan kalimat global "klik keranjang di bawah"' : (isTikTok ? 'checkout di keranjang kuning atau klik keranjang di bawah' : 'checkout lewat keranjang di bawah')} mumpung promo diskon & gratis ongkir.
 4. Sudut kamera (cameraAngle) di setiap adegan WAJIB disesuaikan dengan instruksi sudut kamera di atas.
-5. Berikan Sound Effect (SFX) yang KAYA, BERVARIASI, dan SPESIFIK di setiap adegan (kombinasi ASMR nyata, meme viral, bass drop, swoosh, cash register, ding, crunch, water swirl, heartbeat). DILARANG menggunakan SFX yang sama berulang-ulang di tiap adegan.
-6. Naskah Voiceover (VO) harus BERVARIASI SECARA EMOSIONAL dan intonasi alami: dari penasaran, heboh, curhat, hingga meyakinkan saat closing CTA. Sesuaikan panjang kata dengan durasi adegan agar tidak terburu-buru.
+5. Berikan Sound Effect (SFX) yang KAYA, BERVARIASI, dan SPESIFIK di setiap adegan (kombinasi ASMR nyata, foley produk, swoosh, camera shutter, ding, water swirl, cash register). DILARANG menggunakan SFX yang sama berulang-ulang di tiap adegan.
+6. Naskah Voiceover (VO) harus BERVARIASI SECARA EMOSIONAL dan intonasi alami: mengalir seperti kreator sungguhan yang benar-benar memakai produknya.
 7. Pop-up Text (popupText) WAJIB SELALU TERISI di setiap adegan berupa huruf kapital mencolok & singkat, dan sinkron dengan overlay pada prompt Google Flow.
 8. Durasi setiap adegan (dalam integer detik) jika dijumlahkan WAJIB bernilai total mendekati ${targetDuration} detik. Jika durasi pendek (${targetDuration}s) dan adegan banyak (hingga 9 adegan), gunakan durasi fast-cut 1-2 detik per adegan.
 9. BUATKAN AUTO CAPTION DENGAN HASHTAG: Tulis 1 caption postingan media sosial yang menarik dan menjual (sesuaikan CTA: ${isShopee ? 'keranjang oren / klik keranjang di bawah' : (isTikTok ? 'keranjang kuning / klik keranjang di bawah' : 'klik keranjang di bawah')}), LENGKAP dengan 2-4 hashtag trending (${isShopee ? '#ShopeeVideo #ShopeeHaul' : '#TikTokShop #fyp'}).
@@ -152,7 +181,7 @@ Syarat Wajib Format Storyboard:
           },
           hookTip: {
             type: Type.STRING,
-            description: 'Alasan kenapa hook ini dipilih',
+            description: 'Penjelasan psikologi R&D kenapa hook Adegan 1 ini efektif menahan penonton tanpa klise',
           },
           caption: {
             type: Type.STRING,
@@ -173,15 +202,15 @@ Syarat Wajib Format Storyboard:
                 },
                 popupText: {
                   type: Type.STRING,
-                  description: 'Teks pop-up overlay di layar video (huruf kapital tebal).',
+                  description: 'Teks pop-up overlay di layar video (huruf kapital tebal, bukan "JANGAN SKIP DULU").',
                 },
                 soundEffect: {
                   type: Type.STRING,
-                  description: 'Efek suara / SFX (e.g., Phone ring & sigh, Swoosh, Cha-ching, Vine boom, Ting).',
+                  description: 'Efek suara / SFX (e.g., Crisp plastic peel, Camera shutter, Swoosh, Cha-ching, Sparkle chime).',
                 },
                 dialogVO: {
                   type: Type.STRING,
-                  description: 'Dialog yang diucapkan talent atau suara Voice Over (VO). Bebas typo.',
+                  description: 'Dialog yang diucapkan talent atau suara Voice Over (VO) tanpa kalimat klise "Stop scrolling". Bebas typo.',
                 },
                 notesMood: {
                   type: Type.STRING,
@@ -221,7 +250,9 @@ Syarat Wajib Format Storyboard:
     const rawText = await generateWithFallback(
       prompt,
       config,
-      'You are an elite UGC video strategist and storyboard scriptwriter. Always return strictly valid JSON matching the schema. Follow reference image consistency on Google Flow and ensure zero typos in all languages.'
+      'You are an elite UGC video R&D strategist and storyboard scriptwriter. Analyze any attached product reference images carefully for visual details. Never use generic "Stop scrolling" or "Jangan skip dulu" clichés in Scene 1; always craft specific, product-researched hooks. Return strictly valid JSON matching the schema.',
+      18000,
+      allReferenceImages
     );
 
     const parsedData = parseSafeJson<any>(rawText);
@@ -232,14 +263,30 @@ Syarat Wajib Format Storyboard:
         parsedData.caption = parsedData.caption.slice(0, 147) + '...';
       }
 
+      // Sanitize Scene 1 if the model accidentally slipped in any "Stop scrolling" / "Jangan skip" cliché
+      const sanitizedScenes = sanitizeClicheSceneOne(
+        parsedData.scenes,
+        productName,
+        keySellingPoints,
+        category,
+        isHandsOnly
+      );
+
+      const refTotal = Math.max(1, totalRefCount);
+
       // Ensure every scene has popupText, googleFlowPrompt & imageReferenceNote in JSON
-      parsedData.scenes = parsedData.scenes.map((sc: any, idx: number) => {
+      parsedData.scenes = sanitizedScenes.map((sc: any, idx: number) => {
+        const refIdx = (idx % refTotal) + 1;
+        const refTag =
+          refTotal > 1
+            ? `[Image ${refIdx} of ${refTotal} Reference: ${productName}]`
+            : `[Image 1 Reference: ${productName}]`;
+
         let popupText =
           sc.popupText && typeof sc.popupText === 'string' && sc.popupText.trim() && sc.popupText.trim() !== '-'
             ? sc.popupText.trim()
             : '';
 
-        // If popupText is missing or empty, extract from googleFlowPrompt if available, or generate a punchy contextual hook/benefit
         if (!popupText) {
           const overlayMatch = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string'
             ? sc.googleFlowPrompt.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i) ||
@@ -251,10 +298,15 @@ Syarat Wajib Format Storyboard:
           } else {
             popupText =
               idx === 0
-                ? 'JANGAN SKIP DULU! 🔥'
-                : idx === parsedData.scenes.length - 1
+                ? chosenHookArchetype.buildSceneOne({
+                    productName,
+                    usp: keySellingPoints,
+                    category,
+                    isHandsOnly,
+                  }).popupText
+                : idx === sanitizedScenes.length - 1
                 ? (isShopee ? 'KLIK KERANJANG OREN DI BAWAH! 🛒👇' : (isTikTok ? 'CEK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇'))
-                : `SOLUSI: ${productName.toUpperCase()}`;
+                : `KEUNGGULAN: ${productName.toUpperCase().slice(0, 24)}`;
           }
         }
 
@@ -263,14 +315,21 @@ Syarat Wajib Format Storyboard:
 
         let flowPrompt = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string' ? sc.googleFlowPrompt.trim() : '';
         if (!flowPrompt) {
-          flowPrompt = `[Image 1 Reference: ${productName}] Scene ${idx + 1} (${angle}): ${visual} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging and branding in reference image, vertical 9:16 UGC smartphone camera, photorealistic 4k.`;
+          flowPrompt = `${refTag} Scene ${idx + 1} (${angle}): ${visual} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging and branding in reference image #${refIdx}, vertical 9:16 UGC smartphone camera, photorealistic 4k.`;
         } else {
-          // Guarantee that Google Flow command always includes On-Screen Pop-up Text Overlay matching popupText
+          if (refTotal > 1 && /\[Image 1 Reference:/i.test(flowPrompt)) {
+            flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
+          }
           const hasOverlay = /on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt);
           if (!hasOverlay) {
             flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
           }
         }
+
+        const defaultRefNote =
+          refTotal > 1
+            ? `Pastikan Produk sesuai Gambar referensi #${refIdx} (dari ${refTotal} foto referensi terlampir)`
+            : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
 
         return {
           ...sc,
@@ -278,7 +337,7 @@ Syarat Wajib Format Storyboard:
           visualAction: visual,
           popupText,
           googleFlowPrompt: flowPrompt,
-          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+          imageReferenceNote: sc.imageReferenceNote && refTotal === 1 ? sc.imageReferenceNote : defaultRefNote,
         };
       });
 
@@ -300,7 +359,10 @@ Syarat Wajib Format Storyboard:
       cameraAngleStyle,
       preferredCameraAngles,
       referenceImage,
-      platform
+      platform,
+      allReferenceImages.length > 0
+        ? allReferenceImages
+        : Array.from({ length: Math.max(1, totalRefCount) }, (_, i) => `Image ${i + 1}`)
     );
 
     return NextResponse.json({
@@ -313,3 +375,23 @@ Syarat Wajib Format Storyboard:
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    return await handleGenerateStoryboardRequest(body);
+  } catch (error: any) {
+    return await handleGenerateStoryboardRequest({});
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const payloadParam = req.nextUrl.searchParams.get('payload');
+    const body = payloadParam ? JSON.parse(payloadParam) : {};
+    return await handleGenerateStoryboardRequest(body);
+  } catch (error: any) {
+    return await handleGenerateStoryboardRequest({});
+  }
+}
+

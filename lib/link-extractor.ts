@@ -120,18 +120,101 @@ export function detectKnownBrand(text: string): string | undefined {
 }
 
 /**
+ * Helper to infer a brand or collection name from a clean Indonesian product title
+ * when not found in KNOWN_BRANDS (e.g. "Setelan Arsyilla Klok (Restock)" -> "Arsyilla")
+ */
+export function inferProductBrandOrCollection(productName: string): string | undefined {
+  if (!productName) return undefined;
+  const known = detectKnownBrand(productName);
+  if (known) return known;
+
+  const cleaned = productName
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const words = cleaned.split(' ').filter(Boolean);
+  if (words.length < 2) return undefined;
+
+  const categoryNouns = new Set([
+    'setelan', 'oneset', 'gamis', 'hijab', 'jilbab', 'pashmina', 'bergo', 'khimar', 'mukena',
+    'tunik', 'dress', 'abaya', 'kaftan', 'kebaya', 'daster', 'kemeja', 'kaos', 'blouse',
+    'kulot', 'celana', 'rok', 'jaket', 'hoodie', 'sweater', 'cardigan', 'outer', 'rompi',
+    'sepatu', 'sandal', 'sneakers', 'heels', 'flatshoes', 'tas', 'dompet', 'ransel', 'slingbag',
+    'parfum', 'serum', 'moisturizer', 'sunscreen', 'toner', 'cushion', 'lip', 'liptint', 'lipcream',
+    'sabun', 'shampoo', 'lotion', 'bodywash', 'kopi', 'teh', 'madu', 'susu', 'helm', 'jam',
+    'baju', 'pakaian', 'koko', 'sarung', 'ciput', 'manset',
+  ]);
+
+  const genericAdjectives = new Set([
+    'wanita', 'pria', 'cewek', 'cowok', 'anak', 'bayi', 'dewasa', 'remaja', 'muslim', 'muslimah',
+    'syari', 'jumbo', 'oversize', 'bigsize', 'murah', 'premium', 'original', 'ori', 'import',
+    'lokal', 'korea', 'korean', 'terbaru', 'viral', 'kekinian', 'polos', 'motif', 'bunga',
+    'salur', 'garis', 'kotak', 'crinkle', 'airflow', 'rayon', 'katun', 'cotton', 'rajut', 'knit',
+    'jeans', 'denim', 'kulit', 'ceruty', 'babydoll', 'silk', 'satin', 'linen', 'fleece',
+    'panjang', 'pendek', 'lebaran', 'kondangan', 'kerja', 'kantor', 'santai', 'harian', 'tidur',
+    'olahraga', 'busui', 'wudhu', 'friendly', 'klok', 'mayung', 'rempel', 'plisket', 'cargo',
+    'highwaist', 'cutbray', 'set', 'one', 'paket', 'bundle', 'isi', 'pcs', 'gram', 'ml',
+  ]);
+
+  // If first word is a category noun (e.g., "Setelan Arsyilla Klok"), inspect the second word
+  const firstLower = words[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (categoryNouns.has(firstLower) && words[1]) {
+    const secondClean = words[1].replace(/[^a-zA-Z0-9']/g, '');
+    const secondLower = secondClean.toLowerCase();
+    if (
+      secondClean.length >= 3 &&
+      /^[A-Z]/.test(secondClean) &&
+      !genericAdjectives.has(secondLower) &&
+      !categoryNouns.has(secondLower)
+    ) {
+      return secondClean;
+    }
+  }
+
+  // Or if first word itself is a proper noun not in categoryNouns or genericAdjectives
+  const firstClean = words[0].replace(/[^a-zA-Z0-9']/g, '');
+  if (
+    firstClean.length >= 3 &&
+    /^[A-Z]/.test(firstClean) &&
+    !categoryNouns.has(firstLower) &&
+    !genericAdjectives.has(firstLower)
+  ) {
+    return firstClean;
+  }
+
+  return undefined;
+}
+
+/**
  * Checks if a string is a meaningless shortcode/hash instead of a product name
- * (e.g. "3ZkIq7m", "3zkiq7m", "8u19xz")
+ * (e.g. "3ZkIq7m", "LoXUMhlJb", "Lo Xumhl Jb", "8u19xz")
  */
 export function isLikelyShortcodeOrHash(str: string): boolean {
   if (!str) return true;
   const trimmed = str.trim();
-  // If it has multiple words separated by spaces, it's not a single raw hash
-  if (trimmed.includes(' ') && trimmed.split(' ').filter(Boolean).length >= 2) {
-    return false;
+  if (!trimmed) return true;
+
+  // Check if multi-word string is actually a camelCase-split shortlink hash like "Lo Xumhl Jb"
+  if (trimmed.includes(' ')) {
+    const parts = trimmed.split(/\s+/).filter(Boolean);
+    const joined = parts.join('');
+    if (parts.length >= 2 && parts.length <= 4 && joined.length <= 14 && /^[a-zA-Z0-9]+$/.test(joined)) {
+      const hasVowelLessPart = parts.some((p) => !/[aeiouAEIOU]/.test(p));
+      const shortPartsCount = parts.filter((p) => p.length <= 2).length;
+      const weirdConsonantCluster = parts.some((p) => /[bcdfghjklmnpqrstvwxyz]{4,}/i.test(p));
+      if (hasVowelLessPart || shortPartsCount >= 2 || weirdConsonantCluster) {
+        return true;
+      }
+    }
+    if (parts.length >= 2) {
+      return false;
+    }
   }
-  // Single token <= 14 chars with mixed case or digits and no vowels/meaningful words
-  if (/^[a-zA-Z0-9_-]{3,14}$/.test(trimmed)) {
+
+  // Single token <= 15 chars with mixed case or digits and no spaces
+  if (/^[a-zA-Z0-9_-]{3,15}$/.test(trimmed)) {
     const lower = trimmed.toLowerCase();
     // Known single-word products/brands are not hashes
     if (KNOWN_BRANDS.some((b) => b.toLowerCase() === lower)) return false;
@@ -157,6 +240,7 @@ export function isGenericMarketplaceFallback(text: string): boolean {
     'situs belanja online terlengkap',
     'tiktok - make your day',
     'shopee indonesia | situs belanja',
+    'jual beli online aman dan nyaman',
     'download tokopedia app',
     'access denied',
     'robot check',
@@ -166,14 +250,19 @@ export function isGenericMarketplaceFallback(text: string): boolean {
     '404 not found',
     'attention required',
     'jual beli online',
+    'login untuk melanjutkan',
   ];
 
   return genericSnippets.some((snippet) => lower.includes(snippet));
 }
 
 /**
- * Extract product & shop intelligence from Indonesian marketplace share-text
- * (e.g. "Beli [Produk] di [Toko] Tokopedia", "Dapatkan [Produk] seharga Rp... di Shopee")
+ * Extract product, brand & price intelligence from Indonesian marketplace share-text
+ * Supports Shopee, Tokopedia, TikTok Shop, Lazada share formats:
+ * - "Cek Setelan Arsyilla Klok (Restock) dengan harga Rp155.000. Dapatkan di Shopee sekarang! https://s.shopee.co.id/LoXUMhlJb"
+ * - "Temukan [Produk] seharga Rp... hanya di Shopee!"
+ * - "Beli [Produk] di [Toko] Tokopedia..."
+ * - "Dapatkan [Produk] seharga Rp... di Shopee"
  */
 export function extractShareTextIntelligence(input: string): {
   shareProductName?: string;
@@ -182,7 +271,30 @@ export function extractShareTextIntelligence(input: string): {
 } {
   if (!input) return {};
 
-  // 1. Tokopedia share pattern: "Beli Somethinc Niacinamide Serum 20ml di Somethinc Official Tokopedia..."
+  // Extract price anywhere in the share text (e.g. "dengan harga Rp155.000", "seharga Rp 129.000", "Rp155.000")
+  const priceMatch =
+    input.match(/(?:dengan\s+harga|seharga|harga\s+mulai|harga|cuma|hanya)\s*Rp\.?\s*([\d.,]+)/i) ||
+    input.match(/\bRp\.?\s*([\d.,]{3,})\b/i);
+  const extractedPrice = priceMatch?.[1]
+    ? priceMatch[1].replace(/[.,]+$/, '').trim()
+    : undefined;
+
+  // 1. Shopee / Universal "Cek / Temukan / Dapatkan [Produk] dengan harga / seharga Rp... Dapatkan di Shopee sekarang!"
+  const shopeePriceShareMatch = input.match(
+    /(?:Cek|Temukan|Dapatkan|Lihat|Beli)\s+(.+?)\s+(?:dengan\s+harga|seharga|harga\s+mulai|hanya\s+Rp|sekarang\s+hanya\s+Rp)\s*(?:Rp\.?\s*[\d.,]+)?/i
+  );
+  if (shopeePriceShareMatch && shopeePriceShareMatch[1]) {
+    const cleanProd = cleanMarketplaceProductName(shopeePriceShareMatch[1], 'Shopee');
+    if (cleanProd && cleanProd.length >= 3 && !isGenericMarketplaceFallback(cleanProd) && !isLikelyShortcodeOrHash(cleanProd)) {
+      return {
+        shareProductName: cleanProd,
+        shareBrand: inferProductBrandOrCollection(cleanProd),
+        sharePrice: extractedPrice,
+      };
+    }
+  }
+
+  // 2. Tokopedia share pattern: "Beli Somethinc Niacinamide Serum 20ml di Somethinc Official Tokopedia..."
   const tokoMatch = input.match(/Beli\s+(.+?)\s+di\s+(.+?)(?:\s+Tokopedia|\.|\s+https?)/i);
   if (tokoMatch && tokoMatch[1]) {
     const rawProd = tokoMatch[1].replace(/^(produk|barang)\s+/i, '').trim();
@@ -191,58 +303,70 @@ export function extractShareTextIntelligence(input: string): {
     if (cleanProd && !isGenericMarketplaceFallback(cleanProd) && !isLikelyShortcodeOrHash(cleanProd)) {
       return {
         shareProductName: cleanProd,
-        shareBrand: rawBrand || detectKnownBrand(cleanProd),
+        shareBrand: rawBrand || inferProductBrandOrCollection(cleanProd),
+        sharePrice: extractedPrice,
       };
     }
   }
 
-  // 2. Simpler Tokopedia share: "Beli Somethinc Serum di Tokopedia https://..."
+  // 3. Simpler Tokopedia share: "Beli Somethinc Serum di Tokopedia https://..."
   const tokoSimpleMatch = input.match(/Beli\s+(.+?)\s+di\s+Tokopedia/i);
   if (tokoSimpleMatch && tokoSimpleMatch[1]) {
     const cleanProd = cleanMarketplaceProductName(tokoSimpleMatch[1], 'Tokopedia');
     if (cleanProd && !isGenericMarketplaceFallback(cleanProd) && !isLikelyShortcodeOrHash(cleanProd)) {
       return {
         shareProductName: cleanProd,
-        shareBrand: detectKnownBrand(cleanProd),
+        shareBrand: inferProductBrandOrCollection(cleanProd),
+        sharePrice: extractedPrice,
       };
     }
   }
 
-  // 3. Shopee share pattern: "Dapatkan Skintific 5X Ceramide seharga Rp129.000 hanya di Shopee! ..."
+  // 4. Shopee share pattern: "Dapatkan Skintific 5X Ceramide seharga Rp129.000 hanya di Shopee! ..."
   const shopeeMatch = input.match(
-    /(?:Dapatkan|Beli)\s+(.+?)(?:\s+seharga\s+(Rp[\d.,]+))?(?:\s+hanya di Shopee|\s+di Shopee|\.|\s+https?)/i
+    /(?:Dapatkan|Beli|Temukan|Cek)\s+(.+?)(?:\s+(?:seharga|dengan\s+harga)\s*Rp\.?\s*([\d.,]+))?(?:\.\s*Dapatkan\s+di\s+Shopee|\s+hanya\s+di\s+Shopee|\s+di\s+Shopee|\s+sekarang!|\s+https?)/i
   );
   if (shopeeMatch && shopeeMatch[1]) {
     const cleanProd = cleanMarketplaceProductName(shopeeMatch[1], 'Shopee');
     if (cleanProd && !isGenericMarketplaceFallback(cleanProd) && !isLikelyShortcodeOrHash(cleanProd)) {
       return {
         shareProductName: cleanProd,
-        shareBrand: detectKnownBrand(cleanProd),
-        sharePrice: shopeeMatch[2] ? shopeeMatch[2].replace(/[^\d]/g, '') : undefined,
+        shareBrand: inferProductBrandOrCollection(cleanProd),
+        sharePrice: shopeeMatch[2] ? shopeeMatch[2].replace(/[.,]+$/, '').trim() : extractedPrice,
       };
     }
   }
 
-  // 4. "Lihat/Cek [Produk] di TikTok/Shopee/Tokopedia: ..."
-  const genericShareMatch = input.match(/(?:Lihat|Cek|Rekomendasi|Spill)\s+(.+?)(?:\s+di\s+(?:TikTok|Tokopedia|Shopee)|\s+https?)/i);
+  // 5. "Lihat/Cek [Produk] di TikTok/Shopee/Tokopedia: ..."
+  const genericShareMatch = input.match(
+    /(?:Lihat|Cek|Temukan|Rekomendasi|Spill)\s+(.+?)(?:\s+dengan\s+harga\s+Rp[\d.,]+|\s+seharga\s+Rp[\d.,]+|\.\s*Dapatkan\s+di|\s+di\s+(?:TikTok|Tokopedia|Shopee|Lazada)|\s+https?)/i
+  );
   if (genericShareMatch && genericShareMatch[1]) {
     const cleanProd = cleanMarketplaceProductName(genericShareMatch[1]);
-    if (cleanProd && cleanProd.length > 3 && !isGenericMarketplaceFallback(cleanProd) && !isLikelyShortcodeOrHash(cleanProd)) {
+    if (cleanProd && cleanProd.length >= 3 && !isGenericMarketplaceFallback(cleanProd) && !isLikelyShortcodeOrHash(cleanProd)) {
       return {
         shareProductName: cleanProd,
-        shareBrand: detectKnownBrand(cleanProd),
+        shareBrand: inferProductBrandOrCollection(cleanProd),
+        sharePrice: extractedPrice,
       };
     }
   }
 
-  // 5. Clean text stripped of URL
-  const noUrls = input.replace(/https?:\/\/\S+/gi, '').replace(/[#@][\w-]+/g, '').trim();
+  // 6. Clean text stripped of URL & share boilerplate
+  const noUrls = input
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\b(?:s\.shopee\.co\.id|shope\.ee|vt\.tiktok\.com|tokopedia\.link|tkp\.me|s\.lazada\.co\.id)\/\S+/gi, '')
+    .replace(/[#@][\w-]+/g, '')
+    .trim();
+
   if (noUrls && noUrls.length >= 4 && !isGenericMarketplaceFallback(noUrls)) {
-    const firstCleanLine = noUrls.split(/[\n–—\-]/)[0]?.trim();
-    if (firstCleanLine && firstCleanLine.length >= 4 && firstCleanLine.length <= 80 && !isLikelyShortcodeOrHash(firstCleanLine)) {
+    const cleanedLine = cleanMarketplaceProductName(noUrls);
+    const firstCleanLine = cleanedLine.split(/[\n–—]/)[0]?.trim();
+    if (firstCleanLine && firstCleanLine.length >= 3 && firstCleanLine.length <= 100 && !isLikelyShortcodeOrHash(firstCleanLine)) {
       return {
-        shareProductName: cleanMarketplaceProductName(firstCleanLine),
-        shareBrand: detectKnownBrand(firstCleanLine),
+        shareProductName: firstCleanLine,
+        shareBrand: inferProductBrandOrCollection(firstCleanLine),
+        sharePrice: extractedPrice,
       };
     }
   }
@@ -253,6 +377,7 @@ export function extractShareTextIntelligence(input: string): {
 /**
  * Parse path or slug words (including camelCase or hyphenated tokens)
  * E.g. "ZS2mSagoDiet" -> "Sago Diet", "somethinc-niacinamide" -> "Somethinc Niacinamide"
+ * NEVER splits random shortlink hashes like "LoXUMhlJb" or "3ZkIq7m"!
  */
 export function parsePathOrSlugWords(token: string): { parsedName?: string; brand?: string } {
   if (!token) return {};
@@ -263,10 +388,10 @@ export function parsePathOrSlugWords(token: string): { parsedName?: string; bran
     str = str.replace(/^ZS[a-zA-Z0-9]{2,3}/, '');
   }
 
-  // If token has hyphens or underscores
+  // If token has hyphens or underscores (real product URL slug)
   if (str.includes('-') || str.includes('_')) {
     const spaced = str.replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (spaced.length >= 4) {
+    if (spaced.length >= 4 && !isLikelyShortcodeOrHash(spaced)) {
       return {
         parsedName: capitalizeWords(spaced),
         brand: detectKnownBrand(spaced),
@@ -274,14 +399,25 @@ export function parsePathOrSlugWords(token: string): { parsedName?: string; bran
     }
   }
 
-  // Split camelCase words (e.g. SagoDiet -> Sago Diet, GreenCoffee -> Green Coffee)
-  const splitWords = str.replace(/([a-z])([A-Z])/g, '$1 $2').split(' ').filter(Boolean);
-  if (splitWords.length >= 2) {
-    const combined = splitWords.join(' ');
-    return {
-      parsedName: capitalizeWords(combined),
-      brand: detectKnownBrand(combined),
-    };
+  // Guard against random shortlink base62 hashes (e.g., "LoXUMhlJb", "3ZkIq7m", "aB9xYz"):
+  // If a single token without hyphens contains consecutive uppercase letters (e.g. "XUM"),
+  // or digits mixed in a short token, or is <= 12 chars without a known brand, do NOT camelCase split!
+  const hasConsecutiveUpper = /[A-Z]{2,}/.test(str);
+  const hasDigitsInShortToken = /\d/.test(str) && str.length <= 14;
+  if (!hasConsecutiveUpper && !hasDigitsInShortToken) {
+    const splitWords = str.replace(/([a-z])([A-Z])/g, '$1 $2').split(' ').filter(Boolean);
+    // Only accept camelCase split if every word is >= 4 letters and contains a vowel (e.g. "Sago Diet", "Green Coffee")
+    const allWordsValid =
+      splitWords.length >= 2 &&
+      splitWords.every((w) => w.length >= 4 && /[aeiouAEIOU]/.test(w) && !/[bcdfghjklmnpqrstvwxyz]{4,}/i.test(w));
+
+    if (allWordsValid) {
+      const combined = splitWords.join(' ');
+      return {
+        parsedName: capitalizeWords(combined),
+        brand: detectKnownBrand(combined),
+      };
+    }
   }
 
   // Single word known brand
@@ -299,8 +435,32 @@ export function parsePathOrSlugWords(token: string): { parsedName?: string; bran
 function extractSlugIntelligence(url: string, platform: string): { slugName?: string; shopName?: string } {
   try {
     const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
     const pathname = parsed.pathname;
     const segments = pathname.split('/').filter(Boolean);
+
+    // Shortlink redirect hosts only carry random IDs in single-segment paths unless hyphenated
+    const isShortlinkDomain = [
+      's.shopee.co.id',
+      'shope.ee',
+      'shp.ee',
+      'id.shp.ee',
+      'vt.tiktok.com',
+      'vm.tiktok.com',
+      'tokopedia.link',
+      'tkp.me',
+      's.lazada.co.id',
+      'blibli.app.link',
+    ].some((d) => hostname === d || hostname.endsWith(`.${d}`));
+
+    if (isShortlinkDomain) {
+      const lastSeg = segments[segments.length - 1] || '';
+      const parsedShort = parsePathOrSlugWords(lastSeg);
+      if (parsedShort.parsedName && !isLikelyShortcodeOrHash(parsedShort.parsedName)) {
+        return { slugName: parsedShort.parsedName, shopName: parsedShort.brand };
+      }
+      return {};
+    }
 
     // Tokopedia full product url: /shop-name/product-name-slug
     if (platform === 'Tokopedia' && segments.length >= 2) {
@@ -386,11 +546,16 @@ function isJunkTitle(title: string): boolean {
 }
 
 /**
- * Clean marketplace titles of standard spam prefixes and trailing brand boilerplate
+ * Clean marketplace titles and share sentences of standard spam prefixes, prices, and trailing CTA boilerplate
  */
 export function cleanMarketplaceProductName(rawTitle: string, platform?: string): string {
   if (!rawTitle) return '';
   let cleaned = decodeHtmlEntities(rawTitle);
+
+  // Strip embedded URLs if any
+  cleaned = cleaned
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\b(?:s\.shopee\.co\.id|shope\.ee|vt\.tiktok\.com|tokopedia\.link|tkp\.me|s\.lazada\.co\.id)\/\S+/gi, '');
 
   // Remove platform-specific trailing branding
   cleaned = cleaned
@@ -402,19 +567,29 @@ export function cleanMarketplaceProductName(rawTitle: string, platform?: string)
     .replace(/-\s*TikTok.*$/i, '')
     .replace(/\|\s*Shopee Indonesia.*$/i, '')
     .replace(/-\s*Shopee Indonesia.*$/i, '')
+    .replace(/\|\s*Shopee.*$/i, '')
+    .replace(/-\s*Shopee.*$/i, '')
     .replace(/\|\s*Lazada Indonesia.*$/i, '')
     .replace(/\|\s*Blibli.*$/i, '');
 
-  // Remove common Indonesian eCommerce prefix words
+  // Strip marketplace share-text price & CTA suffixes:
+  // e.g. "dengan harga Rp155.000. Dapatkan di Shopee sekarang!"
+  // e.g. "seharga Rp129.000 hanya di Shopee!"
   cleaned = cleaned
-    .replace(/^(Jual|Beli|Promo|Diskon|Dapatkan|Grosir|Ready|Murah|Spill|COD|Racun|Cobain|Rekomendasi)\s+/gi, '')
-    .replace(/^(Jual\s+|Beli\s+)/gi, '');
+    .replace(/\s+(?:dengan\s+harga|seharga|harga\s+mulai|dengan\s+promo|cuma\s+Rp|hanya\s+Rp)\s*(?:Rp\.?\s*)?[\d.,]+.*$/i, '')
+    .replace(/[.,!?\s]+(?:Dapatkan|Beli|Temukan|Cek|Checkout|Belanja)\s+(?:produk\s+ini\s+)?(?:sekarang\s+)?(?:hanya\s+)?di\s+(?:Shopee(?:\s+Video)?|Tokopedia|TikTok(?:\s+Shop)?|Lazada|Blibli).*$/i, '')
+    .replace(/\s+(?:hanya\s+di|di)\s+(?:Shopee(?:\s+Video)?|Tokopedia|TikTok(?:\s+Shop)?|Lazada|Blibli)(?:\s+sekarang)?[!.\s]*$/i, '');
+
+  // Remove common Indonesian eCommerce share prefix words
+  cleaned = cleaned
+    .replace(/^(?:Cek|Lihat|Temukan|Jual|Beli|Promo|Diskon|Dapatkan|Grosir|Ready|Murah|Spill|COD|Racun|Cobain|Rekomendasi)\s+/gi, '')
+    .replace(/^(?:Cek\s+|Lihat\s+|Temukan\s+|Jual\s+|Beli\s+)/gi, '');
 
   // Remove location/city prefixes or suffixes often inserted by Tokopedia (e.g. "- Jakarta Barat - Official Store")
   cleaned = cleaned.replace(/-\s*(Kota\s+[A-Za-z\s]+|Jakarta\s+[A-Za-z]+|Bandung|Surabaya|Medan|Semarang)\s*-\s*[^|]+/gi, '');
 
-  // Clean trailing dashes or bars
-  cleaned = cleaned.replace(/[\-|–]\s*$/, '').trim();
+  // Clean trailing punctuation, dashes or bars
+  cleaned = cleaned.replace(/[.\-|–!?,:]+\s*$/, '').trim();
 
   // Remove excessive whitespace & clean up
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
@@ -706,9 +881,9 @@ export async function extractProductFromLink(
       candidateName = slugName;
     }
 
-    // If still empty, check if input contained known brand
+    // If still empty, check if input contained known or inferred brand
     if (!result.brand) {
-      result.brand = detectKnownBrand(candidateName || rawInputUrl);
+      result.brand = inferProductBrandOrCollection(candidateName || rawInputUrl);
     }
 
     if (candidateName && !isJunkTitle(candidateName) && !isGenericMarketplaceFallback(candidateName) && !isLikelyShortcodeOrHash(candidateName)) {
@@ -740,7 +915,27 @@ export async function extractProductFromLink(
     result.cleanedSummary = summaryParts.join('\n');
     return result;
   } catch (err: any) {
-    // If network fetch fails (e.g. timeout or blocked IP), extract slug from URL string itself
+    // If share text intelligence already extracted the product name, preserve it!
+    if (result.productName && !isLikelyShortcodeOrHash(result.productName)) {
+      if (!result.brand) {
+        result.brand = inferProductBrandOrCollection(result.productName);
+      }
+      if (result.price && /^\d+$/.test(result.price.replace(/[.,\s]/g, ''))) {
+        const numPrice = Number(result.price.replace(/[^\d]/g, ''));
+        if (numPrice > 0) {
+          result.price = numPrice.toLocaleString('id-ID');
+          if (!result.currency) result.currency = 'Rp';
+        }
+      }
+      const summaryParts: string[] = [`Nama Produk: ${result.productName}`];
+      if (result.brand) summaryParts.push(`Brand / Toko: ${result.brand}`);
+      if (result.price) summaryParts.push(`Harga: ${result.currency || 'Rp'} ${result.price}`);
+      result.cleanedSummary = summaryParts.join('\n');
+      result.success = true;
+      return result;
+    }
+
+    // Otherwise, if network fetch fails (e.g. timeout or blocked IP), extract slug from URL string itself
     const { slugName, shopName } = extractSlugIntelligence(normalizedUrl, platform);
     if (slugName && !isLikelyShortcodeOrHash(slugName)) {
       result.productName = cleanMarketplaceProductName(slugName, platform);

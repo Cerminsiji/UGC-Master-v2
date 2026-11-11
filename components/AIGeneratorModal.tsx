@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Sparkles,
   X,
@@ -24,7 +24,10 @@ import {
   Info,
   Search,
   RotateCcw,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Upload,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import {
   UGC_CATEGORIES,
@@ -35,6 +38,8 @@ import {
   ExtendedPersonaOption
 } from '../data/categories';
 import { AIGenerateParams, AutoDetectResult, UGCPersona } from '../types';
+import { postJsonWithRetry, filesToReferenceImages } from '../utils/helpers';
+import { heuristicAutoDetect } from '../lib/gemini-ugc';
 
 interface AIGeneratorModalProps {
   isOpen: boolean;
@@ -59,6 +64,9 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   const [brandName, setBrandName] = useState('');
   const [productUrl, setProductUrl] = useState('');
   const [referenceImage, setReferenceImage] = useState('');
+  const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [isUploadingRefs, setIsUploadingRefs] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [productDescription, setProductDescription] = useState('');
   const [targetAudience, setTargetAudience] = useState('');
   const [keySellingPoints, setKeySellingPoints] = useState('');
@@ -186,11 +194,52 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
     return true;
   });
 
-  // Handle Smart AI Auto-Detection from 1 single input (link + notes)
+  const handleUploadReferenceFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setIsUploadingRefs(true);
+    try {
+      const uploadedDataUrls = await filesToReferenceImages(files, 8);
+      if (uploadedDataUrls.length > 0) {
+        setReferenceImages((prev) => {
+          const combined = [...prev, ...uploadedDataUrls].slice(0, 8);
+          if (!referenceImage && combined[0]) {
+            setReferenceImage(combined[0]);
+          }
+          return combined;
+        });
+      }
+    } finally {
+      setIsUploadingRefs(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleAddReferenceUrl = () => {
+    const trimmed = referenceImage.trim();
+    if (!trimmed) return;
+    setReferenceImages((prev) => {
+      if (prev.includes(trimmed)) return prev;
+      return [...prev, trimmed].slice(0, 8);
+    });
+  };
+
+  const handleRemoveReferenceImage = (idx: number) => {
+    setReferenceImages((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      if (referenceImage === prev[idx]) {
+        setReferenceImage(next[0] || '');
+      }
+      return next;
+    });
+  };
+
+  // Handle Smart AI Auto-Detection from 1 single input (link + notes + optional reference images)
   const handleAutoDetect = async (shouldAutoGenerateAfterDetect = false) => {
     const trimmedInput = smartInput.trim();
-    if (!trimmedInput && !productName.trim()) {
-      setDetectError('Masukkan link produk atau keterangan produk pada kolom di atas.');
+    if (!trimmedInput && !productName.trim() && referenceImages.length === 0) {
+      setDetectError('Masukkan link produk, keterangan, atau upload foto referensi terlebih dahulu.');
       return;
     }
 
@@ -211,7 +260,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
         ? '🔍 Mengakses link Tokopedia & scraping info produk...'
         : isShopee
         ? '🔍 Mengakses link Shopee & scraping info produk...'
-        : '🔍 Menganalisis link & scraping data produk...'
+        : '🔍 Menganalisis link, teks & foto referensi produk...'
     );
     setDetectError(null);
     setDetectSuccess(null);
@@ -225,30 +274,25 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
     }, 1400);
 
     try {
-      const response = await fetch('/api/auto-detect-product', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const resData = await postJsonWithRetry<{ success?: boolean; data?: AutoDetectResult; error?: string }>(
+        '/api/auto-detect-product',
+        {
           input: trimmedInput || productName,
-        }),
-      });
+          referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+        }
+      );
 
       clearTimeout(stepTimer1);
       clearTimeout(stepTimer2);
 
-      const rawText = await response.text();
-      let resData: any = {};
-      try {
-        resData = JSON.parse(rawText);
-      } catch {
-        throw new Error('Respons server tidak valid. Silakan coba lagi sebentar.');
-      }
-
-      if (!response.ok || !resData.data) {
-        throw new Error(resData.error || 'Gagal menganalisis produk.');
-      }
-
-      const detected: AutoDetectResult = resData.data;
+      const detected: AutoDetectResult =
+        resData && resData.data
+          ? resData.data
+          : (heuristicAutoDetect(
+              trimmedInput || productName,
+              extractedUrl || '',
+              trimmedInput || productName
+            ) as unknown as AutoDetectResult);
 
       // Apply detected values
       if (detected.productName) setProductName(detected.productName);
@@ -284,7 +328,11 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
         setDetectTags(detected.detectedTags);
       }
       if (detected.referenceImage || detected.imageUrl) {
-        setReferenceImage(detected.referenceImage || detected.imageUrl || '');
+        const detImg = detected.referenceImage || detected.imageUrl || '';
+        setReferenceImage(detImg);
+        if (detImg) {
+          setReferenceImages((prev) => (prev.includes(detImg) ? prev : [detImg, ...prev].slice(0, 8)));
+        }
       }
       if (detected.price) setDetectedPrice(detected.price);
       if (detected.platform) setDetectedPlatformName(detected.platform);
@@ -301,13 +349,21 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
             c.id.toLowerCase() === detected.category?.toLowerCase()
         );
         const resolvedCategory = catMatch ? catMatch.name : (detected.category || category);
+        const primaryRef = (detected.referenceImage || detected.imageUrl || referenceImages[0] || referenceImage).trim() || undefined;
+        const allRefs =
+          referenceImages.length > 0
+            ? referenceImages
+            : primaryRef
+            ? [primaryRef]
+            : undefined;
 
         await onGenerate({
           category: resolvedCategory,
           productName: detected.productName.trim(),
           brandName: (detected.brandName || brandName).trim(),
           productUrl: extractedUrl,
-          referenceImage: (detected.referenceImage || detected.imageUrl || referenceImage).trim() || undefined,
+          referenceImage: primaryRef,
+          referenceImages: allRefs,
           productDescription: (detected.productDescription || '').trim(),
           targetAudience: (detected.targetAudience || '').trim(),
           keySellingPoints: (detected.keySellingPoints || '').trim(),
@@ -347,12 +403,20 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       ? customPersonaText.trim()
       : persona;
 
+    const mergedRefs =
+      referenceImages.length > 0
+        ? referenceImages
+        : referenceImage.trim()
+        ? [referenceImage.trim()]
+        : undefined;
+
     await onGenerate({
       category,
       productName: productName.trim() || 'Produk Unggulan',
       brandName: brandName.trim(),
       productUrl: activeUrl,
-      referenceImage: referenceImage.trim() || undefined,
+      referenceImage: mergedRefs?.[0] || referenceImage.trim() || undefined,
+      referenceImages: mergedRefs,
       productDescription: productDescription.trim(),
       targetAudience: targetAudience.trim(),
       keySellingPoints: keySellingPoints.trim(),
@@ -639,44 +703,129 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                   </div>
                 </div>
 
-                {/* Referensi Image Google Flow (Image-to-Video Workflow) */}
-                <div className="bg-[#0b101c] border border-cyan-900/50 rounded-2xl p-3.5 space-y-2">
-                  <div className="flex items-center justify-between">
+                {/* Multi-Image Reference Uploader (Storyboard & Google Flow Video UGC) */}
+                <div className="bg-[#0b101c] border border-cyan-900/50 rounded-2xl p-3.5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <label className="text-[11px] font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
                       <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Referensi Image Google Flow (Konsistensi Visual Produk)</span>
+                      <span>Upload Gambar Referensi Produk (Multi-Image untuk Storyboard & Google Flow)</span>
                     </label>
-                    <span className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800/80 px-2 py-0.5 rounded font-mono font-bold">
-                      Google Flow Ready
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800/80 px-2 py-0.5 rounded font-mono font-bold">
+                        {referenceImages.length > 0 ? `${referenceImages.length} Foto Referensi Aktif` : 'Multi-Upload Ready'}
+                      </span>
+                      {referenceImages.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReferenceImages([]);
+                            setReferenceImage('');
+                          }}
+                          className="text-[10px] text-red-300 hover:text-red-200 bg-red-950/50 border border-red-800/50 px-2 py-0.5 rounded flex items-center gap-1 transition-colors"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" />
+                          <span>Reset</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
+                  {/* Upload Multi-File Button + URL Input */}
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     <input
-                      type="text"
-                      value={referenceImage}
-                      onChange={(e) => setReferenceImage(e.target.value)}
-                      placeholder="URL Gambar Produk / Foto Referensi (e.g. https://...)"
-                      className="flex-1 bg-[#121929] border border-cyan-950 focus:border-cyan-500 rounded-xl px-3 py-2 text-xs text-cyan-200 placeholder-slate-500 outline-none transition-all font-mono"
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => handleUploadReferenceFiles(e.target.files)}
+                      className="hidden"
                     />
-                    {referenceImage && (
-                      <div className="flex items-center gap-2 bg-[#0d1422] border border-cyan-800/60 rounded-xl px-2.5 py-1.5 shrink-0">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={referenceImage}
-                          alt="Referensi Produk"
-                          className="w-6 h-6 rounded object-cover border border-cyan-700/60"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
-                          }}
-                        />
-                        <span className="text-[10px] text-cyan-300 font-medium">Gambar Terhubung</span>
-                      </div>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploadingRefs}
+                      className="flex items-center justify-center gap-1.5 bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-sm transition-all shrink-0 cursor-pointer"
+                    >
+                      {isUploadingRefs ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Memproses Foto...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Upload Foto Referensi (Bisa Banyak)</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="flex-1 flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={referenceImage.startsWith('data:') ? '' : referenceImage}
+                        onChange={(e) => setReferenceImage(e.target.value)}
+                        placeholder="Atau tempel URL Gambar Produk (https://...)"
+                        className="flex-1 bg-[#121929] border border-cyan-950 focus:border-cyan-500 rounded-xl px-3 py-2 text-xs text-cyan-200 placeholder-slate-500 outline-none transition-all font-mono"
+                      />
+                      {referenceImage && !referenceImage.startsWith('data:') && (
+                        <button
+                          type="button"
+                          onClick={handleAddReferenceUrl}
+                          className="bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-700/60 px-2.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 transition-colors"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Tambah</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
+                  {/* Multi-Image Thumbnails Gallery */}
+                  {referenceImages.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 pt-1">
+                      {referenceImages.map((imgSrc, idx) => (
+                        <div
+                          key={idx}
+                          className="relative group bg-[#0e1626] border border-cyan-800/60 rounded-xl p-1.5 flex flex-col gap-1 shadow-sm"
+                        >
+                          <div className="relative w-full h-16 rounded-lg overflow-hidden bg-[#080d17]">
+                            <img
+                              src={imgSrc}
+                              alt={`Reference ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <span className="absolute top-1 left-1 bg-cyan-950/90 text-cyan-200 border border-cyan-600/60 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded">
+                              Image {idx + 1}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveReferenceImage(idx)}
+                              className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/80 hover:bg-red-600 text-white flex items-center justify-center opacity-90 group-hover:opacity-100 transition-colors"
+                              title="Hapus foto referensi ini"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                          <span className="text-[9px] text-cyan-300/90 font-medium truncate text-center">
+                            {idx === 0 ? '★ Referensi Utama' : `Angle / Detail #${idx + 1}`}
+                          </span>
+                        </div>
+                      ))}
+                      {referenceImages.length < 8 && (
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="h-full min-h-[82px] border border-dashed border-cyan-800/60 hover:border-cyan-400 bg-[#0d1422]/50 hover:bg-[#111c30] rounded-xl flex flex-col items-center justify-center gap-1 text-cyan-400 transition-colors p-2"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span className="text-[9px] font-bold text-center">Tambah Foto Lagi</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <p className="text-[11px] text-cyan-200/80 italic">
-                    ✨ Setiap adegan storyboard dan prompt AI video Google Flow akan selalu mengikuti bentuk kemasan, label, dan warna dari gambar referensi ini secara konsisten tanpa typo.
+                    ✨ Semua foto referensi yang di-upload akan dianalisis AI untuk menyusun visual storyboard yang akurat dan menjadi rujukan multi-image (`[Image 1 Reference]`, `[Image 2 Reference]`, dst.) pada Google Flow Video UGC.
                   </p>
                 </div>
 

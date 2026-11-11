@@ -2,16 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Type } from '@google/genai';
 import { generateWithFallback, parseSafeJson } from '@/lib/gemini-ugc';
 
-export async function POST(req: NextRequest) {
+async function handleEnhanceSceneRequest(body: any) {
   try {
-    const body = await req.json();
     const {
-      scene,
+      scene = {},
       instruction = 'make it more viral and catchy',
       category = 'UGC',
       productName = '',
       cameraAngleStyle = ''
-    } = body;
+    } = body || {};
 
     const productInstruction = productName
       ? `Produk: "${productName}". Pastikan aksi visual dan dialog tetap relevan dengan produk ini.`
@@ -124,3 +123,23 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan. Berikan efek suara S
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    return await handleEnhanceSceneRequest(body);
+  } catch (error: any) {
+    return await handleEnhanceSceneRequest({});
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const payloadParam = req.nextUrl.searchParams.get('payload');
+    const body = payloadParam ? JSON.parse(payloadParam) : {};
+    return await handleEnhanceSceneRequest(body);
+  } catch (error: any) {
+    return await handleEnhanceSceneRequest({});
+  }
+}
+

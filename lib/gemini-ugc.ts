@@ -1,11 +1,19 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { detectKnownBrand, isGenericMarketplaceFallback, isLikelyShortcodeOrHash, cleanMarketplaceProductName } from './link-extractor';
+import {
+  detectKnownBrand,
+  isGenericMarketplaceFallback,
+  isLikelyShortcodeOrHash,
+  cleanMarketplaceProductName,
+  extractShareTextIntelligence,
+  inferProductBrandOrCollection,
+} from './link-extractor';
 
 // List of supported Gemini models with automatic cascading fallback
 export const CANDIDATE_MODELS = [
-  'gemini-3.1-flash-lite',
+  'gemini-3-flash-preview',
+  'gemini-2.5-flash',
   'gemini-flash-latest',
-  'gemini-3.8-flash',
+  'gemini-3.1-flash-lite-preview',
 ];
 
 // Lazy-safe Gemini AI client helper
@@ -32,12 +40,13 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage = '
   ]);
 }
 
-// High-speed multi-model generator with clean config & strict timeouts
+// High-speed multi-model generator with clean config, strict timeouts, and multimodal referenceImages support
 export async function generateWithFallback(
   prompt: string,
   config: any,
   systemInstruction?: string,
-  timeoutMs = 25000
+  timeoutMs = 15000,
+  referenceImages?: string[]
 ): Promise<string | null> {
   const ai = getGeminiClient();
   if (!ai) return null;
@@ -47,12 +56,40 @@ export async function generateWithFallback(
     ...(systemInstruction ? { systemInstruction } : {}),
   };
 
+  // Extract valid base64 inlineData parts if referenceImages are provided
+  const inlineImageParts: Array<{ inlineData: { mimeType: string; data: string } }> = [];
+  if (Array.isArray(referenceImages) && referenceImages.length > 0) {
+    for (const imgStr of referenceImages.slice(0, 6)) {
+      if (typeof imgStr === 'string' && imgStr.startsWith('data:image/')) {
+        const match = imgStr.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+        if (match && match[1] && match[2]) {
+          inlineImageParts.push({
+            inlineData: {
+              mimeType: match[1],
+              data: match[2],
+            },
+          });
+        }
+      }
+    }
+  }
+
+  const contentsPayload: any =
+    inlineImageParts.length > 0
+      ? [
+          {
+            role: 'user',
+            parts: [...inlineImageParts, { text: prompt }],
+          },
+        ]
+      : prompt;
+
   for (const model of CANDIDATE_MODELS) {
     try {
       const response = await withTimeout(
         ai.models.generateContent({
           model,
-          contents: prompt,
+          contents: contentsPayload,
           config: requestConfig,
         }),
         timeoutMs,
@@ -105,6 +142,463 @@ export function parseSafeJson<T>(rawText: string | null): T | null {
   }
 }
 
+export interface UgcHookArchetype {
+  id: string;
+  name: string;
+  psychology: string;
+  promptDirective: string;
+  buildSceneOne: (params: {
+    productName: string;
+    usp: string;
+    category: string;
+    isHandsOnly: boolean;
+  }) => {
+    cameraAngle: string;
+    visualAction: string;
+    popupText: string;
+    soundEffect: string;
+    dialogVO: string;
+    notesMood: string;
+  };
+}
+
+/**
+ * 17 Research-Backed UGC Hook Archetypes designed to eliminate monotonous "3 Alasan" listicles & "Stop scrolling!" openings.
+ */
+export const UGC_RD_HOOK_ARCHETYPES: UgcHookArchetype[] = [
+  {
+    id: 'relatable_micro_pain',
+    name: 'Micro-Problem & Empati Spesifik',
+    psychology: 'Membuka dengan situasi masalah mikro sehari-hari yang sangat spesifik dan langsung dirasakan audiens tanpa kesan iklan.',
+    promptDirective:
+      'Buka Adegan 1 dengan situasi masalah mikro yang sangat spesifik dan relatable dengan keseharian target audiens, lalu perlihatkan produk sebagai jawaban praktisnya.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'POV Hands-Only (Hanya Tangan & Produk)' : 'Front Camera / Selfie Mode (Curhat Langsung)',
+      visualAction: isHandsOnly
+        ? `Kamera POV menyorot tangan talent yang langsung mengambil kemasan ${productName} di meja kerja saat menghadapi masalah harian, sesuai gambar referensi.`
+        : `Kreator membuka video dengan ekspresi jujur saat mengalami masalah sehari-hari, lalu mengangkat ${productName} ke dekat lensa kamera sesuai gambar referensi.`,
+      popupText: 'PERNAH NGALAMIN INI JUGA? 🤔',
+      soundEffect: 'Camera shutter & Soft pop',
+      dialogVO: `Siapa di sini yang sering ngalamin masalah ini pas lagi buru-buru? Semenjak sedia ${productName}, urusan langsung beres.`,
+      notesMood: 'Gaya teks: Chat Bubble Relatable. Pencahayaan natural realistis.',
+    }),
+  },
+  {
+    id: 'sensory_macro_first_frame',
+    name: 'Sensory Macro / ASMR First-Frame',
+    psychology: 'Memikat mata & telinga di detik ke-1 lewat detail fisik/tekstur produk sebelum penonton sempat berpikir.',
+    promptDirective:
+      'Buka Adegan 1 langsung dengan Extreme Macro Close-up tekstur, detail fisik, atau bunyi ASMR produk yang sangat memuaskan mata (satisfying visual first-frame).',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
+      visualAction: isHandsOnly
+        ? `Sorotan super makro jari tangan membuka dan memperlihatkan tekstur serta detail fisik ${productName} di bawah cahaya jernih sesuai gambar referensi.`
+        : `Kamera langsung fokus makro ke detail fisik dan tekstur ${productName} saat dibuka pertama kali, memperlihatkan kualitas aslinya sesuai gambar referensi.`,
+      popupText: 'LIHAT DETAIL & TEKSTURNYA! ✨',
+      soundEffect: 'Crisp plastic peel & Sparkle magic ting',
+      dialogVO: `Lihat sendiri deh detail dan kualitas fisik ${productName} dari dekat, pantesan review-nya rata-rata bintang lima.`,
+      notesMood: 'Gaya teks: Minimalist Clean. Fokus makro tajam 4K.',
+    }),
+  },
+  {
+    id: 'skeptic_turned_believer',
+    name: 'Skeptic-Turned-Believer (Review Jujur Eksperimen)',
+    psychology: 'Membangun kredibilitas instan dengan mengakui rasa skeptis di awal sebelum membuktikan hasilnya.',
+    promptDirective:
+      'Buka Adegan 1 dengan sudut pandang orang yang awalnya ragu/skeptis karena produk ini sering lewat di FYP, lalu memutuskan membuktikan sendiri.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'Top-Down Hands-Only (Tangan di Atas Meja)' : 'Medium Close-up (Dada ke Atas)',
+      visualAction: isHandsOnly
+        ? `Tangan meletakkan ${productName} di atas meja estetik sambil memutar kemasannya untuk mengecek detail label dan kualitas asli sesuai referensi image.`
+        : `Kreator menatap kamera dengan raut wajah jujur dan objektif sambil memutar kemasan ${productName} di tangan sesuai gambar referensi.`,
+      popupText: 'AWALNYA KIRA CUMA GIMMICK... 🤨',
+      soundEffect: 'Ding notification & Fast whip whoosh',
+      dialogVO: `Jujur awalnya aku kira ${productName} ini cuma viral sesaat doang, sampai akhirnya aku buktiin sendiri selama seminggu penuh.`,
+      notesMood: 'Gaya teks: Honest Review Tag. Tone bicara tenang & meyakinkan.',
+    }),
+  },
+  {
+    id: 'instant_proof_comparison',
+    name: 'Instant Visual Proof / Side-by-Side Reveal',
+    psychology: 'Memberikan bukti hasil nyata di detik pertama untuk memicu rasa ingin tahu bagaimana caranya.',
+    promptDirective:
+      'Buka Adegan 1 dengan langsung memamerkan hasil akhir atau perbandingan nyata sebelum vs sesudah memakai produk di detik pertama.',
+    buildSceneOne: ({ productName, usp, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'Hand Swatch & Application (Tangan Mengoles Produk)' : 'Close-up (Face / Ekspresi)',
+      visualAction: isHandsOnly
+        ? `Tangan langsung memperlihatkan perbandingan nyata area yang sudah memakai ${productName} vs yang belum, dengan kemasan produk tampak jelas sesuai gambar referensi.`
+        : `Kreator langsung menunjukkan bukti hasil pemakaian ${productName} di depan kamera dengan pencahayaan jernih, memegang kemasan sesuai gambar referensi.`,
+      popupText: 'BEDANYA KELIHATAN JELAS! 📈',
+      soundEffect: 'Finger snap click & Level up victory chime',
+      dialogVO: `Bandingin deh bedanya sebelum dan sesudah pakai ${productName}. ${usp.split(',')[0] || 'Hasilnya langsung kelihatan nyata'}.`,
+      notesMood: 'Gaya teks: Split Comparison Badge. Visual kontras terang.',
+    }),
+  },
+  {
+    id: 'social_spill_storytime',
+    name: 'Social Curiosity / "Ditanyain Teman" Storytime',
+    psychology: 'Menggunakan validasi sosial (ditanya orang sekitar) untuk memicu efek ingin punya.',
+    promptDirective:
+      'Buka Adegan 1 dengan cerita singkat kejadian nyata saat teman/rekan kerja menanyakan rahasia produk yang dipakai.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'POV Hands-Only (Hanya Tangan & Produk)' : 'POV / Handheld (First-Person)',
+      visualAction: isHandsOnly
+        ? `Tangan mengeluarkan ${productName} dari dalam tas kerja estetik di atas meja sambil memperlihatkan kemasannya ke kamera sesuai referensi image.`
+        : `Kreator merekam secara handheld sambil mengeluarkan ${productName} dari tas dengan senyum antusias seperti sedang bercerita ke sahabat dekat.`,
+      popupText: 'DITANYAIN TEMEN SEKANTOR TERUS! 💬',
+      soundEffect: 'Bag zipper & Ding notification',
+      dialogVO: `Kemarin sampai ditanyain tiga orang di kantor gara-gara pakai ${productName} ini, akhirnya aku spill di sini ya.`,
+      notesMood: 'Gaya teks: Storytime Pill. Suasana akrab dan natural.',
+    }),
+  },
+  {
+    id: 'live_stress_test',
+    name: 'Live Stress-Test / Uji Klaim Ekstrem',
+    psychology: 'Menguji klaim terkuat produk secara langsung di depan kamera tanpa rekayasa.',
+    promptDirective:
+      'Buka Adegan 1 dengan langsung menguji klaim utama produk secara ekstrem atau real-time di depan kamera tanpa basa-basi.',
+    buildSceneOne: ({ productName, usp, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'Hand Swatch & Application (Tangan Mengoles Produk)' : 'Over the Shoulder (OTS)',
+      visualAction: isHandsOnly
+        ? `Tangan langsung melakukan uji coba nyata pada ${productName} dari jarak dekat untuk membuktikan klaim produk sesuai gambar referensi.`
+        : `Kreator langsung melakukan tes pembuktian klaim ${productName} dari jarak dekat di depan lensa kamera sesuai gambar referensi.`,
+      popupText: 'KITA TES LANGSUNG SEKARANG! 🔍',
+      soundEffect: 'Heavy cinematic swoosh & Camera flash click',
+      dialogVO: `Katanya ${productName} ini punya keunggulan ${usp.split(',')[0]?.toLowerCase() || 'kualitas juara'}? Yuk kita tes langsung di kamera tanpa cut!`,
+      notesMood: 'Gaya teks: Live Test Lab. Fokus tajam tanpa filter.',
+    }),
+  },
+  {
+    id: 'mistake_correction_hack',
+    name: 'Pro-Tip & Kesalahan Umum (Educational Hack)',
+    psychology: 'Memberikan edukasi bernilai tinggi sehingga penonton merasa mendapatkan trik cerdas yang belum diketahui.',
+    promptDirective:
+      'Buka Adegan 1 dengan membongkar kebiasaan atau kesalahan umum yang sering bikin rugi, dan bagaimana produk ini menyelesaikannya dengan cerdas.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'Top-Down Hands-Only (Tangan di Atas Meja)' : 'Eye-Level (Natural Eye)',
+      visualAction: isHandsOnly
+        ? `Tangan menunjuk detail fitur unggulan pada kemasan ${productName} di atas meja dengan gerakan edukatif yang rapi sesuai referensi image.`
+        : `Kreator berbicara ramah namun informatif sambil menunjuk fitur utama pada kemasan ${productName} sesuai gambar referensi.`,
+      popupText: 'CARA CERDAS BIAR MAKSIMAL 💡',
+      soundEffect: 'Sparkle magic ting & Bubble pop sound',
+      dialogVO: `Ternyata masih banyak yang belum tahu kalau ${productName} ini bisa bikin rutinitas harian jadi dua kali lebih efisien.`,
+      notesMood: 'Gaya teks: Pro-Tip Card. Pencahayaan bersih profesional.',
+    }),
+  },
+  {
+    id: 'smart_buyer_value_math',
+    name: 'Smart Buyer Math / Rasio Kualitas vs Harga',
+    psychology: 'Menyentuh logika penghematan uang dan waktu dibanding alternatif yang mahal atau boros.',
+    promptDirective:
+      'Buka Adegan 1 dengan perbandingan penghematan biaya atau waktu yang cerdas ketika beralih menggunakan produk ini.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'POV Hands-Only (Hanya Tangan & Produk)' : 'Medium Shot (Setengah Badan)',
+      visualAction: isHandsOnly
+        ? `Tangan mengetuk kemasan ${productName} dengan mantap di atas meja rapi, menampilkan proporsi produk sesuai gambar referensi.`
+        : `Kreator memegang ${productName} sambil tersenyum cerdas dan menatap kamera dengan percaya diri.`,
+      popupText: 'SOLUSI HEMAT KUALITAS JUARA 💎',
+      soundEffect: 'Cha-ching cash register & Fast whip whoosh',
+      dialogVO: `Daripada keluar biaya mahal berkali-kali tapi hasilnya biasa aja, mending beralih ke ${productName} yang udah jelas terbukti.`,
+      notesMood: 'Gaya teks: Smart Value Badge. Tone warna hangat.',
+    }),
+  },
+  {
+    id: 'unboxing_first_impression',
+    name: 'POV First-Touch Unboxing & Seal Break',
+    psychology: 'Memicu dopamin penonton lewat momen membuka kemasan/segel barang baru yang memuaskan.',
+    promptDirective:
+      'Buka Adegan 1 dengan momen memuaskan saat membuka segel produk pertama kali dan reaksi spontan terhadap build quality aslinya.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'Unboxing Hands-Only (Buka Paket Tangan Saja)' : 'Flat Lay / Top-down (Meja Estetik)',
+      visualAction: isHandsOnly
+        ? `Tangan membuka kotak kemasan dan mengangkat fisik asli ${productName} ke arah cahaya, memperlihatkan detail presisi sesuai gambar referensi.`
+        : `Kamera menyorot momen kreator membuka box dan mengangkat ${productName} dengan ekspresi puas melihat kemasan aslinya.`,
+      popupText: `UNBOXING ${productName.toUpperCase().slice(0, 22)} 📦✨`,
+      soundEffect: 'Tape slicing crisp & Paper crinkle ASMR',
+      dialogVO: `Paket ${productName} yang paling aku tunggu akhirnya sampai! Pas pertama kali dipegang langsung kerasa build quality-nya niat banget.`,
+      notesMood: 'Gaya teks: Aesthetic Unboxing. Cahaya pagi natural.',
+    }),
+  },
+  {
+    id: 'reverse_psychology_warning',
+    name: 'Reverse Psychology / Peringatan Anti-Nyesel',
+    psychology: 'Memicu rasa penasaran tinggi dengan peringatan provokatif yang menantang rasa ingin tahu penonton.',
+    promptDirective:
+      'Buka Adegan 1 dengan gaya reverse psychology (misal: "Jangan buru-buru beli produk ini kalau kamu belum siap dengan efeknya...").',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'POV Hands-Only (Hanya Tangan & Produk)' : 'Front Camera / Selfie Mode (Curhat Langsung)',
+      visualAction: isHandsOnly
+        ? `Tangan memegang kemasan ${productName} dengan latar belakang gelap elegan, lalu mencondongkan produk ke arah kamera sesuai referensi image.`
+        : `Kreator menatap kamera dengan ekspresi serius dan menggelengkan kepala pelan sambil memegang kemasan ${productName} sesuai referensi image.`,
+      popupText: 'JANGAN BURU-BURU BELI DULU! ⚠️',
+      soundEffect: 'Record scratch & Warning buzzer',
+      dialogVO: `Jangan buru-buru beli ${productName} ini kalau kalian belum siap rutinitas harian kalian berubah jadi jauh lebih praktis.`,
+      notesMood: 'Gaya teks: Warning Sign Pill. Pencahayaan kontras dramatis.',
+    }),
+  },
+  {
+    id: 'confession_late_adopter',
+    name: 'Late-Adopter Confession / Penyesalan Baru Tahu',
+    psychology: 'Menyentuh empati dan FOMO penonton lewat pengakuan rasa penyesalan kenapa baru memakai produk ini sekarang.',
+    promptDirective:
+      'Buka Adegan 1 dengan pengakuan jujur bahwa kreator merasa menyesal kenapa baru menemukan produk ini setelah sekian lama mencoba cara yang merepotkan.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'Top-Down Hands-Only (Tangan di Atas Meja)' : 'Medium Close-up (Dada ke Atas)',
+      visualAction: isHandsOnly
+        ? `Tangan menepuk meja pelan di samping kemasan ${productName} seolah mengekspresikan rasa geregetan kenapa baru memilikinya sekarang.`
+        : `Kreator memegang kening dengan ekspresi geregetan sambil memegang ${productName} menghadap ke kamera sesuai referensi image.`,
+      popupText: 'NYESEL BANGET BARU NEMU SEKARANG! 🤦‍♂️',
+      soundEffect: 'Ding notification & Deep bass boom',
+      dialogVO: `Asli nyesel banget kenapa baru tahu ada ${productName} ini sekarang, padahal kalau dari dulu udah hemat banyak waktu dan tenaga.`,
+      notesMood: 'Gaya teks: Relatable Confession Card. Nada bicara bersahabat.',
+    }),
+  },
+  {
+    id: 'blind_comparison_battle',
+    name: 'Head-to-Head Battle / Uji Nyata vs Produk Serupa',
+    psychology: 'Menyajikan perbandingan langsung yang objektif untuk membuktikan keunggulan produk di hadapan kompetitor.',
+    promptDirective:
+      'Buka Adegan 1 dengan tantangan perbandingan langsung antara produk ini dengan produk sejenis di pasaran tanpa menyebut merek lain.',
+    buildSceneOne: ({ productName, usp, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'Top-Down Hands-Only (Tangan di Atas Meja)' : 'Over the Shoulder (OTS)',
+      visualAction: isHandsOnly
+        ? `Tangan meletakkan ${productName} berdampingan dengan wadah alternatif netral di meja, menunjuk langsung keunggulan fisik produk sesuai gambar referensi.`
+        : `Kreator memegang ${productName} di satu tangan dan produk pembanding netral di tangan lain, menatap kamera dengan ekspresi penasaran.`,
+      popupText: 'BATTLE PRODUK: WORTH IT MANA? ⚖️',
+      soundEffect: 'Boxing bell ring & Whoosh transition',
+      dialogVO: `Banyak yang penasaran apa bener ${productName} ini sebanding sama produk yang harganya jauh lebih mahal? Yuk kita bandingin langsung!`,
+      notesMood: 'Gaya teks: Battle Split Card. Visual dinamis.',
+    }),
+  },
+  {
+    id: 'viral_fomo_restock',
+    name: 'Restock Alert & Perburuan Barang Viral',
+    psychology: 'Memanfaatkan social proof dan rasa takut ketinggalan (FOMO) terhadap barang yang cepat habis.',
+    promptDirective:
+      'Buka Adegan 1 dengan momen kebahagiaan akhirnya berhasil mengamankan stok produk yang selama berminggu-minggu selalu ludes.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'POV Hands-Only (Hanya Tangan & Produk)' : 'Front Camera / Selfie Mode (Curhat Langsung)',
+      visualAction: isHandsOnly
+        ? `Tangan memegang erat kemasan ${productName} yang baru tiba, mengarahkannya ke kamera dengan gerakan gembira sesuai gambar referensi.`
+        : `Kreator tersenyum lebar dengan mata berbinar sambil memeluk kemasan ${productName} di depan kamera dengan penuh rasa syukur.`,
+      popupText: 'AKHIRNYA KEBAGIAN RESTOCK! 😭🎉',
+      soundEffect: 'Level up victory chime & Sparkle magic ting',
+      dialogVO: `Setelah bolak-balik ngecek tiap hari gara-gara kehabisan terus, akhirnya ${productName} ini berhasil aku amankan juga!`,
+      notesMood: 'Gaya teks: Bouncy Glow Celebration. Nada bicara ceria & antusias.',
+    }),
+  },
+  {
+    id: 'extreme_curiosity_gap',
+    name: 'Extreme Curiosity Gap / Rahasia Detail Tersembunyi',
+    psychology: 'Membuka celah informasi misterius yang memicu otak penonton harus bertahan menonton sampai tahu jawabannya.',
+    promptDirective:
+      'Buka Adegan 1 dengan mengungkap detail rahasia atau fakta unik yang jarang disadari orang di balik produk ini.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
+      visualAction: isHandsOnly
+        ? `Tangan menunjuk bagian detail tersembunyi pada fisik kemasan ${productName} dari jarak sangat dekat dengan pencahayaan dramatis.`
+        : `Kreator memegang ${productName} sambil berbisik ke arah mikrofon dan mengarahkan perhatian penonton ke detail produk sesuai referensi image.`,
+      popupText: 'RAHASIA YANG JARANG DISADARI 🤫',
+      soundEffect: 'Mystery ambient shimmer & Soft tick',
+      dialogVO: `Ternyata ada satu alasan kenapa ${productName} ini selalu dapat respon positif, dan hampir gak ada yang ngeh soal detail ini.`,
+      notesMood: 'Gaya teks: Mystery Glow. Nuansa penasaran & eksklusif.',
+    }),
+  },
+  {
+    id: 'problem_breakthrough_moment',
+    name: 'The "Aha!" Breakthrough / Solusi Masalah Menahun',
+    psychology: 'Menyajikan momen pencerahan instan saat sebuah masalah yang mengganggu akhirnya selesai.',
+    promptDirective:
+      'Buka Adegan 1 dengan momen kelegaan menemukan solusi nyata setelah sekian lama frustrasi dengan metode lama.',
+    buildSceneOne: ({ productName, usp, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'POV Hands-Only (Hanya Tangan & Produk)' : 'Medium Close-up (Dada ke Atas)',
+      visualAction: isHandsOnly
+        ? `Tangan mengangkat ${productName} dari atas meja dengan percaya diri, menonjolkan fitur produk sesuai gambar referensi.`
+        : `Kreator menghela napas lega dengan senyum puas sambil menunjukkan ${productName} ke arah lensa kamera sesuai gambar referensi.`,
+      popupText: 'AKHIRNYA NEMU YANG BENERAN AMPUH! 💡',
+      soundEffect: 'Lightbulb click & Soft atmospheric swell',
+      dialogVO: `Udah coba berbagai cara tapi hasilnya nihil, sampai akhirnya nemu ${productName} yang beneran ngasih solusi instan.`,
+      notesMood: 'Gaya teks: Clean Bright Badge. Transisi cerah melegakan.',
+    }),
+  },
+  {
+    id: 'daily_routine_lifesaver',
+    name: 'Daily Lifesaver / Penyelamat Hari Sibuk',
+    psychology: 'Menghubungkan produk langsung ke skenario nyata hari yang sibuk sebagai kebutuhan esensial.',
+    promptDirective:
+      'Buka Adegan 1 dengan momen hari sibuk di mana produk ini menjadi penyelamat utama yang mempermudah hidup.',
+    buildSceneOne: ({ productName, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'POV Hands-Only (Hanya Tangan & Produk)' : 'POV / Handheld (First-Person)',
+      visualAction: isHandsOnly
+        ? `Tangan meraih ${productName} di meja yang rapi di tengah aktivitas padat harian, memperlihatkan kemasan asli sesuai referensi image.`
+        : `Kreator merekam handheld dengan latar suasana rutinitas harian yang dinamis, menunjukkan ${productName} sebagai perlengkapan wajib.`,
+      popupText: 'PENYELAMAT RUTINITAS HARIAN! ⏰⚡',
+      soundEffect: 'Fast whip whoosh & Snap click',
+      dialogVO: `Kalau lagi jadwal padat dan butuh serba cepat, ${productName} ini bener-bener jadi penyelamat yang gak boleh ketinggalan.`,
+      notesMood: 'Gaya teks: Fast Action Pill. Tempo enerjik dan produktif.',
+    }),
+  },
+  {
+    id: 'spontaneous_reaction_first_try',
+    name: 'Raw First-Try Spontaneous Reaction',
+    psychology: 'Menampilkan reaksi spontan dan ekspresi alami saat mencoba produk untuk pertama kalinya.',
+    promptDirective:
+      'Buka Adegan 1 dengan reaksi spontan takjub saat pertama kali mencoba produk secara langsung di depan kamera.',
+    buildSceneOne: ({ productName, usp, isHandsOnly }) => ({
+      cameraAngle: isHandsOnly ? 'Hand Swatch & Application (Tangan Mengoles Produk)' : 'Close-up (Face / Ekspresi)',
+      visualAction: isHandsOnly
+        ? `Tangan langsung mengaplikasikan atau mencoba ${productName} di depan kamera, memperlihatkan hasil instan dengan kemasan terlihat jelas.`
+        : `Kreator mencoba ${productName} di depan lensa dan matanya melebar takjub melihat hasilnya seketika tanpa rekayasa.`,
+      popupText: 'REAKSI ASLI FIRST TRY! 🤯',
+      soundEffect: 'Vine boom & Sparkle magic ting',
+      dialogVO: `Tunggu dulu... ini beneran? Baru pertama kali nyoba ${productName} langsung kelihatan sejelas ini bedanya!`,
+      notesMood: 'Gaya teks: Spontaneous Reaction Bubble. Momen asli tanpa skrip kaku.',
+    }),
+  },
+];
+
+/**
+ * Picks a diverse R&D hook archetype based on category, product name, and random rotation
+ * so repeated generations NEVER repeat the same opening scene and NEVER default to "3 alasan".
+ */
+export function pickDynamicHookArchetype(category: string = '', productName: string = ''): UgcHookArchetype {
+  const normCat = (category || '').toLowerCase();
+  let preferredPool = UGC_RD_HOOK_ARCHETYPES;
+
+  if (normCat.includes('unboxing')) {
+    preferredPool = UGC_RD_HOOK_ARCHETYPES.filter((a) =>
+      [
+        'unboxing_first_impression',
+        'sensory_macro_first_frame',
+        'viral_fomo_restock',
+        'confession_late_adopter',
+        'skeptic_turned_believer',
+        'extreme_curiosity_gap',
+        'spontaneous_reaction_first_try',
+      ].includes(a.id)
+    );
+  } else if (normCat.includes('before') || normCat.includes('problem')) {
+    preferredPool = UGC_RD_HOOK_ARCHETYPES.filter((a) =>
+      [
+        'instant_proof_comparison',
+        'relatable_micro_pain',
+        'problem_breakthrough_moment',
+        'live_stress_test',
+        'confession_late_adopter',
+        'smart_buyer_value_math',
+        'spontaneous_reaction_first_try',
+      ].includes(a.id)
+    );
+  } else if (normCat.includes('tutorial') || normCat.includes('hack') || normCat.includes('edukasi')) {
+    preferredPool = UGC_RD_HOOK_ARCHETYPES.filter((a) =>
+      [
+        'mistake_correction_hack',
+        'extreme_curiosity_gap',
+        'live_stress_test',
+        'instant_proof_comparison',
+        'daily_routine_lifesaver',
+        'smart_buyer_value_math',
+      ].includes(a.id)
+    );
+  } else if (normCat.includes('asmr') || normCat.includes('sensory')) {
+    preferredPool = UGC_RD_HOOK_ARCHETYPES.filter((a) =>
+      [
+        'sensory_macro_first_frame',
+        'unboxing_first_impression',
+        'live_stress_test',
+        'extreme_curiosity_gap',
+        'spontaneous_reaction_first_try',
+      ].includes(a.id)
+    );
+  } else if (normCat.includes('review') || normCat.includes('ulasan') || normCat.includes('testimoni')) {
+    preferredPool = UGC_RD_HOOK_ARCHETYPES.filter((a) =>
+      [
+        'skeptic_turned_believer',
+        'blind_comparison_battle',
+        'live_stress_test',
+        'social_spill_storytime',
+        'reverse_psychology_warning',
+        'confession_late_adopter',
+        'smart_buyer_value_math',
+        'spontaneous_reaction_first_try',
+      ].includes(a.id)
+    );
+  } else if (normCat.includes('lifestyle') || normCat.includes('daily') || normCat.includes('vlog')) {
+    preferredPool = UGC_RD_HOOK_ARCHETYPES.filter((a) =>
+      [
+        'social_spill_storytime',
+        'daily_routine_lifesaver',
+        'confession_late_adopter',
+        'relatable_micro_pain',
+        'viral_fomo_restock',
+        'smart_buyer_value_math',
+      ].includes(a.id)
+    );
+  }
+
+  const pool = preferredPool.length > 0 ? preferredPool : UGC_RD_HOOK_ARCHETYPES;
+  const randomIndex = Math.floor(Math.random() * pool.length);
+  return pool[randomIndex] || UGC_RD_HOOK_ARCHETYPES[0];
+}
+
+/**
+ * Post-processes Scene 1 to ensure it NEVER contains monotonous "Stop scrolling" or "3 Alasan" listicle clichés.
+ */
+export function sanitizeClicheSceneOne(
+  scenes: any[],
+  productName: string,
+  usp: string,
+  category: string,
+  isHandsOnly: boolean
+): any[] {
+  if (!Array.isArray(scenes) || scenes.length === 0) return scenes;
+
+  const first = scenes[0];
+  const vo = String(first?.dialogVO || '');
+  const popup = String(first?.popupText || '');
+  const visual = String(first?.visualAction || '');
+  const combined = `${vo} ${popup} ${visual}`;
+
+  const hasStopScrollCliche =
+    /stop\s*scrolling|jangan\s*skip|jangan\s*di[\s-]*skip|tunggu\s*dulu\s*jangan\s*scroll|menyetop\s*scroll|menghentikan\s*scroll/i.test(
+      combined
+    );
+
+  const hasThreeReasonsCliche =
+    /(^|\b)(3|tiga)\s*alasan(\s*wajib|\s*kenapa|\s*utama|\s*harus|\s*penting)?/i.test(
+      `${vo} ${popup}`
+    );
+
+  if (!hasStopScrollCliche && !hasThreeReasonsCliche) {
+    return scenes;
+  }
+
+  const replacementArchetype = pickDynamicHookArchetype(category, productName);
+  const freshSceneOne = replacementArchetype.buildSceneOne({
+    productName: productName || 'Produk Pilihan',
+    usp: usp || 'Kualitas premium terbukti nyata',
+    category,
+    isHandsOnly,
+  });
+
+  const updatedFirst = {
+    ...first,
+    cameraAngle: first.cameraAngle || freshSceneOne.cameraAngle,
+    visualAction:
+      /menyetop\s*scroll|menghentikan\s*scroll|stop\s*scrolling|tiga\s*jari|3\s*jari/i.test(visual)
+        ? freshSceneOne.visualAction
+        : visual,
+    popupText:
+      /jangan\s*skip|stop\s*scroll|(3|tiga)\s*alasan/i.test(popup) ? freshSceneOne.popupText : popup,
+    dialogVO:
+      /stop\s*scrolling|jangan\s*skip|(3|tiga)\s*alasan/i.test(vo) ? freshSceneOne.dialogVO : vo,
+    soundEffect: first.soundEffect || freshSceneOne.soundEffect,
+    notesMood: first.notesMood || freshSceneOne.notesMood,
+  };
+
+  return [updatedFirst, ...scenes.slice(1)];
+}
+
 // Category-specific rich fallback generator with dynamic target duration allocation & up to 9 scenes
 export function formatShortCaption(
   productName: string,
@@ -124,9 +618,10 @@ export function formatShortCaption(
 
   const options = [
     `Cobain ${cleanName}! Bikin makin pede & hasil nyata. Cek ${cartTerm} mumpung promo! ✨ ${hashtagPlatform}`,
-    `Stop scrolling! Ini rahasia ${cleanName} yang viral. Checkout di ${cartTerm} sekarang mumpung diskon! 🔥 ${hashtagPlatform}`,
-    `Jujur ${cleanName} ini worth it banget! Hasilnya terbukti nyata. Klik ${cartTerm} ya 🛒 ${hashtagPlatform}`,
-    `Akhirnya nemu ${cleanName}! Praktis & kualitas juara. Cuss amankan di ${cartTerm}! ⚡ ${hashtagPlatform}`,
+    `Review jujur ${cleanName} setelah pemakaian rutin, hasilnya nyata! Cek ${cartTerm} sekarang 🔥 ${hashtagPlatform}`,
+    `Jujur ${cleanName} ini worth it banget! Kualitasnya terbukti juara. Klik ${cartTerm} ya 🛒 ${hashtagPlatform}`,
+    `Akhirnya nemu ${cleanName}! Praktis & kualitas bintang lima. Cuss amankan di ${cartTerm}! ⚡ ${hashtagPlatform}`,
+    `Pantesan banyak yang rekomendasiin ${cleanName}, beneran sebagus itu! Cek ${cartTerm} 👇 ${hashtagPlatform}`,
   ];
   const chosen = options[Math.floor(Math.random() * options.length)];
   return chosen.length <= 150 ? chosen : chosen.slice(0, 147) + '...';
@@ -142,11 +637,16 @@ export function generateRichFallback(
   cameraAngleStyle: string = '',
   preferredCameraAngles: string[] = [],
   referenceImage: string = '',
-  platform: string = 'TikTok Shop'
+  platform: string = 'TikTok Shop',
+  referenceImages: string[] = []
 ) {
   const normCat = (category || '').toLowerCase();
   const safeName = productName || 'Produk Pilihan';
-  const safeUSP = keySellingPoints || 'Hasil terbukti nyata, praktis & aman bersertifikasi BPOM';
+  const safeUSP = keySellingPoints || 'Hasil terbukti nyata, praktis & kualitas terjamin';
+  const validRefs = Array.isArray(referenceImages) && referenceImages.length > 0
+    ? referenceImages.filter(Boolean)
+    : (referenceImage ? [referenceImage] : []);
+  const refCount = Math.max(1, validRefs.length);
 
   const isShopee = (platform || '').toLowerCase().includes('shopee');
   const isTikTok = (platform || '').toLowerCase().includes('tiktok');
@@ -160,123 +660,122 @@ export function generateRichFallback(
     ? 'KLIK KERANJANG OREN SEKARANG! 🛒👇'
     : (isTikTok ? 'KLIK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇');
 
-  // Rich 9-step template library with Google Flow AI Video prompts following reference image
-  const full9Scenes = [
-    {
-      cameraAngle: 'POV / Handheld (First-Person)',
-      visualAction: `Kreator menatap kamera dengan tatapan kaget dan gesture tangan menyetop scroll sambil memperlihatkan kemasan ${safeName} sesuai referensi image.`,
-      popupText: 'JANGAN SKIP DULU! 😱',
-      soundEffect: 'Record scratch & Vine boom',
-      dialogVO: `Stop scrolling! Ada satu rahasia ${safeName} yang wajib kalian tahu hari ini!`,
-      notesMood: 'Gaya teks: Bold Red/Yellow. High energy expression.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] First-person POV handheld smartphone recording, UGC creator gasping with genuine excitement while holding ${safeName} packaging facing the camera, strict packaging and label consistency with reference image, dynamic 9:16 vertical video, natural warm indoor lighting, sharp focus, photorealistic 4k 60fps.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-    {
-      cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
-      visualAction: `Zoom cepat ke ekspresi penasaran/masalah yang dialami audiens, lalu transisi cepat ke siluet kemasan ${safeName} persis seperti gambar referensi.`,
-      popupText: 'PERNAH ALAMI INI? 😫',
-      soundEffect: 'Dramatic swoosh',
-      dialogVO: `Dulu sering banget kesal sama masalah ini sampai akhirnya nemu solusi yang tepat.`,
-      notesMood: 'Gaya teks: Chat Bubble. Pencahayaan dramatis.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro close-up slow zoom-in on the surface, texture, and physical details of ${safeName}, pristine cosmetic product details matching reference image, soft diffused studio light, vertical 9:16 UGC style, 4k 60fps.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-    {
-      cameraAngle: 'Medium Shot (Setengah Badan)',
-      visualAction: `Kreator tersenyum lega sambil mengangkat kemasan asli ${safeName} sejajar wajah sesuai proporsi referensi image.`,
-      popupText: `SOLUSI: ${safeName.toUpperCase()} ✨`,
-      soundEffect: 'Sparkle chime & Ding',
-      dialogVO: `Kenalin ${safeName}! Ini dia produk viral yang beneran mengubah rutinitas harianku!`,
-      notesMood: 'Gaya teks: Bouncy Glow. Transisi cerah.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Medium shot of relatable creator holding up original ${safeName} product beside their face with a relieved, happy smile, identical branding to reference image, bright aesthetic room backdrop, vertical 9:16, crisp mobile video quality.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-    {
-      cameraAngle: 'Close-up (Face / Ekspresi)',
-      visualAction: `Sorotan tajam kemasan, segel, dan ciri visual khas ${safeName} dalam genggaman tangan, merefleksikan detail referensi image.`,
-      popupText: 'KUALITAS BINTANG 5 ⭐⭐⭐⭐⭐',
-      soundEffect: 'Camera shutter & Pop',
-      dialogVO: `Packaging dan build quality ${safeName} beneran rapi dan berkelas banget.`,
-      notesMood: 'Gaya teks: Gold Badge. Detail kemasan produk.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up product hero shot in creator's hand rotating slowly 45 degrees, showing authentic security seal and brand typography matching reference image, cinematic depth of field, 9:16 TikTok UGC style.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-    {
-      cameraAngle: 'POV / Handheld (First-Person)',
-      visualAction: `Demonstrasi membuka atau mengaplikasikan tekstur ${safeName} secara detail dan higienis dengan warna konsisten terhadap referensi image.`,
-      popupText: 'TEKSTUR MEWAH & NYAMAN 🌿',
-      soundEffect: 'ASMR Crisp & Smooth Whoosh',
-      dialogVO: `Cara pakainya super gampang, teksturnya langsung nyaman dan kerasa bedanya dari pertama coba.`,
-      notesMood: 'Gaya teks: Minimalist Subtitle. Lighting jernih.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Handheld POV demonstration of opening and applying formula of ${safeName}, smooth texture glide, clean aesthetic setup, visual colors and consistency matching reference image, 4k 60fps vertical 9:16.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-    {
-      cameraAngle: 'Side Profile 45° (Angle Samping)',
-      visualAction: `Aksi pemakaian langsung ${safeName} dengan gestur santai dan ekspresi sangat menikmati, memperlihatkan kemasan produk secara natural.`,
-      popupText: `${safeUSP.toUpperCase().slice(0, 30)} ⚡`,
-      soundEffect: 'Ting sparkle',
-      dialogVO: `${safeUSP}. Beneran membuktikan kalau klaimnya bukan sekadar omong kosong.`,
-      notesMood: 'Gaya teks: Clean bullet points. Natural smile.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] 45-degree side profile angle, creator actively using ${safeName} with effortless natural gestures, relaxed confidence, reference image product clearly visible, natural daylight, photorealistic UGC video.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-    {
-      cameraAngle: 'Front Camera / Selfie Mode (Curhat Langsung)',
-      visualAction: `Reaksi wajah puas tersenyum lebar dengan ekspresi terkesima melihat hasil ${safeName}, memegang produk ke arah kamera.`,
-      popupText: 'JUJUR GAK NYANGKA! 😍',
-      soundEffect: 'Cheer & Success chime',
-      dialogVO: `Hasilnya di luar dugaan, beneran ngebantu banget dan bikin makin percaya diri!`,
-      notesMood: 'Gaya teks: Heart pop emoji. Warm studio tone.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Front selfie camera perspective, creator smiling broadly admiring noticeable real results from ${safeName}, holding product close to camera, packaging details match reference image, glowing warm ambiance.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-    {
-      cameraAngle: 'Over the Shoulder (OTS)',
-      visualAction: `Kreator memegang ${safeName} di samping wajah sambil memberikan gestur jempol mantap dengan produk tampak jelas.`,
-      popupText: 'SUPER WORTH IT! 💯',
-      soundEffect: 'Cha-ching cash register',
-      dialogVO: `Buat kalian yang mau coba ${safeName}, menurut aku ini 10/10 dan beneran wajib punya.`,
-      notesMood: 'Gaya teks: Green verified badge.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Over-the-shoulder perspective, creator giving an enthusiastic thumbs-up while displaying ${safeName} bottle/package to camera, accurate label colors adhering to reference image.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-    {
-      cameraAngle: 'Low Angle (Hero / Powerful)',
-      visualAction: `Kreator tersenyum antusias menunjuk ke pojok kiri bawah layar ke arah ${cartName} dengan produk ${safeName}.`,
-      popupText: cartPopupText,
-      soundEffect: 'Bell ring & Cha-ching',
-      dialogVO: `Mumpung ${safeName} lagi ada voucher diskon & gratis ongkir, langsung klik ${cartName} ya!`,
-      notesMood: `Gaya teks: Pulsing CTA Button. Urgent offer menunjuk ${cartName}.`,
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Low-angle dynamic hero shot, creator smiling invitingly and pointing down toward ${cartIconPrompt} while holding ${safeName}, packaging prominently featured, vibrant lighting, vertical 9:16 UGC video.`,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-    },
-  ];
-
   const isHandsOnly =
     cameraAngleStyle.toLowerCase().includes('hand') ||
     cameraAngleStyle.toLowerCase().includes('tangan') ||
     cameraAngleStyle.toLowerCase().includes('faceless') ||
     (preferredCameraAngles && preferredCameraAngles.some((a) => a.toLowerCase().includes('tangan') || a.toLowerCase().includes('faceless')));
 
+  // Pick a fresh R&D Hook Archetype for Scene 1 (Zero "Stop Scrolling"!)
+  const chosenArchetype = pickDynamicHookArchetype(category, safeName);
+  const dynamicScene1 = chosenArchetype.buildSceneOne({
+    productName: safeName,
+    usp: safeUSP,
+    category,
+    isHandsOnly,
+  });
+
+  // Rich 9-step template library with dynamic Scene 1 & Google Flow AI Video prompts
+  const full9Scenes = [
+    {
+      ...dynamicScene1,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] ${dynamicScene1.cameraAngle}, ${dynamicScene1.visualAction}, strict packaging and label consistency with reference image, dynamic 9:16 vertical video, natural warm indoor lighting, sharp focus, photorealistic 4k 60fps.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+    {
+      cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
+      visualAction: `Sorotan makro memperlihatkan detail masalah yang sering dialami lalu beralih mulus ke detail fisik kemasan ${safeName} persis seperti gambar referensi.`,
+      popupText: 'SOLUSI PRAKTIS TANPA RIBET ✨',
+      soundEffect: 'Dramatic swoosh & Sparkle magic ting',
+      dialogVO: `Padahal kuncinya ada di kualitas dan detail dari ${safeName} yang memang dirancang buat hasil optimal.`,
+      notesMood: 'Gaya teks: Clean Modern Card. Pencahayaan kontras jernih.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro close-up slow zoom-in on the surface, texture, and physical details of ${safeName}, pristine product details matching reference image, soft diffused studio light, vertical 9:16 UGC style, 4k 60fps.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+    {
+      cameraAngle: 'Medium Shot (Setengah Badan)',
+      visualAction: `Kreator tersenyum puas sambil mengangkat kemasan asli ${safeName} sejajar bahu sesuai proporsi referensi image.`,
+      popupText: `KENALIN: ${safeName.toUpperCase().slice(0, 24)} 🌟`,
+      soundEffect: 'Sparkle chime & Ding',
+      dialogVO: `Ini dia ${safeName}, salah satu produk andalan yang beneran ngebantu rutinitas harianku jadi jauh lebih efisien.`,
+      notesMood: 'Gaya teks: Bouncy Glow. Transisi cerah.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Medium shot of relatable creator holding up original ${safeName} product beside their face with a confident, happy smile, identical branding to reference image, bright aesthetic room backdrop, vertical 9:16, crisp mobile video quality.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+    {
+      cameraAngle: 'Close-up (Face / Ekspresi)',
+      visualAction: `Sorotan tajam kemasan, segel resmi, dan ciri visual khas ${safeName} dalam genggaman tangan, merefleksikan detail referensi image.`,
+      popupText: 'BUILD QUALITY & DETAIL JUARA ⭐⭐⭐⭐⭐',
+      soundEffect: 'Camera shutter & Pop',
+      dialogVO: `Dari detail kemasan dan finishing ${safeName} aja udah kelihatan kalau produk ini digarap serius.`,
+      notesMood: 'Gaya teks: Gold Badge. Detail kemasan produk.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up product hero shot in creator's hand rotating slowly 45 degrees, showing authentic security seal and brand typography matching reference image, cinematic depth of field, 9:16 TikTok UGC style.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+    {
+      cameraAngle: 'POV / Handheld (First-Person)',
+      visualAction: `Demonstrasi langsung menggunakan atau mengaplikasikan ${safeName} secara rapi dengan warna konsisten terhadap referensi image.`,
+      popupText: ' NYAMAN & LANGSUNG TERASA 🌿',
+      soundEffect: 'ASMR Crisp & Smooth Whoosh',
+      dialogVO: `Cara pakainya praktis banget, nyaman digunakan, dan langsung kerasa bedanya sejak pemakaian pertama.`,
+      notesMood: 'Gaya teks: Minimalist Subtitle. Lighting jernih.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Handheld POV demonstration of using ${safeName}, smooth authentic interaction, clean aesthetic setup, visual colors and consistency matching reference image, 4k 60fps vertical 9:16.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+    {
+      cameraAngle: 'Side Profile 45° (Angle Samping)',
+      visualAction: `Aksi pemakaian ${safeName} dengan gestur santai dan ekspresi menikmati manfaatnya, memperlihatkan produk secara natural.`,
+      popupText: `${safeUSP.toUpperCase().slice(0, 30)} ⚡`,
+      soundEffect: 'Ting sparkle',
+      dialogVO: `Keunggulan utamanya: ${safeUSP}. Jadi beneran terbukti bekerja sesuai fungsinya.`,
+      notesMood: 'Gaya teks: Clean bullet points. Natural smile.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] 45-degree side profile angle, creator actively using ${safeName} with effortless natural gestures, relaxed confidence, reference image product clearly visible, natural daylight, photorealistic UGC video.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+    {
+      cameraAngle: 'Front Camera / Selfie Mode (Curhat Langsung)',
+      visualAction: `Reaksi wajah puas melihat hasil nyata dari ${safeName}, sambil menunjukkan produk ke arah kamera.`,
+      popupText: 'HASILNYA SESUAI EKSPEKTASI! 😍',
+      soundEffect: 'Cheer & Success chime',
+      dialogVO: `Setelah rutin pakai, hasilnya bener-bener memuaskan dan bikin aktivitas sehari-hari makin percaya diri.`,
+      notesMood: 'Gaya teks: Heart pop emoji. Warm studio tone.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Front selfie camera perspective, creator smiling broadly admiring noticeable real results from ${safeName}, holding product close to camera, packaging details match reference image, glowing warm ambiance.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+    {
+      cameraAngle: 'Over the Shoulder (OTS)',
+      visualAction: `Kreator memegang ${safeName} dengan gestur jempol mantap dan produk tampak jelas menghadap kamera.`,
+      popupText: 'REKOMENDASI 10/10 WORTH IT! 💯',
+      soundEffect: 'Cha-ching cash register',
+      dialogVO: `Buat kalian yang lagi cari ${safeName} berkualitas, menurutku ini pilihan yang paling layak dicoba.`,
+      notesMood: 'Gaya teks: Green verified badge.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Over-the-shoulder perspective, creator giving an enthusiastic thumbs-up while displaying ${safeName} bottle/package to camera, accurate label colors adhering to reference image.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+    {
+      cameraAngle: 'Low Angle (Hero / Powerful)',
+      visualAction: `Kreator tersenyum antusias menunjuk ke pojok kiri bawah layar ke arah ${cartName} sambil memegang ${safeName}.`,
+      popupText: cartPopupText,
+      soundEffect: 'Bell ring & Cha-ching',
+      dialogVO: `Mumpung ${safeName} lagi ada voucher promo dan gratis ongkir, langsung cek di ${cartName} sekarang ya!`,
+      notesMood: `Gaya teks: Pulsing CTA Button. Urgent offer menunjuk ${cartName}.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Low-angle dynamic hero shot, creator smiling invitingly and pointing down toward ${cartIconPrompt} while holding ${safeName}, packaging prominently featured, vibrant lighting, vertical 9:16 UGC video.`,
+      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+    },
+  ];
+
   const handsOnly9Scenes = [
     {
-      cameraAngle: 'POV Hands-Only (Hanya Tangan & Produk)',
-      visualAction: `Kamera sudut pandang pertama (POV) menyorot kedua tangan talent di atas meja estetik, memegang paket ${safeName} siap di-unboxing sesuai gambar referensi. 100% tanpa wajah.`,
-      popupText: 'UNBOXING TIME! 📦✨',
-      soundEffect: 'Box tape tear & Pop',
-      dialogVO: `Akhirnya paket ${safeName} yang ditunggu-tunggu sampai juga! Yuk kita unboxing bareng.`,
-      notesMood: 'Gaya teks: Minimalist Subtitle. Meja estetik rapi, tanpa muka.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Faceless UGC POV hands-only shot, neat manicured hands on aesthetic wooden desk holding delivered package of ${safeName}, reference image packaging match, 9:16 smartphone video, crisp soft shadows, 4k 60fps.`,
+      ...dynamicScene1,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Faceless UGC ${dynamicScene1.cameraAngle}, neat hands on aesthetic desk, ${dynamicScene1.visualAction}, reference image packaging match, 9:16 smartphone video, crisp soft shadows, 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Top-Down Hands-Only (Tangan di Atas Meja)',
       visualAction: `Sudut kamera 90° tegak lurus ke meja. Tangan talent membuka segel box dan mengeluarkan kemasan fisik ${safeName} secara rapi dan satisfying mengikuti referensi image.`,
-      popupText: `OFFICIAL UNBOXING: ${safeName.toUpperCase()}`,
+      popupText: `FIRST LOOK: ${safeName.toUpperCase().slice(0, 22)} ✨`,
       soundEffect: 'ASMR Paper unwrap & Chime',
-      dialogVO: `Begitu dibuka, kemasan aslinya beneran estetik dan premium banget.`,
+      dialogVO: `Begitu dikeluarkan dari box, detail kemasannya rapi dan berkelas banget.`,
       notesMood: 'Gaya teks: Clean Bouncy. Flat lay meja bersih.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Flat lay 90-degree overhead top-down shot, hands smoothly sliding ${safeName} physical product out of retail box, aesthetic minimal backdrop, lighting highlights pristine finish matching reference image, vertical 9:16.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
@@ -286,19 +785,19 @@ export function generateRichFallback(
       visualAction: `Close-up super makro. Jari-jemari tangan memutar kemasan ${safeName}, memperlihatkan segel resmi, detail aplikator, dan label original sesuai gambar referensi.`,
       popupText: 'DETAIL KEMASAN 100% ORI 🔍',
       soundEffect: 'Camera shutter click',
-      dialogVO: `Perhatikan detail segel dan ciri kemasannya, rapi dan build quality-nya berkelas.`,
+      dialogVO: `Perhatikan detail segel dan ciri kemasannya, presisi dan kualitas bahannya kokoh.`,
       notesMood: 'Gaya teks: Gold Badge. Pencahayaan makro tajam.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro slow 360-spin in hands, fingers turning ${safeName} to display official barcode and holographic seal, razor-sharp focus on brand font matching reference image, clean 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hand Swatch & Application (Tangan Mengoles Produk)',
-      visualAction: `Tangan talent mengaplikasikan/mengoleskan tekstur produk ${safeName} langsung di punggung tangan atau permukaan uji secara satisfying.`,
-      popupText: 'TEKSTUR SUPER SATISFYING 🌿',
+      visualAction: `Tangan talent mengaplikasikan atau mendemonstrasikan tekstur ${safeName} langsung di punggung tangan atau permukaan uji secara satisfying.`,
+      popupText: 'TEKSTUR & PERFORMA NYATA 🌿',
       soundEffect: 'ASMR Crisp Glide & Swirl',
-      dialogVO: `Nah ini yang paling satisfying! Teksturnya langsung nyaman, gampang diratakan, dan gak lengket sama sekali.`,
+      dialogVO: `Pas dicoba langsung di tangan, teksturnya nyaman, mudah merata, dan tidak lengket sama sekali.`,
       notesMood: 'Gaya teks: Glassmorphism Tag. Fokus gerakan jari.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands-only application, finger smoothly spreading velvety formula of ${safeName} across back of hand, satisfying ASMR texture motion, lighting reveals true product viscosity, 9:16 vertical.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands-only application, finger smoothly demonstrating ${safeName} across back of hand, satisfying ASMR motion, lighting reveals true product finish, 9:16 vertical.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
@@ -306,7 +805,7 @@ export function generateRichFallback(
       visualAction: `Kedua tangan memperagakan cara pemakaian praktis ${safeName}, mendemonstrasikan keunggulan ${safeUSP}.`,
       popupText: `${safeUSP.toUpperCase().slice(0, 30)} ⚡`,
       soundEffect: 'Sparkle Ding',
-      dialogVO: `Tinggal diaplikasikan secukupnya, hasilnya instan kerasa bedanya.`,
+      dialogVO: `Tinggal digunakan secukupnya, keunggulannya langsung terasa sejak percobaan pertama.`,
       notesMood: 'Gaya teks: Bullet point checklist. Aksi tangan jelas.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Hands demonstrating practical use of ${safeName}, elegant hand movement, steady camera angle, product front label always oriented towards camera matching reference image, 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
@@ -314,31 +813,31 @@ export function generateRichFallback(
     {
       cameraAngle: 'POV Hands-Only (Hanya Tangan & Produk)',
       visualAction: `Tangan kanan memegang produk ${safeName}, tangan kiri memberikan gestur jempol puas di depan meja estetik.`,
-      popupText: 'RATING: 10/10 MUST BUY! ⭐',
+      popupText: 'RATING: 9.8/10 RECOMMENDED! ⭐',
       soundEffect: 'Success bell & Cha-ching',
-      dialogVO: `Jujur dari segi performa dan kualitas, ini beneran melebihi ekspektasi.`,
+      dialogVO: `Dari segi performa dan kualitas fisik, ini beneran melebihi ekspektasi di kelas harganya.`,
       notesMood: 'Gaya teks: Star Rating Badge. Gestur tangan puas.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] POV shot with right hand presenting ${safeName} bottle and left hand giving satisfied thumbs-up gesture, clean cozy aesthetic desk, packaging color accuracy locked to reference image, 9:16 vertical.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Top-Down Hands-Only (Tangan di Atas Meja)',
-      visualAction: `Tangan talent menjejerkan produk ${safeName} dengan rapi di atas meja di sebelah aksesoris estetik.`,
-      popupText: 'SUPER AESTHETIC & WORTH IT 💯',
+      visualAction: `Tangan talent menata produk ${safeName} dengan rapi di atas meja di sebelah properti minimalis.`,
+      popupText: 'PRAKTIS & ESTETIK 💯',
       soundEffect: 'Soft pop & Chime',
-      dialogVO: `Wajar kalau produk ini sering sold out di mana-mana.`,
+      dialogVO: `Bentuknya juga ringkas, gampang disimpan atau dibawa bepergian ke mana saja.`,
       notesMood: 'Gaya teks: Verified badge.',
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Top-down flat lay view, hands placing ${safeName} gently next to aesthetic props on linen table, studio grade softbox lighting, brand label facing up matching reference image.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hand Swatch & Application (Tangan Mengoles Produk)',
-      visualAction: `Tangan mengetuk-ngetuk kemasan produk (ASMR Tapping) lalu menunjukkan sisa pemakaian yang bersih dan higienis.`,
-      popupText: 'ASMR TAPPING SATISFYING 🎧',
+      visualAction: `Tangan mengetuk ringan kemasan produk (ASMR Tapping) lalu memperlihatkan kondisi produk yang bersih dan higienis.`,
+      popupText: 'HIGIENIS & AWET DIPAKAI 🎧',
       soundEffect: 'Crisp ASMR Tapping',
-      dialogVO: `Praktis dibawa ke mana-mana dan gak ribet sama sekali.`,
+      dialogVO: `Kemasannya aman, anti tumpah, dan isinya awet untuk pemakaian rutin.`,
       notesMood: 'Gaya teks: Floating glow text.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands gently finger-tapping on ${safeName} bottle cap with crisp satisfying movement, pristine product condition adhering to reference image, hyperrealistic 4k.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands gently finger-tapping on ${safeName} packaging with crisp satisfying movement, pristine product condition adhering to reference image, hyperrealistic 4k.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
@@ -346,7 +845,7 @@ export function generateRichFallback(
       visualAction: `Tangan talent memegang produk ${safeName} dan jari telunjuk menunjuk langsung ke pojok kiri bawah layar ke arah ikon ${cartName}.`,
       popupText: cartPopupText,
       soundEffect: 'Cash register cha-ching & Bell',
-      dialogVO: `Mumpung lagi diskon & gratis ongkir, langsung checkout di ${cartName} sekarang sebelum kehabisan!`,
+      dialogVO: `Mumpung lagi ada diskon dan gratis ongkir, langsung checkout di ${cartName} sekarang ya!`,
       notesMood: `Gaya teks: Pulsing CTA Button. Tangan menunjuk ${cartName}.`,
       googleFlowPrompt: `[Image 1 Reference: ${safeName}] Dynamic closing shot, hands holding ${safeName} with index finger pointing directly towards bottom-left corner where ${cartIconPrompt} is located, product branding in crystal clear focus matching reference image, 9:16 vertical UGC video.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
@@ -430,15 +929,31 @@ export function generateRichFallback(
       sc.popupText && typeof sc.popupText === 'string' && sc.popupText.trim() && sc.popupText.trim() !== '-'
         ? sc.popupText.trim()
         : i === 0
-        ? 'JANGAN SKIP DULU! 😱'
-        : `SOLUSI: ${safeName.toUpperCase()}`;
+        ? dynamicScene1.popupText
+        : `KEUNGGULAN: ${safeName.toUpperCase()}`;
+
+    const refIndexForScene = (i % refCount) + 1;
+    const refTag =
+      refCount > 1
+        ? `[Image ${refIndexForScene} of ${refCount} Reference: ${safeName}]`
+        : `[Image 1 Reference: ${safeName}]`;
 
     let flowPrompt = sc.googleFlowPrompt || '';
     if (!flowPrompt) {
-      flowPrompt = `[Image 1 Reference: ${safeName}] Scene ${i + 1} (${angle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow reference image, 9:16 vertical, 4k 60fps.`;
-    } else if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
-      flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+      flowPrompt = `${refTag} Scene ${i + 1} (${angle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow reference image #${refIndexForScene}, 9:16 vertical, 4k 60fps.`;
+    } else {
+      if (refCount > 1) {
+        flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
+      }
+      if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
+        flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+      }
     }
+
+    const refNote =
+      refCount > 1
+        ? `Pastikan Produk sesuai Gambar referensi #${refIndexForScene} (dari ${refCount} foto referensi terlampir)`
+        : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
 
     return {
       ...sc,
@@ -446,15 +961,15 @@ export function generateRichFallback(
       duration: sceneDuration,
       popupText,
       googleFlowPrompt: flowPrompt,
-      imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+      imageReferenceNote: refNote,
     };
   });
 
   return {
     title: `Storyboard ${category || 'UGC'} - ${safeName}`,
     targetAudienceSummary: targetAudience || 'Pengguna aktif TikTok & Reels yang mencari produk viral berkualitas',
-    hookTip: 'Hook visual 3 detik pertama dengan ekspresi ekspresif & text overlay kontras tinggi untuk memicu retensi.',
-    caption: formatShortCaption(safeName, category, safeUSP),
+    hookTip: `Strategi R&D Hook [${chosenArchetype.name}]: ${chosenArchetype.psychology}`,
+    caption: formatShortCaption(safeName, category, safeUSP, platform),
     scenes,
   };
 }
@@ -487,11 +1002,32 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
     detectedPlatform = linkData.platform === 'TikTok' ? 'TikTok Shop' : linkData.platform;
   }
 
-  // 2. Resolve Product Name accurately (Never use raw shortcodes, junk titles, or hardcoded fake products!)
+  // 2. Resolve Product Name, Brand & Price accurately (Prioritize share-text intelligence & real scraped metadata)
+  const shareIntel = extractShareTextIntelligence(rawInputCombined);
   let detectedName = '';
+  let detectedPrice = shareIntel.sharePrice || linkData?.price || '';
+  if (detectedPrice && /^\d+$/.test(String(detectedPrice).replace(/[.,\s]/g, ''))) {
+    const numPrice = Number(String(detectedPrice).replace(/[^\d]/g, ''));
+    if (numPrice > 0) {
+      detectedPrice = `Rp ${numPrice.toLocaleString('id-ID')}`;
+    }
+  } else if (detectedPrice && !String(detectedPrice).toLowerCase().startsWith('rp')) {
+    detectedPrice = `Rp ${detectedPrice}`;
+  }
+
+  // Candidate A0: Explicit product name from marketplace share sentence (e.g. "Cek Setelan Arsyilla Klok (Restock) dengan harga Rp155.000...")
+  if (
+    shareIntel.shareProductName &&
+    !isGenericMarketplaceFallback(shareIntel.shareProductName) &&
+    !isLikelyShortcodeOrHash(shareIntel.shareProductName) &&
+    shareIntel.shareProductName.length >= 3
+  ) {
+    detectedName = cleanMarketplaceProductName(shareIntel.shareProductName, detectedPlatform);
+  }
 
   // Candidate A: Real scraped product name from linkData
   if (
+    !detectedName &&
     linkData?.productName &&
     !isGenericMarketplaceFallback(linkData.productName) &&
     !isLikelyShortcodeOrHash(linkData.productName) &&
@@ -502,11 +1038,9 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
 
   // Candidate B: Text provided by user (e.g. share text or input notes)
   if (!detectedName && cleanTextNoUrls) {
-    // Remove marketplace prefixes like "Beli", "Jual", "Cek", "Lihat produk di..."
     const cleanedText = cleanMarketplaceProductName(cleanTextNoUrls, detectedPlatform);
     if (cleanedText && cleanedText.length >= 3 && !isGenericMarketplaceFallback(cleanedText)) {
-      // Take the first meaningful title line/segment
-      const firstSegment = cleanedText.split(/[\n–—\-]/)[0]?.trim();
+      const firstSegment = cleanedText.split(/[\n–—]/)[0]?.trim();
       if (firstSegment && firstSegment.length >= 3 && !isLikelyShortcodeOrHash(firstSegment)) {
         detectedName = firstSegment;
       }
@@ -521,32 +1055,29 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
     }
   }
 
-  // Fallback fallback if completely empty
+  // Fallback if completely empty
   if (!detectedName || detectedName.trim().length < 2) {
     detectedName = 'Produk Unggulan Pilihan';
   }
 
   // 3. Resolve Brand accurately
-  let detectedBrand = linkData?.brand || '';
+  let detectedBrand = shareIntel.shareBrand || linkData?.brand || '';
   if (!detectedBrand) {
-    detectedBrand = detectKnownBrand(detectedName + ' ' + rawInputCombined) || '';
-  }
-  // If still empty but name has 2+ words, first word might be the brand if recognized
-  if (!detectedBrand && detectedName !== 'Produk Unggulan Pilihan') {
-    const firstWord = detectedName.split(' ')[0]?.trim();
-    if (firstWord && firstWord.length >= 3 && detectKnownBrand(firstWord)) {
-      detectedBrand = firstWord;
-    }
+    detectedBrand =
+      detectKnownBrand(detectedName + ' ' + rawInputCombined) ||
+      inferProductBrandOrCollection(detectedName) ||
+      '';
   }
 
   // 4. Default baseline properties
+  const priceTagText = detectedPrice ? ` dengan harga terjangkau ${detectedPrice}` : '';
   let detectedCat = 'Review';
   let detectedDuration = 30;
   let detectedTone = 'Santai, Relatable & Meyakinkan';
-  let detectedUSP = `Kualitas terjamin, performa optimal, dan terbukti memberikan hasil nyata.`;
-  let detectedDesc = `${detectedName} merupakan solusi terpercaya dengan ulasan positif dari ribuan pengguna yang mengutamakan kualitas dan kenyamanan.`;
+  let detectedUSP = `Kualitas terjamin, performa optimal${priceTagText}, dan terbukti memberikan hasil nyata.`;
+  let detectedDesc = `${detectedName}${detectedBrand ? ` dari ${detectedBrand}` : ''} merupakan pilihan favorit dengan ulasan positif yang mengutamakan kualitas, detail rapi, dan kenyamanan pemakaian${priceTagText}.`;
   let detectedAudience = `Pria dan wanita usia 18-35 tahun aktif di media sosial yang mencari produk berkualitas terbukti.`;
-  const detectedTags: string[] = [detectedPlatform];
+  const detectedTags: string[] = [detectedPlatform.replace(/\s+/g, '')];
 
   let detectedPersona = 'Semua (Netral Universal)';
   let detectedCameraStyle = 'Dinamis & Multi-Angle (Viral Fast-Cut)';
@@ -686,15 +1217,73 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
     detectedAudience = 'Gen Z dan milenial 16-32 tahun pencinta gaya kasual dan OOTD kekinian.';
     detectedTags.push('SneakersLokal', 'OOTDInspo');
   }
-  // NICHE J: Pakaian / Kaos / Hoodie / Kemeja / Celana
-  else if (n.includes('kaos') || n.includes('hoodie') || n.includes('t-shirt') || n.includes('kemeja') || n.includes('celana') || n.includes('jaket') || n.includes('oversize') || n.includes('baju')) {
+  // NICHE J1: Setelan Wanita / One Set / Modest Wear / Klok / Tunik / Dress / Daster / Kebaya / Gamis / Hijab
+  else if (
+    n.includes('setelan') ||
+    n.includes('oneset') ||
+    n.includes('one set') ||
+    n.includes('klok') ||
+    n.includes('tunik') ||
+    n.includes('dress') ||
+    n.includes('daster') ||
+    n.includes('kebaya') ||
+    n.includes('gamis') ||
+    n.includes('abaya') ||
+    n.includes('kaftan') ||
+    n.includes('hijab') ||
+    n.includes('jilbab') ||
+    n.includes('pashmina') ||
+    n.includes('mukena') ||
+    n.includes('muslimah') ||
+    n.includes('khimar') ||
+    n.includes('bergo') ||
+    n.includes('crinkle') ||
+    n.includes('rayon')
+  ) {
+    detectedCat = 'Haul';
+    detectedPersona = 'Hijaber Trendy / Muslimah Modern';
+    detectedCameraStyle = 'Mirror Reflection Shot & GRWM (Get Ready With Me)';
+    personaExplanation = `Persona Hijaber Trendy / Muslimah Modern dipilih karena paling relevan untuk memamerkan jatuhnya bahan, cuttingan klok/setelan, dan kenyamanan ${detectedName} saat dipakai OOTD.`;
+    cameraStyleExplanation = 'Gaya Mirror Reflection Shot & GRWM menonjolkan siluet full-body, detail ayunan bahan (flowy/klok), serta kecocokan warna pakaian secara nyata di depan cermin.';
+    preferredCameraAngles = [
+      'Mirror Reflection Shot (Kaca GRWM)',
+      'Wide Shot (Ruangan / Full Body)',
+      'Extreme Close-up / Macro (Tekstur & Detail)',
+      'Front Camera / Selfie Mode (Curhat Langsung)',
+    ];
+    detectedUSP = `Bahan adem jatuh (flowy) dan tidak menerawang, potongan nyaman dipakai harian maupun acara spesial, jahitan rapi kualitas butik${detectedPrice ? ` dengan harga ramah kantong ${detectedPrice}` : ''}.`;
+    detectedDesc = `${detectedName}${detectedBrand ? ` koleksi ${detectedBrand}` : ''} hadir dengan desain modis dan cuttingan anggun yang memberikan siluet rapi, adem di kulit, serta bebas gerak seharian${priceTagText}.`;
+    detectedAudience = 'Wanita muda, mahasiswi, ibu muda, dan pencinta OOTD/fashion muslimah usia 18-40 tahun yang mengutamakan kenyamanan dan tampilan anggun.';
+    detectedTags.push('OOTDSetelan', 'RacunShopee', 'FashionWanita', 'MuslimahOOTD');
+  }
+  // NICHE J2: Pakaian Kasual / Kaos / Hoodie / Kemeja / Celana / Kulot / Blouse / Cardigan / Outer
+  else if (
+    n.includes('kaos') ||
+    n.includes('hoodie') ||
+    n.includes('t-shirt') ||
+    n.includes('kemeja') ||
+    n.includes('celana') ||
+    n.includes('kulot') ||
+    n.includes('blouse') ||
+    n.includes('cardigan') ||
+    n.includes('outer') ||
+    n.includes('sweater') ||
+    n.includes('rok') ||
+    n.includes('jaket') ||
+    n.includes('oversize') ||
+    n.includes('baju') ||
+    n.includes('outfit') ||
+    n.includes('pakaian')
+  ) {
     detectedCat = 'Haul';
     detectedPersona = 'Fashion Stylist / OOTD Enthusiast';
     detectedCameraStyle = 'Mirror Reflection Shot & GRWM (Get Ready With Me)';
+    personaExplanation = `Persona Fashion Stylist / OOTD Enthusiast dipilih untuk mendemonstrasikan mix-and-match dan fitting ${detectedName} secara stylish.`;
+    cameraStyleExplanation = 'Gaya Mirror Reflection Shot & GRWM memperlihatkan proporsi pakaian di badan dari berbagai sudut secara estetik.';
     preferredCameraAngles = ['Mirror Reflection Shot (Kaca GRWM)', 'Wide Shot (Ruangan / Full Body)', 'Side Profile 45° (Angle Samping)'];
-    detectedUSP = 'Bahan katun premium adem menyerap keringat, jahitan rapi kuat tidak mudah melar, cuttingan pas modis.';
-    detectedDesc = `${detectedName} menghadirkan siluet kasual yang nyaman dan fleksibel untuk mix-and-match gaya streetwear harian.`;
-    detectedAudience = 'Remaja & dewasa muda usia 16-32 tahun penggemar fashion simpel tapi berkarakter.';
+    detectedUSP = `Bahan adem menyerap keringat, jahitan rapi kuat tidak mudah melar, cuttingan pas modis${detectedPrice ? ` seharga ${detectedPrice}` : ''}.`;
+    detectedDesc = `${detectedName} menghadirkan siluet kasual yang nyaman dan fleksibel untuk mix-and-match gaya harian${priceTagText}.`;
+    detectedAudience = 'Remaja & dewasa muda usia 16-35 tahun penggemar fashion simpel tapi berkarakter.';
     detectedTags.push('FashionViral', 'OutfitKece');
   }
   // NICHE K: TWS / Earphone / Headphone / Audio
@@ -838,9 +1427,10 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
   return {
     productName: detectedName,
     brandName: detectedBrand,
+    price: detectedPrice || undefined,
     productUrl: detectedUrl,
-    imageUrl: linkData?.imageUrl || linkData?.image || undefined,
-    referenceImage: linkData?.imageUrl || linkData?.image || undefined,
+    imageUrl: linkData?.ogImage || linkData?.imageUrl || linkData?.image || undefined,
+    referenceImage: linkData?.ogImage || linkData?.imageUrl || linkData?.image || undefined,
     category: detectedCat,
     productDescription: detectedDesc,
     targetAudience: detectedAudience,
@@ -854,6 +1444,6 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
     targetPlatform: detectedPlatform,
     targetDuration: detectedDuration,
     detectedTags: finalTags,
-    detectionSummary: `Berhasil mendeteksi produk "${detectedName}"${detectedBrand ? ` (${detectedBrand})` : ''} untuk platform ${detectedPlatform} kategori ${detectedCat}.`,
+    detectionSummary: `Berhasil mendeteksi produk "${detectedName}"${detectedBrand ? ` (${detectedBrand})` : ''}${detectedPrice ? ` seharga ${detectedPrice}` : ''} untuk platform ${detectedPlatform} kategori ${detectedCat}.`,
   };
 }

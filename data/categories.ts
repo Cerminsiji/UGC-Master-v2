@@ -11,10 +11,10 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
     defaultScenes: [
       {
         cameraAngle: 'POV / Handheld',
-        visualAction: 'Kreator memegang produk dekat kamera dengan latar belakang kamar rapi, ekspresi takjub dan penasaran.',
-        popupText: 'JANGAN BELI SEBELUM LIHAT INI! 🛑',
-        soundEffect: 'Record scratch & gasp',
-        dialogVO: 'Stop scrolling! Kalian wajib tahu kenapa barang satu ini lagi viral banget di mana-mana!',
+        visualAction: 'Kreator langsung mendemonstrasikan perbandingan sebelum vs sesudah memakai produk di depan kamera dengan ekspresi takjub.',
+        popupText: 'BANDINGIN BEDANYA DALAM 10 DETIK! ✨',
+        soundEffect: 'Finger snap click & Sparkle chime',
+        dialogVO: 'Jujur awalnya aku kira produk ini cuma viral sesaat, sampai akhirnya aku tes sendiri dan lihat perubahannya!',
         notesMood: 'Gaya teks: Bold Neon Yellow. Energi tinggi, pencahayaan studio hangat.',
         duration: 2
       },
@@ -810,7 +810,7 @@ export const EXTENDED_PERSONAS: ExtendedPersonaOption[] = [
     icon: '👱‍♀️',
     badge: 'Gen Z Trendy',
     description: 'Mahasiswi / remaja aktif, gaya bicara ceria, ekspresif, bahasa gaul santai, vibes FYP TikTok.',
-    sampleGreeting: 'Guys, stop scrolling! Sumpah gue nemu racun baru yang wajib kalian checkout!'
+    sampleGreeting: 'Jujur nyesel baru tahu produk ini sekarang, pantesan temen-temen kampus pada pakai semua!'
   },
   {
     id: 'Hijaber Trendy / Muslimah Modern',
@@ -1104,7 +1104,7 @@ export const VO_TONE_PRESETS = [
   {
     name: 'Hard-Selling FOMO',
     badge: 'FOMO Hype',
-    example: 'Stop scrolling! Jangan sampai kehabisan diskon 50% ini!',
+    example: 'Mumpung stoknya baru restock dan lagi diskon gede, wajib banget diamankan hari ini!',
     style: 'Energi tinggi, tempo cepat, mendesak audiens segera checkout.'
   },
   {
