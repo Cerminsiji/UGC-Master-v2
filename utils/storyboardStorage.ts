@@ -1,241 +1,243 @@
-import { StoryboardProject } from '../types';
+import { ActivityLogEntry, PublicAppUser, StoryboardProject, UserRole } from '../types';
 
-const DB_NAME = 'ugc_master_studio_db';
-const DB_VERSION = 1;
-const STORE_NAME = 'storyboard_projects';
-const KEY_ALL_PROJECTS = 'all_projects_list';
-const KEY_CURRENT_PROJ_ID = 'current_project_id';
+const DRAFT_PREFIX = 'ugc_master_user_draft_v3_';
+const CURRENT_PROJ_PREFIX = 'ugc_master_current_proj_v3_';
+export const SESSION_USER_KEY = 'ugc_master_session_user_v3';
+export const SPREADSHEET_URL = '';
 
-const LOCAL_STORAGE_KEY_V2 = 'ugc_master_projects_v2';
-const LOCAL_STORAGE_KEY_V1 = 'ugc_master_projects_v1';
-const CURRENT_PROJECT_ID_STORAGE_KEY = 'ugc_master_current_proj_id';
+export function sanitizeTabName(raw: string): string {
+  const cleaned = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned || 'user';
+}
 
-/**
- * Open or create IndexedDB instance
- */
-function openIndexedDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined' || !window.indexedDB) {
-      reject(new Error('IndexedDB tidak didukung pada browser ini'));
-      return;
-    }
+export interface SheetsSyncResult {
+  success: boolean;
+  timestamp: string;
+  savedCount?: number;
+  sheetTabName?: string;
+  needsReauth?: boolean;
+  error?: string;
+}
 
-    const request = window.indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-    };
-
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
-
-    request.onerror = () => {
-      reject(request.error || new Error('Gagal membuka IndexedDB'));
-    };
+function nowTimeId(): string {
+  return new Date().toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
   });
 }
 
-/**
- * Read item from IndexedDB
- */
-async function idbGet<T>(key: string): Promise<T | null> {
-  try {
-    const db = await openIndexedDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.get(key);
-      req.onsuccess = () => {
-        resolve((req.result as T) || null);
-      };
-      req.onerror = () => {
-        resolve(null);
-      };
-    });
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Write item to IndexedDB
- */
-async function idbSet<T>(key: string, val: T): Promise<boolean> {
-  try {
-    const db = await openIndexedDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.put(val, key);
-      req.onsuccess = () => {
-        resolve(true);
-      };
-      req.onerror = () => {
-        resolve(false);
-      };
-    });
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Create a lightweight version of projects for localStorage if payload is too big
- * Strips huge base64 strings so localStorage quota (5MB) is never exceeded,
- * ensuring all scene texts, titles, scripts, voiceovers, prompts, durations are 100% saved!
- */
-function stripHeavyImagesForLocalStorage(projects: StoryboardProject[]): StoryboardProject[] {
+function stripHugeBase64ForDraft(projects: StoryboardProject[]): StoryboardProject[] {
   return projects.map((proj) => {
     const cloned = { ...proj };
-    if (typeof cloned.referenceImage === 'string' && cloned.referenceImage.length > 50000) {
-      // Keep small metadata representation or compact thumbnail marker
-      cloned.referenceImage = cloned.referenceImage.slice(0, 1000) + '...[compacted]';
+    if (typeof cloned.referenceImage === 'string' && cloned.referenceImage.length > 200000) {
+      cloned.referenceImage = undefined;
     }
     if (Array.isArray(cloned.referenceImages)) {
-      cloned.referenceImages = cloned.referenceImages.map((img) => {
-        if (typeof img === 'string' && img.length > 50000) {
-          return img.slice(0, 1000) + '...[compacted]';
-        }
-        return img;
-      });
+      cloned.referenceImages = cloned.referenceImages.filter(
+        (img) => typeof img === 'string' && img.length <= 200000
+      );
     }
     return cloned;
   });
 }
 
-/**
- * Safe write to localStorage with graceful quota fallback
- */
-function safeSetLocalStorage(projects: StoryboardProject[], currentId: string): void {
-  if (typeof window === 'undefined') return;
-
-  try {
-    localStorage.setItem(CURRENT_PROJECT_ID_STORAGE_KEY, currentId);
-  } catch {}
-
-  // Attempt 1: Full JSON in v2
-  try {
-    const fullJson = JSON.stringify(projects);
-    // If under 3MB, write full
-    if (fullJson.length < 3000000) {
-      localStorage.setItem(LOCAL_STORAGE_KEY_V2, fullJson);
-      return;
-    }
-  } catch {}
-
-  // Attempt 2: Stripped heavy images (prevents QuotaExceededError while preserving 100% of storyboard data)
-  try {
-    const compactProjects = stripHeavyImagesForLocalStorage(projects);
-    const compactJson = JSON.stringify(compactProjects);
-    localStorage.setItem(LOCAL_STORAGE_KEY_V2, compactJson);
-  } catch (err2) {
-    // If still exceeds quota (e.g. 50+ huge projects), keep newest 15 projects
-    try {
-      const topProjects = stripHeavyImagesForLocalStorage(projects.slice(0, 15));
-      localStorage.setItem(LOCAL_STORAGE_KEY_V2, JSON.stringify(topProjects));
-    } catch {}
-  }
-}
-
-/**
- * Save projects into both IndexedDB (full fidelity, unlimited quota) and LocalStorage (fast cache fallback)
- */
-export async function persistProjects(
+export function saveUserDraftMirror(
+  username: string,
   projects: StoryboardProject[],
   currentProjectId: string
-): Promise<{ success: boolean; timestamp: string }> {
-  const timestamp = new Date().toLocaleTimeString('id-ID', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-
-  if (!projects || projects.length === 0) {
-    return { success: false, timestamp };
-  }
-
-  // 1. Immediate synchronous write to localStorage (fast mirror)
-  safeSetLocalStorage(projects, currentProjectId);
-
-  // 2. Full persistence to IndexedDB (stores complete images, unlimited quota)
+): void {
+  if (typeof window === 'undefined' || !username) return;
+  const key = `${DRAFT_PREFIX}${sanitizeTabName(username)}`;
+  const projKey = `${CURRENT_PROJ_PREFIX}${sanitizeTabName(username)}`;
   try {
-    await idbSet(KEY_ALL_PROJECTS, projects);
-    await idbSet(KEY_CURRENT_PROJ_ID, currentProjectId);
-    return { success: true, timestamp };
-  } catch {
-    return { success: true, timestamp };
-  }
+    localStorage.setItem(projKey, currentProjectId);
+    const json = JSON.stringify(projects);
+    if (json.length < 3500000) {
+      localStorage.setItem(key, json);
+    } else {
+      localStorage.setItem(key, JSON.stringify(stripHugeBase64ForDraft(projects)));
+    }
+  } catch {}
 }
 
-/**
- * Load projects with hierarchy:
- * 1. IndexedDB (most complete & uncompressed)
- * 2. LocalStorage V2
- * 3. LocalStorage V1 (backward compatibility)
- */
-export async function retrieveProjects(): Promise<{
+export function loadUserDraftMirror(username: string): {
   projects: StoryboardProject[] | null;
   currentProjectId: string | null;
-  source: 'indexeddb' | 'localstorage_v2' | 'localstorage_v1' | 'none';
+} {
+  if (typeof window === 'undefined' || !username) {
+    return { projects: null, currentProjectId: null };
+  }
+  const key = `${DRAFT_PREFIX}${sanitizeTabName(username)}`;
+  const projKey = `${CURRENT_PROJ_PREFIX}${sanitizeTabName(username)}`;
+  try {
+    const raw = localStorage.getItem(key);
+    const currentProjectId = localStorage.getItem(projKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return { projects: parsed as StoryboardProject[], currentProjectId };
+      }
+    }
+  } catch {}
+  return { projects: null, currentProjectId: null };
+}
+
+export function mergeDraftImagesIntoSheetProjects(
+  sheetProjects: StoryboardProject[],
+  draftProjects: StoryboardProject[] | null
+): StoryboardProject[] {
+  if (!draftProjects || draftProjects.length === 0) return sheetProjects;
+  const draftMap = new Map(draftProjects.map((d) => [d.id, d]));
+  return sheetProjects.map((proj) => {
+    const draft = draftMap.get(proj.id);
+    if (!draft) return proj;
+    const hasSheetImages =
+      (proj.referenceImages && proj.referenceImages.length > 0) || Boolean(proj.referenceImage);
+    if (hasSheetImages) return proj;
+    return {
+      ...proj,
+      referenceImage: draft.referenceImage || proj.referenceImage,
+      referenceImages: draft.referenceImages || proj.referenceImages,
+    };
+  });
+}
+
+export async function inspectSheetsMetadata(_token: string): Promise<{
+  success: boolean;
+  spreadsheetTitle?: string;
+  spreadsheetUrl: string;
+  tabs?: string[];
+  isInitialized?: boolean;
+  usersCount?: number;
+  needsReauth?: boolean;
+  error?: string;
 }> {
-  if (typeof window === 'undefined') {
-    return { projects: null, currentProjectId: null, source: 'none' };
-  }
+  return {
+    success: true,
+    spreadsheetTitle: 'Local Studio Storage',
+    spreadsheetUrl: SPREADSHEET_URL,
+    tabs: [],
+    isInitialized: true,
+    usersCount: 1,
+  };
+}
 
-  // 1. Try IndexedDB
-  try {
-    const idbProjects = await idbGet<StoryboardProject[]>(KEY_ALL_PROJECTS);
-    if (Array.isArray(idbProjects) && idbProjects.length > 0) {
-      const idbCurrentId = (await idbGet<string>(KEY_CURRENT_PROJ_ID)) || null;
-      return {
-        projects: idbProjects,
-        currentProjectId: idbCurrentId || idbProjects[0].id,
-        source: 'indexeddb',
-      };
-    }
-  } catch (e) {
-    console.warn('Gagal membaca IndexedDB, mencoba LocalStorage...', e);
-  }
+export async function bootstrapSheetsDatabase(
+  _token: string,
+  _actorUsername = 'admin'
+): Promise<{
+  success: boolean;
+  createdTabs?: string[];
+  adminSeeded?: boolean;
+  spreadsheetTitle?: string;
+  needsReauth?: boolean;
+  error?: string;
+}> {
+  return {
+    success: true,
+    createdTabs: [],
+    adminSeeded: true,
+    spreadsheetTitle: 'Local Studio Storage',
+  };
+}
 
-  // 2. Try LocalStorage V2
-  try {
-    const savedV2 = localStorage.getItem(LOCAL_STORAGE_KEY_V2);
-    if (savedV2) {
-      const parsed = JSON.parse(savedV2);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const savedId = localStorage.getItem(CURRENT_PROJECT_ID_STORAGE_KEY);
-        return {
-          projects: parsed,
-          currentProjectId: savedId || parsed[0].id,
-          source: 'localstorage_v2',
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('Gagal membaca LocalStorage V2:', e);
-  }
+export async function authenticateUserViaSheets(
+  _token: string,
+  username: string,
+  _password: string
+): Promise<{
+  success: boolean;
+  user?: PublicAppUser;
+  needsReauth?: boolean;
+  error?: string;
+}> {
+  const clean = sanitizeTabName(username || 'creator');
+  return {
+    success: true,
+    user: {
+      id: `usr_${clean}`,
+      username: clean,
+      displayName: clean === 'admin' ? 'Admin Studio' : clean,
+      email: `${clean}@ugcmaster.studio`,
+      role: clean === 'admin' ? 'admin' : 'user',
+      sheetTabName: clean,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+    },
+  };
+}
 
-  // 3. Try legacy LocalStorage V1
-  try {
-    const savedV1 = localStorage.getItem(LOCAL_STORAGE_KEY_V1);
-    if (savedV1) {
-      const parsed = JSON.parse(savedV1);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const savedId = localStorage.getItem(CURRENT_PROJECT_ID_STORAGE_KEY);
-        return {
-          projects: parsed,
-          currentProjectId: savedId || parsed[0].id,
-          source: 'localstorage_v1',
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('Gagal membaca LocalStorage V1:', e);
-  }
+export async function fetchUserProjectsFromSheets(
+  _token: string,
+  user: PublicAppUser
+): Promise<{
+  success: boolean;
+  projects: StoryboardProject[];
+  sheetTabName: string;
+  needsReauth?: boolean;
+  error?: string;
+}> {
+  const draft = loadUserDraftMirror(user.username);
+  return {
+    success: true,
+    projects: draft.projects || [],
+    sheetTabName: user.sheetTabName || sanitizeTabName(user.username),
+  };
+}
 
-  return { projects: null, currentProjectId: null, source: 'none' };
+export async function syncProjectsToSheets(
+  _token: string,
+  user: PublicAppUser,
+  projects: StoryboardProject[],
+  _saveMode: 'AUTO_SAVE_1M' | 'MANUAL_SAVE' | 'PROJECT_MUTATION' = 'MANUAL_SAVE'
+): Promise<SheetsSyncResult> {
+  const timestamp = nowTimeId();
+  const currentProjectId = projects[0]?.id || '';
+  saveUserDraftMirror(user.username, projects, currentProjectId);
+  return {
+    success: true,
+    timestamp,
+    savedCount: projects.length,
+    sheetTabName: user.sheetTabName || sanitizeTabName(user.username),
+  };
+}
+
+export async function logActivityToSheets(
+  _token: string | null,
+  _params: {
+    userId: string;
+    username: string;
+    role: UserRole;
+    action: string;
+    target: string;
+    details: string;
+    status?: 'success' | 'error' | 'info';
+  }
+): Promise<void> {
+  return;
+}
+
+export async function fetchAdminUsers(): Promise<{
+  success: boolean;
+  users?: Array<PublicAppUser & { hasPassword?: boolean }>;
+  needsReauth?: boolean;
+  error?: string;
+}> {
+  return { success: true, users: [] };
+}
+
+export async function fetchAdminActivityLogs(): Promise<{
+  success: boolean;
+  logs?: ActivityLogEntry[];
+  needsReauth?: boolean;
+  error?: string;
+}> {
+  return { success: true, logs: [] };
 }

@@ -638,7 +638,8 @@ export function generateRichFallback(
   preferredCameraAngles: string[] = [],
   referenceImage: string = '',
   platform: string = 'TikTok Shop',
-  referenceImages: string[] = []
+  referenceImages: string[] = [],
+  physicsConsistencyCheck: boolean = true
 ) {
   const normCat = (category || '').toLowerCase();
   const safeName = productName || 'Produk Pilihan';
@@ -675,91 +676,91 @@ export function generateRichFallback(
     isHandsOnly,
   });
 
-  // Rich 9-step template library with dynamic Scene 1 & Google Flow AI Video prompts
+  // Rich 9-step template library with dynamic Scene 1 & Google Flow AI Video prompts grounded in physics & lighting
   const full9Scenes = [
     {
       ...dynamicScene1,
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] ${dynamicScene1.cameraAngle}, ${dynamicScene1.visualAction}, strict packaging and label consistency with reference image, dynamic 9:16 vertical video, natural warm indoor lighting, sharp focus, photorealistic 4k 60fps.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] ${dynamicScene1.cameraAngle}, ${dynamicScene1.visualAction}, strict packaging and label consistency with reference image, strict physical laws, realistic gravity and mass inertia, natural hand biomechanics without clipping, consistent directional lighting with matching cast shadows, authentic camera motion, zero morphing, photorealistic 9:16 vertical 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
-      visualAction: `Sorotan makro memperlihatkan detail masalah yang sering dialami lalu beralih mulus ke detail fisik kemasan ${safeName} persis seperti gambar referensi.`,
+      visualAction: `Sorotan makro memperlihatkan detail masalah yang sering dialami lalu beralih mulus ke detail fisik kemasan ${safeName} persis seperti gambar referensi, dengan interaksi tangan solid tanpa clipping dan bayangan jatuh konsisten di atas meja.`,
       popupText: 'SOLUSI PRAKTIS TANPA RIBET ✨',
       soundEffect: 'Dramatic swoosh & Sparkle magic ting',
       dialogVO: `Padahal kuncinya ada di kualitas dan detail dari ${safeName} yang memang dirancang buat hasil optimal.`,
-      notesMood: 'Gaya teks: Clean Modern Card. Pencahayaan kontras jernih.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro close-up slow zoom-in on the surface, texture, and physical details of ${safeName}, pristine product details matching reference image, soft diffused studio light, vertical 9:16 UGC style, 4k 60fps.`,
+      notesMood: 'Gaya teks: Clean Modern Card. Pencahayaan directional konsisten dengan bayangan tajam natural.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro close-up slow zoom-in on the surface, texture, and physical details of ${safeName}, realistic solid-body contact without clipping, unified directional light with matching cast shadows, zero morphing, vertical 9:16 UGC style, 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Medium Shot (Setengah Badan)',
-      visualAction: `Kreator tersenyum puas sambil mengangkat kemasan asli ${safeName} sejajar bahu sesuai proporsi referensi image.`,
+      visualAction: `Kreator tersenyum puas sambil mengangkat kemasan asli ${safeName} sejajar bahu dengan akselerasi dan inersia massa wajar, proporsi produk sesuai gambar referensi dan pencahayaan studio terarah serasi.`,
       popupText: `KENALIN: ${safeName.toUpperCase().slice(0, 24)} 🌟`,
       soundEffect: 'Sparkle chime & Ding',
       dialogVO: `Ini dia ${safeName}, salah satu produk andalan yang beneran ngebantu rutinitas harianku jadi jauh lebih efisien.`,
-      notesMood: 'Gaya teks: Bouncy Glow. Transisi cerah.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Medium shot of relatable creator holding up original ${safeName} product beside their face with a confident, happy smile, identical branding to reference image, bright aesthetic room backdrop, vertical 9:16, crisp mobile video quality.`,
+      notesMood: 'Gaya teks: Bouncy Glow. Transisi cerah dengan bayangan natural.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Medium shot of relatable creator holding up original ${safeName} product beside their face with authentic hand grip biomechanics, identical branding to reference image, consistent directional key light and ambient occlusion, vertical 9:16, crisp mobile video quality.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Close-up (Face / Ekspresi)',
-      visualAction: `Sorotan tajam kemasan, segel resmi, dan ciri visual khas ${safeName} dalam genggaman tangan, merefleksikan detail referensi image.`,
+      visualAction: `Sorotan tajam kemasan, segel resmi, dan ciri visual khas ${safeName} dalam genggaman lima jari yang proporsional dan realistis, merefleksikan detail referensi image dengan pantulan cahaya specular alami.`,
       popupText: 'BUILD QUALITY & DETAIL JUARA ⭐⭐⭐⭐⭐',
       soundEffect: 'Camera shutter & Pop',
       dialogVO: `Dari detail kemasan dan finishing ${safeName} aja udah kelihatan kalau produk ini digarap serius.`,
-      notesMood: 'Gaya teks: Gold Badge. Detail kemasan produk.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up product hero shot in creator's hand rotating slowly 45 degrees, showing authentic security seal and brand typography matching reference image, cinematic depth of field, 9:16 TikTok UGC style.`,
+      notesMood: 'Gaya teks: Gold Badge. Detail kemasan produk dengan tekstur tajam tanpa distorsi.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up product hero shot in creator's hand rotating slowly 45 degrees, anatomically correct 5 fingers holding object with realistic mass inertia, official seal and typography matching reference image, cinematic depth of field, 9:16 TikTok UGC style.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'POV / Handheld (First-Person)',
-      visualAction: `Demonstrasi langsung menggunakan atau mengaplikasikan ${safeName} secara rapi dengan warna konsisten terhadap referensi image.`,
+      visualAction: `Demonstrasi langsung menggunakan atau mengaplikasikan ${safeName} secara rapi dengan viskositas/gesekan fisik nyata, warna konsisten terhadap referensi image, dan micro-jitter kamera handheld yang realistis.`,
       popupText: ' NYAMAN & LANGSUNG TERASA 🌿',
       soundEffect: 'ASMR Crisp & Smooth Whoosh',
       dialogVO: `Cara pakainya praktis banget, nyaman digunakan, dan langsung kerasa bedanya sejak pemakaian pertama.`,
-      notesMood: 'Gaya teks: Minimalist Subtitle. Lighting jernih.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Handheld POV demonstration of using ${safeName}, smooth authentic interaction, clean aesthetic setup, visual colors and consistency matching reference image, 4k 60fps vertical 9:16.`,
+      notesMood: 'Gaya teks: Minimalist Subtitle. Lighting jernih searah.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Handheld POV demonstration of using ${safeName}, authentic physical contact and natural fluid mechanics, clean aesthetic setup, visual colors and consistency matching reference image, real camera inertia, 4k 60fps vertical 9:16.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Side Profile 45° (Angle Samping)',
-      visualAction: `Aksi pemakaian ${safeName} dengan gestur santai dan ekspresi menikmati manfaatnya, memperlihatkan produk secara natural.`,
+      visualAction: `Aksi pemakaian ${safeName} dengan gestur santai dan ekspresi menikmati manfaatnya, memperlihatkan produk secara natural dengan bayangan jatuh realistis dari sumber cahaya jendela samping.`,
       popupText: `${safeUSP.toUpperCase().slice(0, 30)} ⚡`,
       soundEffect: 'Ting sparkle',
       dialogVO: `Keunggulan utamanya: ${safeUSP}. Jadi beneran terbukti bekerja sesuai fungsinya.`,
-      notesMood: 'Gaya teks: Clean bullet points. Natural smile.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] 45-degree side profile angle, creator actively using ${safeName} with effortless natural gestures, relaxed confidence, reference image product clearly visible, natural daylight, photorealistic UGC video.`,
+      notesMood: 'Gaya teks: Clean bullet points. Natural smile & directional light.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] 45-degree side profile angle, creator actively using ${safeName} with effortless human biomechanics and realistic deceleration, reference image product clearly visible, natural directional daylight, photorealistic UGC video.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Front Camera / Selfie Mode (Curhat Langsung)',
-      visualAction: `Reaksi wajah puas melihat hasil nyata dari ${safeName}, sambil menunjukkan produk ke arah kamera.`,
+      visualAction: `Reaksi wajah puas melihat hasil nyata dari ${safeName}, sambil menunjukkan produk ke arah kamera dengan kontak fisik telapak tangan mantap dan pencahayaan wajah searah yang lembut.`,
       popupText: 'HASILNYA SESUAI EKSPEKTASI! 😍',
       soundEffect: 'Cheer & Success chime',
       dialogVO: `Setelah rutin pakai, hasilnya bener-bener memuaskan dan bikin aktivitas sehari-hari makin percaya diri.`,
-      notesMood: 'Gaya teks: Heart pop emoji. Warm studio tone.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Front selfie camera perspective, creator smiling broadly admiring noticeable real results from ${safeName}, holding product close to camera, packaging details match reference image, glowing warm ambiance.`,
+      notesMood: 'Gaya teks: Heart pop emoji. Warm studio tone dengan bayangan realistis.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Front selfie camera perspective, creator smiling broadly admiring noticeable real results from ${safeName}, holding product close to camera with solid hand contact, packaging details match reference image, unified warm key lighting, zero morphing.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Over the Shoulder (OTS)',
-      visualAction: `Kreator memegang ${safeName} dengan gestur jempol mantap dan produk tampak jelas menghadap kamera.`,
+      visualAction: `Kreator memegang ${safeName} dengan gestur jempol mantap dan produk tampak jelas menghadap kamera, menapak stabil di tangan tanpa efek melayang atau tembus jari.`,
       popupText: 'REKOMENDASI 10/10 WORTH IT! 💯',
       soundEffect: 'Cha-ching cash register',
       dialogVO: `Buat kalian yang lagi cari ${safeName} berkualitas, menurutku ini pilihan yang paling layak dicoba.`,
-      notesMood: 'Gaya teks: Green verified badge.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Over-the-shoulder perspective, creator giving an enthusiastic thumbs-up while displaying ${safeName} bottle/package to camera, accurate label colors adhering to reference image.`,
+      notesMood: 'Gaya teks: Green verified badge. Pencahayaan konsisten.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Over-the-shoulder perspective, creator giving an enthusiastic thumbs-up while displaying ${safeName} bottle/package to camera, anatomically accurate fingers, accurate label colors adhering to reference image, consistent directional lighting.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Low Angle (Hero / Powerful)',
-      visualAction: `Kreator tersenyum antusias menunjuk ke pojok kiri bawah layar ke arah ${cartName} sambil memegang ${safeName}.`,
+      visualAction: `Kreator tersenyum antusias menunjuk ke pojok kiri bawah layar ke arah ${cartName} sambil memegang kemasan ${safeName} secara stabil melawan gravitasi dengan bayangan jatuh serasi.`,
       popupText: cartPopupText,
       soundEffect: 'Bell ring & Cha-ching',
       dialogVO: `Mumpung ${safeName} lagi ada voucher promo dan gratis ongkir, langsung cek di ${cartName} sekarang ya!`,
       notesMood: `Gaya teks: Pulsing CTA Button. Urgent offer menunjuk ${cartName}.`,
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Low-angle dynamic hero shot, creator smiling invitingly and pointing down toward ${cartIconPrompt} while holding ${safeName}, packaging prominently featured, vibrant lighting, vertical 9:16 UGC video.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Low-angle dynamic hero shot, creator smiling invitingly and pointing down toward ${cartIconPrompt} while holding ${safeName}, natural arm biomechanics, packaging prominently featured, directional key light with matching cast shadows, vertical 9:16 UGC video.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ];
@@ -767,87 +768,87 @@ export function generateRichFallback(
   const handsOnly9Scenes = [
     {
       ...dynamicScene1,
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Faceless UGC ${dynamicScene1.cameraAngle}, neat hands on aesthetic desk, ${dynamicScene1.visualAction}, reference image packaging match, 9:16 smartphone video, crisp soft shadows, 4k 60fps.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Faceless UGC ${dynamicScene1.cameraAngle}, neat hands on aesthetic desk, ${dynamicScene1.visualAction}, reference image packaging match, strict physical laws, realistic gravity and mass inertia, natural hand biomechanics without clipping, consistent directional lighting with matching cast shadows, 9:16 smartphone video, crisp soft shadows, 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Top-Down Hands-Only (Tangan di Atas Meja)',
-      visualAction: `Sudut kamera 90° tegak lurus ke meja. Tangan talent membuka segel box dan mengeluarkan kemasan fisik ${safeName} secara rapi dan satisfying mengikuti referensi image.`,
+      visualAction: `Sudut kamera 90° tegak lurus ke meja. Dua tangan talent dengan 5 jari proporsional membuka segel box dan mengeluarkan kemasan fisik ${safeName} dengan gesekan fisik dan inersia nyata di atas permukaan kayu, bayangan jatuh konsisten ke arah bawah.`,
       popupText: `FIRST LOOK: ${safeName.toUpperCase().slice(0, 22)} ✨`,
       soundEffect: 'ASMR Paper unwrap & Chime',
       dialogVO: `Begitu dikeluarkan dari box, detail kemasannya rapi dan berkelas banget.`,
-      notesMood: 'Gaya teks: Clean Bouncy. Flat lay meja bersih.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Flat lay 90-degree overhead top-down shot, hands smoothly sliding ${safeName} physical product out of retail box, aesthetic minimal backdrop, lighting highlights pristine finish matching reference image, vertical 9:16.`,
+      notesMood: 'Gaya teks: Clean Bouncy. Flat lay meja bersih dengan pencahayaan overhead terarah.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Flat lay 90-degree overhead top-down shot, realistic human hands smoothly sliding ${safeName} physical product out of retail box, authentic tactile friction and gravity, aesthetic minimal backdrop, lighting highlights pristine finish matching reference image, vertical 9:16.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
-      visualAction: `Close-up super makro. Jari-jemari tangan memutar kemasan ${safeName}, memperlihatkan segel resmi, detail aplikator, dan label original sesuai gambar referensi.`,
+      visualAction: `Close-up super makro. Jari-jemari tangan memutar kemasan ${safeName} dengan kontak fisik padat tanpa tembus/clipping, memperlihatkan segel resmi, detail aplikator, dan label original sesuai gambar referensi di bawah pencahayaan directional tajam.`,
       popupText: 'DETAIL KEMASAN 100% ORI 🔍',
       soundEffect: 'Camera shutter click',
       dialogVO: `Perhatikan detail segel dan ciri kemasannya, presisi dan kualitas bahannya kokoh.`,
-      notesMood: 'Gaya teks: Gold Badge. Pencahayaan makro tajam.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro slow 360-spin in hands, fingers turning ${safeName} to display official barcode and holographic seal, razor-sharp focus on brand font matching reference image, clean 4k 60fps.`,
+      notesMood: 'Gaya teks: Gold Badge. Pencahayaan makro tajam dengan bayangan mikro konsisten.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Extreme macro slow 360-spin in hands, anatomically correct fingers turning ${safeName} to display official barcode and holographic seal, razor-sharp focus on brand font matching reference image, solid body contact, clean 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hand Swatch & Application (Tangan Mengoles Produk)',
-      visualAction: `Tangan talent mengaplikasikan atau mendemonstrasikan tekstur ${safeName} langsung di punggung tangan atau permukaan uji secara satisfying.`,
+      visualAction: `Tangan talent mengaplikasikan tekstur ${safeName} langsung di punggung tangan dengan kontak kulit realistis, viskositas cairan/krim alami yang mematuhi hukum fisika tanpa distorsi tekstur.`,
       popupText: 'TEKSTUR & PERFORMA NYATA 🌿',
       soundEffect: 'ASMR Crisp Glide & Swirl',
       dialogVO: `Pas dicoba langsung di tangan, teksturnya nyaman, mudah merata, dan tidak lengket sama sekali.`,
-      notesMood: 'Gaya teks: Glassmorphism Tag. Fokus gerakan jari.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands-only application, finger smoothly demonstrating ${safeName} across back of hand, satisfying ASMR motion, lighting reveals true product finish, 9:16 vertical.`,
+      notesMood: 'Gaya teks: Glassmorphism Tag. Fokus gerakan jari alami & pencahayaan lembut.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands-only application, finger smoothly demonstrating ${safeName} across back of hand, realistic fluid dynamics and skin friction, satisfying ASMR motion, lighting reveals true product finish, 9:16 vertical.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hands-Only / Tangan Saja (Faceless / Tanpa Wajah)',
-      visualAction: `Kedua tangan memperagakan cara pemakaian praktis ${safeName}, mendemonstrasikan keunggulan ${safeUSP}.`,
+      visualAction: `Kedua tangan memperagakan cara pemakaian praktis ${safeName} dengan biomekanik alami dan inersia massa nyata, mendemonstrasikan keunggulan ${safeUSP}.`,
       popupText: `${safeUSP.toUpperCase().slice(0, 30)} ⚡`,
       soundEffect: 'Sparkle Ding',
       dialogVO: `Tinggal digunakan secukupnya, keunggulannya langsung terasa sejak percobaan pertama.`,
-      notesMood: 'Gaya teks: Bullet point checklist. Aksi tangan jelas.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Hands demonstrating practical use of ${safeName}, elegant hand movement, steady camera angle, product front label always oriented towards camera matching reference image, 4k 60fps.`,
+      notesMood: 'Gaya teks: Bullet point checklist. Aksi tangan jelas tanpa glitch.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Hands demonstrating practical use of ${safeName}, elegant human hand movement with realistic mass inertia, steady camera angle, product front label always oriented towards camera matching reference image, 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'POV Hands-Only (Hanya Tangan & Produk)',
-      visualAction: `Tangan kanan memegang produk ${safeName}, tangan kiri memberikan gestur jempol puas di depan meja estetik.`,
+      visualAction: `Tangan kanan memegang produk ${safeName} dengan grip kokoh alami, tangan kiri memberikan gestur jempol puas di depan meja estetik dengan bayangan objek jatuh serasi ke sisi kanan.`,
       popupText: 'RATING: 9.8/10 RECOMMENDED! ⭐',
       soundEffect: 'Success bell & Cha-ching',
       dialogVO: `Dari segi performa dan kualitas fisik, ini beneran melebihi ekspektasi di kelas harganya.`,
-      notesMood: 'Gaya teks: Star Rating Badge. Gestur tangan puas.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] POV shot with right hand presenting ${safeName} bottle and left hand giving satisfied thumbs-up gesture, clean cozy aesthetic desk, packaging color accuracy locked to reference image, 9:16 vertical.`,
+      notesMood: 'Gaya teks: Star Rating Badge. Gestur tangan puas dan bayangan realistis.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] POV shot with right hand presenting ${safeName} bottle and left hand giving satisfied thumbs-up gesture, clean cozy aesthetic desk, packaging color accuracy locked to reference image, natural directional lighting with cast shadows, 9:16 vertical.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Top-Down Hands-Only (Tangan di Atas Meja)',
-      visualAction: `Tangan talent menata produk ${safeName} dengan rapi di atas meja di sebelah properti minimalis.`,
+      visualAction: `Tangan talent menaruh produk ${safeName} secara presisi di atas meja linen dengan sentuhan fisik nyata dan suara kontak pelan, di sebelah properti minimalis dengan bayangan lembut yang seragam.`,
       popupText: 'PRAKTIS & ESTETIK 💯',
       soundEffect: 'Soft pop & Chime',
       dialogVO: `Bentuknya juga ringkas, gampang disimpan atau dibawa bepergian ke mana saja.`,
-      notesMood: 'Gaya teks: Verified badge.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Top-down flat lay view, hands placing ${safeName} gently next to aesthetic props on linen table, studio grade softbox lighting, brand label facing up matching reference image.`,
+      notesMood: 'Gaya teks: Verified badge. Pencahayaan softbox terarah.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Top-down flat lay view, hands placing ${safeName} gently next to aesthetic props on linen table, solid object contact with table surface, studio grade softbox lighting with matching cast shadows, brand label facing up matching reference image.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hand Swatch & Application (Tangan Mengoles Produk)',
-      visualAction: `Tangan mengetuk ringan kemasan produk (ASMR Tapping) lalu memperlihatkan kondisi produk yang bersih dan higienis.`,
+      visualAction: `Tangan mengetuk ringan kemasan produk (ASMR Tapping) dengan kontak ujung kuku yang tegas lalu memperlihatkan kondisi produk yang bersih dan higienis tanpa goresan tekstur aneh.`,
       popupText: 'HIGIENIS & AWET DIPAKAI 🎧',
       soundEffect: 'Crisp ASMR Tapping',
       dialogVO: `Kemasannya aman, anti tumpah, dan isinya awet untuk pemakaian rutin.`,
-      notesMood: 'Gaya teks: Floating glow text.',
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands gently finger-tapping on ${safeName} packaging with crisp satisfying movement, pristine product condition adhering to reference image, hyperrealistic 4k.`,
+      notesMood: 'Gaya teks: Floating glow text. Gerakan stabil.',
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Close-up hands gently finger-tapping on ${safeName} packaging with crisp satisfying realistic physics, pristine product condition adhering to reference image, consistent studio light, hyperrealistic 4k.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
       cameraAngle: 'Hands-Only / Tangan Saja (Faceless / Tanpa Wajah)',
-      visualAction: `Tangan talent memegang produk ${safeName} dan jari telunjuk menunjuk langsung ke pojok kiri bawah layar ke arah ikon ${cartName}.`,
+      visualAction: `Tangan talent memegang produk ${safeName} dengan stabil melawan gravitasi dan jari telunjuk menunjuk langsung ke pojok kiri bawah layar ke arah ikon ${cartName} dengan gerakan tangan yang mantap dan bayangan jatuh realistis.`,
       popupText: cartPopupText,
       soundEffect: 'Cash register cha-ching & Bell',
       dialogVO: `Mumpung lagi ada diskon dan gratis ongkir, langsung checkout di ${cartName} sekarang ya!`,
       notesMood: `Gaya teks: Pulsing CTA Button. Tangan menunjuk ${cartName}.`,
-      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Dynamic closing shot, hands holding ${safeName} with index finger pointing directly towards bottom-left corner where ${cartIconPrompt} is located, product branding in crystal clear focus matching reference image, 9:16 vertical UGC video.`,
+      googleFlowPrompt: `[Image 1 Reference: ${safeName}] Dynamic closing shot, hands holding ${safeName} with index finger pointing directly towards bottom-left corner where ${cartIconPrompt} is located, realistic arm biomechanics, product branding in crystal clear focus matching reference image, 9:16 vertical UGC video.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ];
@@ -910,6 +911,10 @@ export function generateRichFallback(
   const baseDur = Math.max(1, Math.floor(dur / selectedBase.length));
   let remainingTime = dur - (baseDur * selectedBase.length);
 
+  const physicsTokens = physicsConsistencyCheck
+    ? 'strict physical laws, realistic mass inertia, biomechanical constraint adherence, real gravity and solid-contact mechanics without clipping, consistent directional lighting with matching cast shadows, natural handheld camera motion, zero floaty artifacts, zero morphing, photorealistic 9:16 vertical 4k 60fps'
+    : 'natural product showcase, consistent lighting, photorealistic 9:16 vertical 4k 60fps';
+
   const scenes = selectedBase.map((sc, i) => {
     let sceneDuration = baseDur;
     if (i === selectedBase.length - 1 && remainingTime > 0) {
@@ -940,13 +945,19 @@ export function generateRichFallback(
 
     let flowPrompt = sc.googleFlowPrompt || '';
     if (!flowPrompt) {
-      flowPrompt = `${refTag} Scene ${i + 1} (${angle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow reference image #${refIndexForScene}, 9:16 vertical, 4k 60fps.`;
+      flowPrompt = `${refTag} Scene ${i + 1} (${angle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - ${physicsTokens}.`;
     } else {
       if (refCount > 1) {
         flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
       }
       if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
         flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+      }
+      if (
+        physicsConsistencyCheck &&
+        (!/realistic mass inertia/i.test(flowPrompt) || !/biomechanical constraint adherence/i.test(flowPrompt))
+      ) {
+        flowPrompt = `${flowPrompt}, ${physicsTokens}`;
       }
     }
 

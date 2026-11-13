@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Sparkles,
   Download,
   FolderOpen,
   Plus,
@@ -14,9 +13,12 @@ import {
   Flame,
   Zap,
   Lock,
-  ShieldCheck
+  ShieldCheck,
+  Shield,
+  ExternalLink,
+  User as UserIcon,
 } from 'lucide-react';
-import { StoryboardViewMode, Scene } from '../types';
+import { StoryboardViewMode, Scene, PublicAppUser } from '../types';
 import { formatDuration } from '../utils/helpers';
 
 interface HeaderProps {
@@ -35,9 +37,15 @@ interface HeaderProps {
   onCopyJSON?: () => void;
   isJsonCopied?: boolean;
   onLogout?: () => void;
-  saveStatus?: 'saved' | 'saving' | 'error';
+  saveStatus?: 'saved' | 'saving' | 'error' | 'pending';
   lastSavedTime?: string | null;
   onManualSave?: () => void;
+  currentUser?: PublicAppUser | null;
+  googleConnected?: boolean;
+  onConnectGoogle?: () => void;
+  onOpenAdminDashboard?: () => void;
+  autoSaveEnabled?: boolean;
+  autoSaveCountdown?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -59,6 +67,12 @@ export const Header: React.FC<HeaderProps> = ({
   saveStatus = 'saved',
   lastSavedTime,
   onManualSave,
+  currentUser,
+  googleConnected = false,
+  onConnectGoogle,
+  onOpenAdminDashboard,
+  autoSaveEnabled = false,
+  autoSaveCountdown = 60,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState(title);
@@ -195,7 +209,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Right: Tools & Primary Actions */}
         <div className="flex items-center flex-wrap gap-2 justify-end">
           
-          {/* Duration Counter Pill */}
+          {/* Duration Counter */}
           <div
             className="flex items-center gap-1.5 bg-[#101726] border border-[#1e2a42] rounded-xl px-2.5 py-1 text-xs"
             title="Total durasi semua adegan"
@@ -203,44 +217,55 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
               Total:
             </span>
-            <span className="font-mono font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-1.5 py-0.5 rounded text-xs">
+            <span className="font-mono font-bold tabular-nums text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-1.5 py-0.5 rounded text-xs">
               {formatDuration(totalDuration)}
             </span>
           </div>
 
-          {/* Auto-Save & Manual Save Status Badge */}
+          {/* Local Auto-Save Status */}
           <button
             onClick={onManualSave}
             type="button"
-            className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs transition-all border active:scale-95 ${
+            className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs transition-all border active:scale-95 cursor-pointer ${
               saveStatus === 'saving'
                 ? 'bg-amber-950/50 border-amber-500/50 text-amber-300'
                 : saveStatus === 'error'
                 ? 'bg-rose-950/50 border-rose-500/50 text-rose-300'
+                : saveStatus === 'pending'
+                ? 'bg-sky-950/50 border-sky-500/40 text-sky-300'
                 : 'bg-emerald-950/40 hover:bg-emerald-900/40 border-emerald-500/40 text-emerald-300'
             }`}
-            title="Status penyimpanan otomatis browser (IndexedDB & LocalStorage). Klik untuk simpan naskah sekarang."
+            title="Simpan naskah storyboard ke memori lokal browser sekarang"
           >
-            {saveStatus === 'saving' ? (
-              <>
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                <span className="text-[11px] font-semibold">Menyimpan...</span>
-              </>
-            ) : saveStatus === 'error' ? (
-              <>
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
-                <span className="text-[11px] font-semibold">Gagal Simpan</span>
-              </>
-            ) : (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span className="text-[11px] font-semibold hidden sm:inline">
-                  {lastSavedTime ? `Tersimpan ${lastSavedTime}` : 'Tersimpan Otomatis'}
-                </span>
-                <span className="text-[11px] font-semibold sm:hidden">Tersimpan</span>
-              </>
-            )}
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="text-[11px] font-semibold font-mono tabular-nums whitespace-nowrap hidden sm:inline">
+              {lastSavedTime ? `Tersimpan ${lastSavedTime}` : 'Auto-Save Lokal'}
+            </span>
           </button>
+
+          {/* Active User Indicator */}
+          {currentUser && (
+            <div
+              className="hidden md:flex items-center gap-1.5 bg-[#101726] border border-[#1e2a42] rounded-xl px-2.5 py-1 text-[11px] text-slate-300"
+              title={`Login sebagai ${currentUser.displayName} (DB: ${currentUser.sheetTabName})`}
+            >
+              <UserIcon className="w-3 h-3 text-purple-400 shrink-0" />
+              <span className="font-mono font-semibold text-white">@{currentUser.username}</span>
+            </div>
+          )}
+
+          {/* Admin Dashboard Trigger */}
+          {currentUser?.role === 'admin' && onOpenAdminDashboard && (
+            <button
+              type="button"
+              onClick={onOpenAdminDashboard}
+              className="flex items-center gap-1.5 bg-purple-950/70 hover:bg-purple-900/70 text-purple-200 border border-purple-500/40 text-xs font-bold px-2.5 py-1.5 rounded-xl transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+              title="Buka Dashboard Admin (Monitor Aktivitas & CRUD User)"
+            >
+              <Shield className="w-3.5 h-3.5 text-purple-300" />
+              <span>Admin</span>
+            </button>
+          )}
 
           {/* Quick Viral Hooks */}
           <button
@@ -332,7 +357,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onLogout}
               className="p-1.5 rounded-xl bg-[#121927] hover:bg-red-950/40 text-slate-400 hover:text-red-300 border border-[#222e47] hover:border-red-800/40 transition-all active:scale-95"
-              title="Kunci Studio"
+              title="Keluar & Kunci Studio"
             >
               <Lock className="w-3.5 h-3.5" />
             </button>

@@ -28,6 +28,7 @@ import {
   Upload,
   Plus,
   Trash2,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   UGC_CATEGORIES,
@@ -98,6 +99,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   const [targetSceneCount, setTargetSceneCount] = useState<number>(0); // 0 = Auto, or 3-9
   const [targetPlatform, setTargetPlatform] = useState('TikTok Shop');
   const [language, setLanguage] = useState<'id' | 'en'>('id');
+  const [physicsConsistencyCheck, setPhysicsConsistencyCheck] = useState<boolean>(true);
 
   const [prevCategoryName, setPrevCategoryName] = useState(currentCategoryName);
   if (prevCategoryName !== currentCategoryName) {
@@ -375,6 +377,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
           targetSceneCount: targetSceneCount > 0 ? targetSceneCount : undefined,
           targetPlatform: detected.targetPlatform || targetPlatform,
           language,
+          physicsConsistencyCheck,
         });
         onClose();
       }
@@ -430,6 +433,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       targetSceneCount: targetSceneCount > 0 ? targetSceneCount : undefined,
       targetPlatform,
       language,
+      physicsConsistencyCheck,
     });
     onClose();
   };
@@ -1302,6 +1306,51 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                   ))}
                 </div>
               </div>
+            </div>
+
+            {/* Physics Consistency Check Toggle Module */}
+            <div className="rounded-xl border border-[#23304d] bg-[#101625] p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <div className={`mt-0.5 p-1.5 rounded-lg border ${
+                  physicsConsistencyCheck
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                    : 'bg-slate-800 border-slate-700 text-slate-400'
+                }`}>
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-200">
+                      Physics Consistency Check (Anti-Floaty AI Motion)
+                    </span>
+                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                      physicsConsistencyCheck
+                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                        : 'bg-slate-800 border-slate-700 text-slate-400'
+                    }`}>
+                      {physicsConsistencyCheck ? 'AKTIF' : 'NONAKTIF'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                    Memaksa setiap prompt visual &amp; Google Flow menyertakan mandat{' '}
+                    <code className="text-emerald-300">realistic mass inertia</code> dan{' '}
+                    <code className="text-emerald-300">biomechanical constraint adherence</code>, kontak solid tanpa clipping, serta pencahayaan arah tunggal konsisten agar gerak objek tidak tampak melayang (&quot;floaty&quot;) di detektor AI.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={physicsConsistencyCheck}
+                onClick={() => setPhysicsConsistencyCheck((prev) => !prev)}
+                className={`shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  physicsConsistencyCheck
+                    ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-300 hover:bg-emerald-600/30'
+                    : 'bg-[#141b2b] border-[#23304d] text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {physicsConsistencyCheck ? 'Aktif • Kunci Fisika' : 'Aktifkan Fisika'}
+              </button>
             </div>
 
             {/* Bottom Submit Action */}

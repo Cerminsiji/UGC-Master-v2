@@ -28,7 +28,9 @@ async function handleGenerateStoryboardRequest(body: any) {
       targetDuration = 30,
       targetSceneCount = 0,
       language = 'id',
+      physicsConsistencyCheck = true,
     } = body || {};
+    const enforcePhysicsCheck = physicsConsistencyCheck !== false;
 
     const allReferenceImages: string[] = Array.isArray(rawReferenceImages) && rawReferenceImages.length > 0
       ? rawReferenceImages.filter(Boolean)
@@ -112,6 +114,24 @@ Sesuaikan sudut kamera di setiap adegan dengan gaya ini secara sinematik vertika
 - Floating / Pop-up Text (popupText): "KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇"
 - Narasi Aksi Visual (visualAction): Talent menunjuk ke arah keranjang di bawah.`);
 
+    const physicalLawsAndLightingMandate = enforcePhysicsCheck
+      ? `
+=== PHYSICS CONSISTENCY CHECK MODULE (ANTI-FLOATY MOTION & AUTHENTIC PHYSICS ENFORCEMENT) ===
+Semua deskripsi visualAction dan googleFlowPrompt WAJIB lolos "Physics Consistency Check" guna mencegah artefak gerakan melayang (floaty/zero-G motion) yang memicu detektor AI:
+1. REALISTIC MASS INERTIA (INERSIA MASSA & GRAVITASI NYATA):
+   - Produk "${productName}" memiliki bobot, inersia, dan momentum fisik nyata (realistic mass inertia). Benda padat tidak pernah melayang, berhenti mendadak tanpa gaya, atau bergerak tanpa gravitasi.
+   - Setiap perpindahan produk (diangkat, diletakkan di meja, digoyang) harus menampakkan akselerasi dan deselerasi wajar sesuai massa benda.
+2. BIOMECHANICAL CONSTRAINT ADHERENCE (KEPATUHAN BATAS BIOMEKANIK MANUSIA):
+   - Tangan, pergelangan, siku, dan 5 jari talent WAJIB tunduk pada batas sendi anatomis nyata (biomechanical constraint adherence): sudut tekuk sendi wajar, genggaman dengan ketegangan otot & tekanan permukaan alami, tanpa jari berlebih atau sendi patah/melentur mustahil.
+   - Solid Contact Mechanics (Anti-Clipping): Jari dan permukaan produk saling bersentuhan padat tanpa tembus/clipping atau ruang kosong mengambang.
+   - Zero-Morphing: Bentuk fisik produk, label, dan anatomi tangan tetap kaku dan konsisten di setiap frame gerakan.
+3. PENCAHAYAAN KONSISTEN (CONSISTENT DIRECTIONAL LIGHTING & CAST SHADOWS):
+   - Sumber cahaya arah tunggal terpadu (misal: cahaya jendela 45° atau softbox utama) dengan bayangan kontak (cast shadows) dan ambient occlusion yang sejajar serta refleksi specular konsisten.
+   - WAJIB sertakan frasa eksplisit "realistic mass inertia" dan "biomechanical constraint adherence" di dalam setiap googleFlowPrompt!`
+      : `
+=== PANDUAN VISUAL STANDAR ===
+Jaga agar setiap adegan visualAction dan googleFlowPrompt tetap konsisten dengan pencahayaan produk, komposisi rapi, dan referensi gambar produk.`;
+
     const googleFlowReferenceInstruction = `
 === ATURAN MUTLAK KEPATUHAN MULTI-REFERENSI IMAGE PADA STORYBOARD & GOOGLE FLOW VIDEO UGC ===
 Format ini WAJIB kompatibel dengan pipeline Google Flow Video UGC (Image-to-Video & Multi-Image Ingredients Workflow).
@@ -122,7 +142,7 @@ SETIAP ADEGAN WAJIB:
 1. Selalu mengikuti referensi image (Product & Character Consistency): Bentuk kemasan, warna brand, proporsi kemasan, detail label, tekstur produk, dan lighting harus selalu konsisten dengan referensi image produk di atas tanpa distorsi visual.
 2. Menghasilkan 'googleFlowPrompt' (Prompt video AI untuk Google Flow / Veo / Runway / Kling):
    Format prompt Google Flow:
-   "[Image 1 Reference: ${productName}] {Shot Type & Camera Motion} - {Subject Action & Talent Expression} - {Product Physical Interaction} - {Lighting & Background Environment} - {On-Screen Pop-up Text Overlay: popupText} - {Aesthetic Style: Photorealistic 9:16 vertical smartphone UGC video, raw camera sensor texture, crisp focus, 4K 60fps, no morphing, no artifacts}"
+   "[Image 1 Reference: ${productName}] {Shot Type & Camera Motion: natural handheld camera with physical inertia} - {Subject Action & Talent Expression: authentic human biomechanics, realistic motion speed} - {Product Physical Interaction: solid contact physics, no clipping, real weight & gravity} - {Lighting & Environment: single unified directional lighting, natural cast shadows & ambient occlusion, consistent color temperature} - {On-Screen Pop-up Text Overlay: popupText} - {Aesthetic Style: Photorealistic 9:16 vertical smartphone UGC video, authentic real-world physics, raw sensor texture, crisp focus, 4K 60fps, no morphing, zero visual artifacts}"
 3. Menghasilkan 'imageReferenceNote':
    Wajib persis bernilai: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"
    Agar setiap adegan selalu mengunci konsistensi gambar referensi produk di pipeline Google Flow tanpa kesalahan.
@@ -139,6 +159,7 @@ Buatkan storyboard UGC video lengkap yang kaya riset produk, variatif, tidak mon
 
 ${productBrief}
 ${rdHookInstruction}
+${physicalLawsAndLightingMandate}
 ${googleFlowReferenceInstruction}
 ${handsOnlyInstruction}
 ${platformCtaRule}
@@ -156,15 +177,16 @@ Bahasa: ${language === 'id' ? 'Bahasa Indonesia (Gaya bicara kreator UGC natural
 Syarat Wajib Format Storyboard:
 1. Adegan 1 WAJIB menerapkan strategi R&D Hook "${chosenHookArchetype.name}" (${chosenHookArchetype.promptDirective}). JANGAN gunakan kata "Stop scrolling", "Jangan skip dulu", dan DILARANG KERAS menggunakan format "3 alasan" atau listicle berhitung angka di Adegan 1!
 2. Adegan berikutnya membedah masalah spesifik, demonstrasi pemakaian nyata, tekstur/fitur fisik produk, dan bukti hasil secara dinamis.
-3. Adegan terakhir WAJIB Call To Action (CTA) yang jelas dan mendesak: ${isShopee ? 'checkout di keranjang oren (BUKAN keranjang kuning!) atau gunakan kalimat global "klik keranjang di bawah"' : (isTikTok ? 'checkout di keranjang kuning atau klik keranjang di bawah' : 'checkout lewat keranjang di bawah')} mumpung promo diskon & gratis ongkir.
-4. Sudut kamera (cameraAngle) di setiap adegan WAJIB disesuaikan dengan instruksi sudut kamera di atas.
-5. Berikan Sound Effect (SFX) yang KAYA, BERVARIASI, dan SPESIFIK di setiap adegan (kombinasi ASMR nyata, foley produk, swoosh, camera shutter, ding, water swirl, cash register). DILARANG menggunakan SFX yang sama berulang-ulang di tiap adegan.
-6. Naskah Voiceover (VO) harus BERVARIASI SECARA EMOSIONAL dan intonasi alami: mengalir seperti kreator sungguhan yang benar-benar memakai produknya.
-7. Pop-up Text (popupText) WAJIB SELALU TERISI di setiap adegan berupa huruf kapital mencolok & singkat, dan sinkron dengan overlay pada prompt Google Flow.
-8. Durasi setiap adegan (dalam integer detik) jika dijumlahkan WAJIB bernilai total mendekati ${targetDuration} detik. Jika durasi pendek (${targetDuration}s) dan adegan banyak (hingga 9 adegan), gunakan durasi fast-cut 1-2 detik per adegan.
-9. BUATKAN AUTO CAPTION DENGAN HASHTAG: Tulis 1 caption postingan media sosial yang menarik dan menjual (sesuaikan CTA: ${isShopee ? 'keranjang oren / klik keranjang di bawah' : (isTikTok ? 'keranjang kuning / klik keranjang di bawah' : 'klik keranjang di bawah')}), LENGKAP dengan 2-4 hashtag trending (${isShopee ? '#ShopeeVideo #ShopeeHaul' : '#TikTokShop #fyp'}).
-   PENTING: TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG HARUS MAKSIMAL 150 KARAKTER!
-10. SETIAP ADEGAN WAJIB menyertakan googleFlowPrompt (mengacu ketat ke referensi image [Image 1 Reference: ProductName] serta On-Screen Pop-up Text Overlay) dan imageReferenceNote bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"! Bebas dari segala typo.`;
+3. ${enforcePhysicsCheck ? 'PHYSICS CONSISTENCY CHECK WAJIB AKTIF: Semua aksi visual (visualAction) dan googleFlowPrompt WAJIB menyertakan dan mematuhi "realistic mass inertia", "biomechanical constraint adherence", kontak solid tanpa tembus, pencahayaan arah tunggal konsisten dengan bayangan jatuh nyata, serta ZERO floaty motion / morphing!' : 'Pastikan visualAction dan googleFlowPrompt mendeskripsikan adegan produk dengan pencahayaan natural dan jelas.'}
+4. Adegan terakhir WAJIB Call To Action (CTA) yang jelas dan mendesak: ${isShopee ? 'checkout di keranjang oren (BUKAN keranjang kuning!) atau gunakan kalimat global "klik keranjang di bawah"' : (isTikTok ? 'checkout di keranjang kuning atau klik keranjang di bawah' : 'checkout lewat keranjang di bawah')} mumpung promo diskon & gratis ongkir.
+5. Sudut kamera (cameraAngle) di setiap adegan WAJIB disesuaikan dengan instruksi sudut kamera di atas.
+6. Berikan Sound Effect (SFX) yang KAYA, BERVARIASI, dan SPESIFIK di setiap adegan (kombinasi ASMR nyata, foley produk, swoosh, camera shutter, ding, water swirl, cash register). DILARANG menggunakan SFX yang sama berulang-ulang di tiap adegan.
+7. Naskah Voiceover (VO) harus BERVARIASI SECARA EMOSIONAL dan intonasi alami: mengalir seperti kreator sungguhan yang benar-benar memakai produknya.
+8. Pop-up Text (popupText) WAJIB SELALU TERISI di setiap adegan berupa huruf kapital mencolok & singkat, dan sinkron dengan overlay pada prompt Google Flow.
+9. Durasi setiap adegan (dalam integer detik) jika dijumlahkan WAJIB bernilai total mendekati ${targetDuration} detik. Jika durasi pendek (${targetDuration}s) dan adegan banyak (hingga 9 adegan), gunakan durasi fast-cut 1-2 detik per adegan.
+10. BUATKAN AUTO CAPTION DENGAN HASHTAG: Tulis 1 caption postingan media sosial yang menarik dan menjual (sesuaikan CTA: ${isShopee ? 'keranjang oren / klik keranjang di bawah' : (isTikTok ? 'keranjang kuning / klik keranjang di bawah' : 'klik keranjang di bawah')}), LENGKAP dengan 2-4 hashtag trending (${isShopee ? '#ShopeeVideo #ShopeeHaul' : '#TikTokShop #fyp'}).
+    PENTING: TOTAL PANJANG KARAKTER CAPTION TERMASUK HASHTAG HARUS MAKSIMAL 150 KARAKTER!
+11. SETIAP ADEGAN WAJIB menyertakan googleFlowPrompt (mengacu ketat ke referensi image [Image 1 Reference: ProductName]${enforcePhysicsCheck ? ', Physics Consistency Check: realistic mass inertia & biomechanical constraint adherence, serta pencahayaan konsisten' : ''}, dan On-Screen Pop-up Text Overlay) dan imageReferenceNote bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"! Bebas dari segala typo.`;
 
     const config = {
       responseMimeType: 'application/json',
@@ -198,7 +220,7 @@ Syarat Wajib Format Storyboard:
                 },
                 visualAction: {
                   type: Type.STRING,
-                  description: 'Deskripsi aksi fisik, ekspresi wajah, dan pergerakan objek di depan kamera.',
+                  description: 'Deskripsi aksi fisik, ekspresi wajah, dan pergerakan objek di depan kamera. WAJIB patuh hukum fisika (gravitasi nyata, bobot kemasan, interaksi solid tanpa tembus/clipping, biomekanika gerak tangan natural, dan pencahayaan konsisten).',
                 },
                 popupText: {
                   type: Type.STRING,
@@ -214,7 +236,7 @@ Syarat Wajib Format Storyboard:
                 },
                 notesMood: {
                   type: Type.STRING,
-                  description: 'Catatan teknis, gaya animasi teks (Chat Bubble/Bouncy), pencahayaan atau mood.',
+                  description: 'Catatan teknis, gaya animasi teks (Chat Bubble/Bouncy), pencahayaan konsisten atau mood.',
                 },
                 duration: {
                   type: Type.INTEGER,
@@ -222,7 +244,7 @@ Syarat Wajib Format Storyboard:
                 },
                 googleFlowPrompt: {
                   type: Type.STRING,
-                  description: 'Prompt video AI untuk Google Flow / Veo / Runway / Kling yang mengikuti referensi image secara ketat ([Image 1 Reference: ProductName]), dengan camera motion, action, lighting, 9:16 vertical.',
+                  description: 'Prompt video AI untuk Google Flow / Veo / Runway / Kling yang mengikuti referensi image secara ketat ([Image 1 Reference: ProductName]), dengan mandat hukum fisika (gravity, realistic mass, authentic motion, consistent directional lighting & cast shadows, no morphing), 9:16 vertical.',
                 },
                 imageReferenceNote: {
                   type: Type.STRING,
@@ -247,10 +269,14 @@ Syarat Wajib Format Storyboard:
       },
     };
 
+    const systemPrompt = enforcePhysicsCheck
+      ? 'You are an elite UGC video R&D strategist and storyboard scriptwriter. You strictly execute a Physics Consistency Check enforcing realistic mass inertia, biomechanical constraint adherence, solid-contact mechanics without clipping, consistent directional lighting with matching cast shadows, and zero floaty motion artifacts in every visualAction and googleFlowPrompt. Analyze any attached product reference images carefully for visual details. Never use generic "Stop scrolling" or "Jangan skip dulu" clichés in Scene 1. Return strictly valid JSON matching the schema.'
+      : 'You are an elite UGC video R&D strategist and storyboard scriptwriter. Analyze any attached product reference images carefully for visual details. Never use generic "Stop scrolling" or "Jangan skip dulu" clichés in Scene 1. Return strictly valid JSON matching the schema.';
+
     const rawText = await generateWithFallback(
       prompt,
       config,
-      'You are an elite UGC video R&D strategist and storyboard scriptwriter. Analyze any attached product reference images carefully for visual details. Never use generic "Stop scrolling" or "Jangan skip dulu" clichés in Scene 1; always craft specific, product-researched hooks. Return strictly valid JSON matching the schema.',
+      systemPrompt,
       18000,
       allReferenceImages
     );
@@ -313,9 +339,12 @@ Syarat Wajib Format Storyboard:
         const visual = sc.visualAction || 'Kreator memperlihatkan manfaat produk secara otentik.';
         const angle = sc.cameraAngle || 'Medium Shot';
 
+        const physicsTokens = enforcePhysicsCheck
+          ? 'strict physical laws, realistic mass inertia, biomechanical constraint adherence, solid-contact gravity without clipping, consistent directional lighting with matching cast shadows, authentic camera motion, zero floaty artifacts, zero morphing, photorealistic 9:16 vertical 4k 60fps'
+          : 'natural product showcase, consistent lighting, photorealistic 9:16 vertical 4k 60fps';
         let flowPrompt = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string' ? sc.googleFlowPrompt.trim() : '';
         if (!flowPrompt) {
-          flowPrompt = `${refTag} Scene ${idx + 1} (${angle}): ${visual} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging and branding in reference image #${refIdx}, vertical 9:16 UGC smartphone camera, photorealistic 4k.`;
+          flowPrompt = `${refTag} Scene ${idx + 1} (${angle}): ${visual} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging and branding in reference image #${refIdx}, ${physicsTokens}.`;
         } else {
           if (refTotal > 1 && /\[Image 1 Reference:/i.test(flowPrompt)) {
             flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
@@ -323,6 +352,12 @@ Syarat Wajib Format Storyboard:
           const hasOverlay = /on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt);
           if (!hasOverlay) {
             flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+          }
+          if (
+            enforcePhysicsCheck &&
+            (!/realistic mass inertia/i.test(flowPrompt) || !/biomechanical constraint adherence/i.test(flowPrompt))
+          ) {
+            flowPrompt = `${flowPrompt} - ${physicsTokens}`;
           }
         }
 
@@ -345,6 +380,7 @@ Syarat Wajib Format Storyboard:
         success: true,
         data: parsedData,
         source: 'gemini',
+        physicsConsistencyCheck: enforcePhysicsCheck,
       });
     }
 
@@ -362,7 +398,8 @@ Syarat Wajib Format Storyboard:
       platform,
       allReferenceImages.length > 0
         ? allReferenceImages
-        : Array.from({ length: Math.max(1, totalRefCount) }, (_, i) => `Image ${i + 1}`)
+        : Array.from({ length: Math.max(1, totalRefCount) }, (_, i) => `Image ${i + 1}`),
+      enforcePhysicsCheck
     );
 
     return NextResponse.json({

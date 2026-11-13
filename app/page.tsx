@@ -1,20 +1,68 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { persistProjects, retrieveProjects } from '@/utils/storyboardStorage';
+import dynamic from 'next/dynamic';
+import {
+  bootstrapSheetsDatabase,
+  fetchUserProjectsFromSheets,
+  syncProjectsToSheets,
+  logActivityToSheets,
+  saveUserDraftMirror,
+  loadUserDraftMirror,
+  mergeDraftImagesIntoSheetProjects,
+  sanitizeTabName,
+  SPREADSHEET_URL,
+  SESSION_USER_KEY,
+} from '@/utils/storyboardStorage';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
 import { SceneCard } from '@/components/SceneCard';
-import { ScriptTableView } from '@/components/ScriptTableView';
-import { RateCardCalculator } from '@/components/RateCardCalculator';
-import { AIGeneratorModal } from '@/components/AIGeneratorModal';
-import { HookGeneratorModal } from '@/components/HookGeneratorModal';
-import { TeleprompterModal } from '@/components/TeleprompterModal';
-import { ExportModal } from '@/components/ExportModal';
-import { ProjectManagerModal } from '@/components/ProjectManagerModal';
-import { MetaCleanerPro } from '@/components/MetaCleanerPro';
 import { PasswordGate, AUTH_STORAGE_KEY } from '@/components/PasswordGate';
 import { DirectLinkExtractorBar } from '@/components/DirectLinkExtractorBar';
+
+interface ConfirmDialogState {
+  isOpen: boolean;
+  title: string;
+  description: string;
+  details?: string[];
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: 'primary' | 'danger' | 'warning';
+  isProcessing?: boolean;
+  onConfirm: () => void | Promise<void>;
+}
+const ScriptTableView = dynamic(
+  () => import('@/components/ScriptTableView').then((mod) => mod.ScriptTableView),
+  { ssr: false }
+);
+const RateCardCalculator = dynamic(
+  () => import('@/components/RateCardCalculator').then((mod) => mod.RateCardCalculator),
+  { ssr: false }
+);
+const MetaCleanerPro = dynamic(
+  () => import('@/components/MetaCleanerPro').then((mod) => mod.MetaCleanerPro),
+  { ssr: false }
+);
+const AIGeneratorModal = dynamic(
+  () => import('@/components/AIGeneratorModal').then((mod) => mod.AIGeneratorModal),
+  { ssr: false }
+);
+const HookGeneratorModal = dynamic(
+  () => import('@/components/HookGeneratorModal').then((mod) => mod.HookGeneratorModal),
+  { ssr: false }
+);
+const TeleprompterModal = dynamic(
+  () => import('@/components/TeleprompterModal').then((mod) => mod.TeleprompterModal),
+  { ssr: false }
+);
+const ExportModal = dynamic(
+  () => import('@/components/ExportModal').then((mod) => mod.ExportModal),
+  { ssr: false }
+);
+const ProjectManagerModal = dynamic(
+  () => import('@/components/ProjectManagerModal').then((mod) => mod.ProjectManagerModal),
+  { ssr: false }
+);
 import { UGC_CATEGORIES } from '@/data/categories';
 import {
   Scene,
@@ -25,6 +73,7 @@ import {
   StoryboardViewMode,
   HookVariant,
   AutoDetectResult,
+  PublicAppUser,
 } from '@/types';
 import { copyToClipboard, generateId, postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
 import { formatShortCaption, generateRichFallback } from '@/lib/gemini-ugc';
@@ -46,10 +95,9 @@ import {
   Image as ImageIcon,
   X,
   Loader2,
+  FileSpreadsheet,
+  ExternalLink,
 } from 'lucide-react';
-
-const STORAGE_KEY = 'ugc_master_projects_v1';
-const CURRENT_PROJECT_ID_KEY = 'ugc_master_current_proj_id';
 
 // Initial project matching UGC Before & After format with 6 rich scenes
 const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
@@ -110,7 +158,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Diet gagal mulu, kancing kemeja pada lepas, pusing!',
       notesMood: 'Gaya teks: Chat Bubble. Pencahayaan redup dramatis.',
       duration: 2,
-      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium shot of middle-aged creator scratching head in front of mirror with tight shirt, holding Sago Green Coffee sachet - On-Screen Pop-up Text Overlay: "DIET GAGAL MULU, BAJU GAK MUAT?! 😫" - packaging branding adhering to reference image, 9:16 vertical UGC video, 4k 60fps.',
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium shot of middle-aged creator scratching head in front of mirror with tight shirt, holding Sago Green Coffee sachet with natural hand grip biomechanics, realistic mass inertia, consistent directional bathroom mirror lighting with matching cast shadows, zero morphing - On-Screen Pop-up Text Overlay: "DIET GAGAL MULU, BAJU GAK MUAT?! 😫" - packaging branding adhering to reference image, 9:16 vertical UGC video, 4k 60fps.',
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
@@ -123,7 +171,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Untung nemu Sago Green Coffee, rasanya gak pahit sama sekali!',
       notesMood: 'Gaya teks: Clean Minimalist. Warm coffee morning aesthetic.',
       duration: 3,
-      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Close-up shot pouring coffee powder from green sachet into clear glass mug, boiling water swirling - On-Screen Pop-up Text Overlay: "UNTUNG KETEMU KOPI SAGO INI ☕✨" - authentic sachet color and typography matching reference image, vertical 9:16.',
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Close-up shot pouring coffee powder from green sachet into clear glass mug, boiling water swirling with realistic fluid dynamics and gravity, authentic sachet color and typography matching reference image, directional morning sunlight with soft contact shadows, vertical 9:16 4k 60fps.',
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
@@ -136,7 +184,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Biasanya jam 10 pagi udah nyari gorengan, sekarang kenyang sampai siang!',
       notesMood: 'Gaya teks: Headline Banner. Natural window light.',
       duration: 3,
-      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Over-the-shoulder shot sipping hot coffee mug on cozy living room sofa - On-Screen Pop-up Text Overlay: "GA GAMPANG LAPER SEHARIAN 🔥" - Sago Green Coffee retail packaging visible on coffee table adhering to reference image, 4k 60fps.',
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Over-the-shoulder shot sipping hot coffee mug on cozy living room sofa, anatomically correct hand holding mug, Sago Green Coffee retail packaging visible on coffee table adhering to reference image, consistent directional window light with natural shadows, 4k 60fps.',
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
@@ -149,7 +197,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Baru 3 minggu, celana lama udah pada kedodoran!',
       notesMood: 'Gaya teks: Bold Red/Green Before After. Split screen dynamic.',
       duration: 3,
-      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Dynamic before-after reveal, creator showing loose waistline on trousers while smiling confidently with Sago Green Coffee box - On-Screen Pop-up Text Overlay: "3 MINGGU TURUN 4.5 KG! 📉" - photorealistic lighting, 9:16 vertical smartphone format.',
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Dynamic before-after reveal, creator showing loose waistline on trousers while smiling confidently with Sago Green Coffee box, authentic physics and mass, photorealistic lighting with consistent ambient occlusion, 9:16 vertical smartphone format.',
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
@@ -162,7 +210,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Aman di lambung, herbal alami, udah BPOM & Halal pastinya.',
       notesMood: 'Gaya teks: Minimal White Outline. High sharpness focus.',
       duration: 2,
-      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Macro close-up shot rotating box packaging in hands - On-Screen Pop-up Text Overlay: "100% HERBAL & BPOM AMAN 🌿" - crystal-clear focus on BPOM seal and green brand typography matching reference image, 4k 60fps.',
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Macro close-up shot rotating box packaging in hands, solid 5-finger physical grip without clipping, crystal-clear focus on BPOM seal and green brand typography matching reference image, directional softbox illumination with matching shadows, 4k 60fps.',
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
     {
@@ -175,7 +223,7 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
       dialogVO: 'Mumpung lagi promo diskon bundle, langsung klik keranjang di bawah ya!',
       notesMood: 'Gaya teks: Neon Pulsing CTA. High energy closing CTA.',
       duration: 3,
-      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium close-up closing shot, smiling creator pointing towards shopping cart icon below holding Sago Green Coffee packaging - On-Screen Pop-up Text Overlay: "KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇" - crisp vertical 9:16 UGC video.',
+      googleFlowPrompt: '[Image 1 Reference: Sago Green Coffee] Medium close-up closing shot, smiling creator pointing towards shopping cart icon below holding Sago Green Coffee packaging, natural biomechanical arm movement, unified key lighting with cast shadows, zero warp, crisp vertical 9:16 UGC video.',
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     },
   ],
@@ -184,14 +232,16 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
 export default function HomePage() {
   const [mounted, setMounted] = useState(false);
 
-  // Authentication gate state (Strictly locked by default with password Ilalang@27)
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  // Multi-user auth + in-memory Google Sheets token state
+  const [currentUser, setCurrentUser] = useState<PublicAppUser | null>(null);
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
 
-  // Projects State with LocalStorage
+  // Projects State (isolated per logged-in user)
   const [projects, setProjects] = useState<StoryboardProject[]>([INITIAL_BEFORE_AFTER_PROJECT]);
   const [currentProjectId, setCurrentProjectId] = useState<string>(INITIAL_BEFORE_AFTER_PROJECT.id);
 
-  // View Mode: 'cards' | 'table' | 'rate_card'
+  // View Mode: 'cards' | 'table' | 'rate_card' | 'meta_cleaner'
   const [viewMode, setViewMode] = useState<StoryboardViewMode>('cards');
 
   const [copiedCaption, setCopiedCaption] = useState(false);
@@ -210,116 +260,255 @@ export default function HomePage() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportModalInitialTab, setExportModalInitialTab] = useState<'table' | 'caption' | 'script' | 'capcut' | 'json'>('table');
   const [isProjectsModalOpen, setIsProjectsModalOpen] = useState(false);
+  const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
   const [isJsonCopied, setIsJsonCopied] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [enhancingSceneId, setEnhancingSceneId] = useState<string | null>(null);
 
-  // Dual Storage Persistence State (IndexedDB + Quota-safe LocalStorage)
+  // Google Sheets Database & 1-Minute Auto-Save State
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error' | 'pending'>('saved');
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(false);
+  const [autoSaveCountdown, setAutoSaveCountdown] = useState<number>(60);
 
-  // Load from IndexedDB / LocalStorage safely after mount
+  const projectsRef = useRef(projects);
+  const currentUserRef = useRef(currentUser);
+  const googleTokenRef = useRef(googleToken);
+  const hasUnsavedSheetChangesRef = useRef(false);
+
   useEffect(() => {
-    let isCancelled = false;
+    projectsRef.current = projects;
+    currentUserRef.current = currentUser;
+    googleTokenRef.current = googleToken;
+  }, [projects, currentUser, googleToken]);
+
+  // Hydrate multi-user session & initialize Firebase Auth state listener
+  useEffect(() => {
     setMounted(true);
 
     try {
-      const auth = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (auth === 'true') {
-        setIsAuthenticated(true);
-      } else {
-        setIsAuthenticated(false);
+      const savedSession = localStorage.getItem(SESSION_USER_KEY);
+      if (savedSession) {
+        const parsedUser = JSON.parse(savedSession) as PublicAppUser;
+        if (parsedUser?.username) {
+          setCurrentUser(parsedUser);
+          const draft = loadUserDraftMirror(parsedUser.username);
+          if (draft.projects && draft.projects.length > 0) {
+            setProjects(draft.projects);
+            if (draft.currentProjectId && draft.projects.some((p) => p.id === draft.currentProjectId)) {
+              setCurrentProjectId(draft.currentProjectId);
+            } else {
+              setCurrentProjectId(draft.projects[0].id);
+            }
+          }
+        }
       }
     } catch {}
 
-    const initStorage = async () => {
-      try {
-        const { projects: retrieved, currentProjectId: retrievedId } = await retrieveProjects();
-        if (!isCancelled && retrieved && retrieved.length > 0) {
-          setProjects(retrieved);
-          if (retrievedId && retrieved.some((p) => p.id === retrievedId)) {
-            setCurrentProjectId(retrievedId);
-          } else {
-            setCurrentProjectId(retrieved[0].id);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to load storyboard projects from storage:', e);
-      } finally {
-        if (!isCancelled) {
-          setIsStorageLoaded(true);
-        }
-      }
-    };
-
-    initStorage();
-
-    return () => {
-      isCancelled = true;
-    };
+    setIsStorageLoaded(true);
   }, []);
 
-  // Primary persistence worker
-  const triggerSave = useCallback(
-    async (projectsToSave: StoryboardProject[], currentId: string) => {
-      if (!isStorageLoaded) return;
+  // Save draft mirror whenever active user edits projects
+  useEffect(() => {
+    if (!isStorageLoaded || !currentUser) return;
+    saveUserDraftMirror(currentUser.username, projects, currentProjectId);
+  }, [projects, currentProjectId, currentUser, isStorageLoaded]);
+
+  // Core Google Sheets Sync Worker
+  const syncNowToSheets = useCallback(
+    async (
+      mode: 'AUTO_SAVE_1M' | 'MANUAL_SAVE' | 'PROJECT_MUTATION',
+      overrideProjects?: StoryboardProject[]
+    ) => {
+      const token = googleTokenRef.current;
+      const user = currentUserRef.current;
+      const list = overrideProjects || projectsRef.current;
+      if (!token || !user || list.length === 0) return;
+
       setSaveStatus('saving');
-      try {
-        const res = await persistProjects(projectsToSave, currentId);
-        if (res.success) {
-          setSaveStatus('saved');
-          setLastSavedTime(res.timestamp);
-        } else {
-          setSaveStatus('error');
-        }
-      } catch (err) {
-        console.error('Failed to persist storyboard projects:', err);
+      const res = await syncProjectsToSheets(token, user, list, mode);
+      if (res.success) {
+        hasUnsavedSheetChangesRef.current = false;
+        setSaveStatus('saved');
+        setLastSavedTime(res.timestamp);
+      } else {
         setSaveStatus('error');
+        if (res.needsReauth) {
+          setGoogleToken(null);
+          setAutoSaveEnabled(false);
+        }
       }
     },
-    [isStorageLoaded]
+    []
   );
 
-  // Debounced auto-save on project or current ID change
+  // Read-only initial fetch from user's isolated DB tab once Google Token & User are active
   useEffect(() => {
-    if (!isStorageLoaded) return;
+    if (!googleToken || !currentUser) return;
+    let cancelled = false;
 
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
+    const loadUserSheetsProjects = async () => {
+      try {
+        const res = await fetchUserProjectsFromSheets(googleToken, currentUser);
+        if (cancelled) return;
+        if (res.success) {
+          if (res.projects.length > 0) {
+            const draft = loadUserDraftMirror(currentUser.username);
+            const merged = mergeDraftImagesIntoSheetProjects(res.projects, draft.projects);
+            setProjects(merged);
+            setCurrentProjectId(merged[0].id);
+            setSaveStatus('saved');
+            setLastSavedTime(
+              new Date().toLocaleTimeString('id-ID', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              })
+            );
+          }
+        } else if (res.needsReauth) {
+          setGoogleToken(null);
+        }
+      } catch {}
+    };
+
+    loadUserSheetsProjects();
+    return () => {
+      cancelled = true;
+    };
+  }, [googleToken, currentUser]);
+
+  // 1-Minute (60 seconds) Auto-Save Interval to Google Sheets
+  useEffect(() => {
+    if (!autoSaveEnabled || !googleToken || !currentUser) {
+      setAutoSaveCountdown(60);
+      return;
     }
 
-    setSaveStatus('saving');
-    saveTimeoutRef.current = setTimeout(() => {
-      triggerSave(projects, currentProjectId);
-    }, 400);
+    const timer = setInterval(() => {
+      setAutoSaveCountdown((prev) => {
+        if (prev <= 1) {
+          void syncNowToSheets('AUTO_SAVE_1M');
+          return 60;
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
     return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
+      clearInterval(timer);
     };
-  }, [projects, currentProjectId, isStorageLoaded, triggerSave]);
+  }, [autoSaveEnabled, googleToken, currentUser, syncNowToSheets]);
 
-  // Synchronous flush before page unload or refresh
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (isStorageLoaded && projects.length > 0) {
-        persistProjects(projects, currentProjectId);
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [projects, currentProjectId, isStorageLoaded]);
+  const handleConnectGoogle = async (): Promise<string | null> => {
+    showToast('Penyimpanan berjalan otomatis via Local Storage browser.');
+    return null;
+  };
 
-  // Explicit manual save action
+  const requestEnableAutoSaveAndInit = () => {
+    const user = currentUser;
+    if (!user) return;
+    const tabName = user.sheetTabName || sanitizeTabName(user.username);
+
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Aktifkan Database & Auto-Save 1 Menit ke Google Sheets?',
+      description:
+        'Sistem akan menyiapkan struktur database di Google Spreadsheet (tab _Users, _Activity_Logs, dan worksheet pribadi Anda) serta menyinkronkan data storyboard secara otomatis setiap 1 menit.',
+      details: [
+        `Spreadsheet Target: ${SPREADSHEET_URL}`,
+        `Database User (@${user.username}): Worksheet ${tabName}`,
+        'Interval Auto-Save: Setiap 60 detik (1 menit)',
+      ],
+      confirmLabel: 'Ya, Inisialisasi & Aktifkan 1 Menit',
+      tone: 'primary',
+      onConfirm: async () => {
+        let token = googleTokenRef.current;
+        if (!token) {
+          token = await handleConnectGoogle();
+        }
+        if (!token) {
+          setConfirmDialog(null);
+          return;
+        }
+        setConfirmDialog((prev) => (prev ? { ...prev, isProcessing: true } : null));
+        try {
+          await bootstrapSheetsDatabase(token, user.username);
+          await syncNowToSheets('MANUAL_SAVE');
+          setAutoSaveEnabled(true);
+          setAutoSaveCountdown(60);
+          setConfirmDialog(null);
+          showToast(`✅ Database ${tabName} siap & Auto-Save 1 menit aktif!`);
+        } catch (err: any) {
+          setConfirmDialog(null);
+          showToast(err?.message || 'Gagal menginisialisasi Google Sheets.');
+        }
+      },
+    });
+  };
+
+  // Explicit manual save confirmation action
   const handleManualSave = () => {
-    triggerSave(projects, currentProjectId);
-    showToast('💾 Naskah Storyboard berhasil disimpan!');
+    if (!googleToken) {
+      void handleConnectGoogle();
+      return;
+    }
+    const user = currentUser;
+    const tabName = user?.sheetTabName || sanitizeTabName(user?.username || 'admin');
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Simpan & Sinkronkan ke Google Sheets Sekarang?',
+      description:
+        'Data project, brief produk, parameter UGC, caption, dan seluruh adegan akan disimpan ke worksheet database pribadi Anda.',
+      details: [
+        `Worksheet Target: ${tabName}`,
+        `Jumlah Project: ${projects.length} Naskah`,
+      ],
+      confirmLabel: 'Simpan ke Google Sheets',
+      tone: 'primary',
+      onConfirm: async () => {
+        setConfirmDialog((prev) => (prev ? { ...prev, isProcessing: true } : null));
+        await syncNowToSheets('MANUAL_SAVE');
+        setAutoSaveEnabled(true);
+        setAutoSaveCountdown(60);
+        setConfirmDialog(null);
+        showToast('💾 Naskah Storyboard tersinkron ke Google Sheets!');
+      },
+    });
+  };
+
+  const handleAuthSuccess = (user: PublicAppUser) => {
+    setCurrentUser(user);
+    try {
+      localStorage.setItem(AUTH_STORAGE_KEY, 'true');
+      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+    } catch {}
+
+    const draft = loadUserDraftMirror(user.username);
+    if (draft.projects && draft.projects.length > 0) {
+      setProjects(draft.projects);
+      setCurrentProjectId(draft.currentProjectId || draft.projects[0].id);
+    } else {
+      setProjects([
+        {
+          ...INITIAL_BEFORE_AFTER_PROJECT,
+          id: `${INITIAL_BEFORE_AFTER_PROJECT.id}_${user.username}`,
+          ownerUsername: user.username,
+        },
+      ]);
+      setCurrentProjectId(`${INITIAL_BEFORE_AFTER_PROJECT.id}_${user.username}`);
+    }
+  };
+
+  const handleSwitchWorkspaceUser = (targetUser: PublicAppUser) => {
+    setCurrentUser(targetUser);
+    try {
+      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(targetUser));
+    } catch {}
+    showToast(`Beralih ke database user @${targetUser.username} (${targetUser.sheetTabName})`);
   };
 
   // Active Project
@@ -382,25 +571,45 @@ export default function HomePage() {
     }, 3000);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const user = currentUser;
+    if (googleToken && user) {
+      await logActivityToSheets(googleToken, {
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        action: 'LOGOUT',
+        target: user.sheetTabName,
+        details: 'Keluar & mengunci sesi studio',
+        status: 'info',
+      });
+    }
     try {
       localStorage.removeItem(AUTH_STORAGE_KEY);
+      localStorage.removeItem(SESSION_USER_KEY);
     } catch {}
-    setIsAuthenticated(false);
-    showToast('Studio telah dikunci 🔒');
+    setGoogleToken(null);
+    setAutoSaveEnabled(false);
+    setCurrentUser(null);
+    showToast('Studio telah dikunci');
   };
 
   // Update current project helper
   const updateCurrentProject = (updater: (prev: StoryboardProject) => StoryboardProject) => {
+    hasUnsavedSheetChangesRef.current = true;
+    setSaveStatus('pending');
     setProjects((prev) => {
       const updatedList = prev.map((p) => {
         if (p.id === currentProjectId) {
           const updated = updater(p);
-          return { ...updated, updatedAt: new Date().toISOString() };
+          return {
+            ...updated,
+            ownerUsername: currentUser?.username || updated.ownerUsername,
+            updatedAt: new Date().toISOString(),
+          };
         }
         return p;
       });
-      triggerSave(updatedList, currentProjectId);
       return updatedList;
     });
   };
@@ -439,27 +648,44 @@ export default function HomePage() {
     showToast(`Format berganti ke: ${cat.name}`);
   };
 
-  // Quick reset to default category scenes
+  // Quick reset to default category scenes (uses ConfirmDialog instead of window.confirm)
   const handleResetToCategoryTemplate = (cat: UGCTemplateCategory) => {
-    if (!window.confirm(`Reset semua adegan ke template bawaan "${cat.name}"?`)) return;
-
-    updateCurrentProject((p) => ({
-      ...p,
-      scenes: cat.defaultScenes.map((sc, idx) => {
-        const popupText = sc.popupText && sc.popupText.trim() ? sc.popupText.trim() : (idx === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨');
-        return {
-          ...sc,
-          id: generateId(),
-          order: idx + 1,
-          duration: Number(sc.duration) || 3,
-          popupText,
-          imageReferenceNote: (sc as any).imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-          googleFlowPrompt: (sc as any).googleFlowPrompt || `[Image 1 Reference: ${p.productName || 'Produk'}] Scene ${idx + 1} (${sc.cameraAngle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow reference image, 9:16 vertical, 4k 60fps.`,
-        };
-      }),
-    }));
-
-    showToast(`Template di-reset ke default ${cat.name}`);
+    setConfirmDialog({
+      isOpen: true,
+      title: `Reset Adegan ke Template "${cat.name}"?`,
+      description:
+        'Semua adegan pada naskah aktif saat ini akan diganti dengan susunan template bawaan kategori ini.',
+      confirmLabel: 'Reset Adegan',
+      tone: 'warning',
+      onConfirm: () => {
+        setConfirmDialog(null);
+        updateCurrentProject((p) => ({
+          ...p,
+          scenes: cat.defaultScenes.map((sc, idx) => {
+            const popupText =
+              sc.popupText && sc.popupText.trim()
+                ? sc.popupText.trim()
+                : idx === 0
+                ? 'JANGAN SKIP DULU! 🔥'
+                : 'SOLUSI TERBAIK ✨';
+            return {
+              ...sc,
+              id: generateId(),
+              order: idx + 1,
+              duration: Number(sc.duration) || 3,
+              popupText,
+              imageReferenceNote:
+                (sc as any).imageReferenceNote ||
+                'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+              googleFlowPrompt:
+                (sc as any).googleFlowPrompt ||
+                `[Image 1 Reference: ${p.productName || 'Produk'}] Scene ${idx + 1} (${sc.cameraAngle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - strict physical laws, realistic gravity and mass inertia, natural hand biomechanics without clipping, consistent directional lighting with matching cast shadows, authentic camera motion, zero morphing, photorealistic 9:16 vertical, 4k 60fps.`,
+            };
+          }),
+        }));
+        showToast(`Template di-reset ke default ${cat.name}`);
+      },
+    });
   };
 
   // Trigger AI modal prefilled with category
@@ -538,13 +764,13 @@ export default function HomePage() {
       id: generateId(),
       order: newOrder,
       cameraAngle: 'Medium Shot',
-      visualAction: 'Kreator memperlihatkan manfaat produk secara natural.',
+      visualAction: 'Kreator memperlihatkan manfaat produk secara natural dengan interaksi fisik tangan nyata tanpa clipping dan bayangan jatuh konsisten.',
       popupText: 'HASIL MAKSIMAL ✨',
       soundEffect: 'Swoosh',
       dialogVO: 'Gak nyangka hasilnya bisa sebagus ini.',
-      notesMood: 'Gaya teks: Modern Yellow. Pencahayaan natural.',
+      notesMood: 'Gaya teks: Modern Yellow. Pencahayaan directional natural dengan bayangan nyata.',
       duration: 3,
-      googleFlowPrompt: `[Image 1 Reference: ${currentProject.productName || 'Produk'}] Scene ${newOrder} (Medium Shot): Kreator memperlihatkan manfaat produk secara natural - On-Screen Pop-up Text Overlay: "HASIL MAKSIMAL ✨" - kemasan dan logo konsisten sesuai gambar referensi, 9:16 vertical smartphone video, 4k 60fps.`,
+      googleFlowPrompt: `[Image 1 Reference: ${currentProject.productName || 'Produk'}] Scene ${newOrder} (Medium Shot): Kreator memperlihatkan manfaat produk secara natural dengan kontak fisik solid tanpa tembus - On-Screen Pop-up Text Overlay: "HASIL MAKSIMAL ✨" - strict physical laws, realistic gravity, natural hand biomechanics without clipping, consistent directional lighting with matching cast shadows, 9:16 vertical smartphone video, 4k 60fps.`,
       imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
     };
 
@@ -706,6 +932,8 @@ export default function HomePage() {
           : [];
       const refTotal = Math.max(1, allParamRefs.length);
 
+      const enforcePhysicsCheck = params.physicsConsistencyCheck !== false;
+
       const resolvedData =
         resData && resData.success && resData.data && Array.isArray(resData.data.scenes) && resData.data.scenes.length > 0
           ? resData.data
@@ -722,7 +950,8 @@ export default function HomePage() {
                 ? params.referenceImage
                 : `Gambar Referensi Produk ${params.productName}`,
               params.targetPlatform || 'TikTok Shop',
-              allParamRefs
+              allParamRefs,
+              enforcePhysicsCheck
             );
 
       const isShopee = (params.targetPlatform || '').toLowerCase().includes('shopee');
@@ -745,14 +974,25 @@ export default function HomePage() {
             : (i === 0 ? ` FAKTA ${params.productName.toUpperCase().slice(0, 20)} ✨` : (i === scenesArray.length - 1 ? defaultClosingPopup : `SOLUSI: ${params.productName.toUpperCase()}`));
 
         let flowPrompt = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string' ? sc.googleFlowPrompt.trim() : '';
+        const physicsTokens =
+          'strict physical laws, realistic mass inertia, biomechanical constraint adherence, solid hand-to-object contact without clipping, consistent directional lighting with matching cast shadows, authentic camera motion, zero floaty motion, zero morphing, photorealistic 9:16 vertical, 4k 60fps';
+
         if (!flowPrompt) {
-          flowPrompt = `${refTag} Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - 9:16 vertical UGC video, 4k 60fps.`;
+          flowPrompt = enforcePhysicsCheck
+            ? `${refTag} Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - ${physicsTokens}.`
+            : `${refTag} Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - photorealistic 9:16 vertical, 4k 60fps.`;
         } else {
           if (refTotal > 1 && /\[Image 1 Reference:/i.test(flowPrompt)) {
             flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
           }
           if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
             flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
+          }
+          if (
+            enforcePhysicsCheck &&
+            (!/realistic mass inertia/i.test(flowPrompt) || !/biomechanical constraint adherence/i.test(flowPrompt))
+          ) {
+            flowPrompt = `${flowPrompt}, ${physicsTokens}`;
           }
         }
 
@@ -785,6 +1025,7 @@ export default function HomePage() {
 
       const newProj: StoryboardProject = {
         id: generateId(),
+        ownerUsername: currentUser?.username || 'admin',
         title: resolvedData.title || `Storyboard ${params.category} - ${params.productName}`,
         categoryId: matchedCat.id,
         productName: params.productName,
@@ -802,20 +1043,32 @@ export default function HomePage() {
         preferredCameraAngles: params.preferredCameraAngles,
         targetPlatform: params.targetPlatform,
         targetAudience: params.targetAudience,
+        targetDuration: params.targetDuration || genScenes.reduce((s, x) => s + x.duration, 0),
+        physicsConsistencyCheck: enforcePhysicsCheck,
         caption: resolvedData.caption || formatShortCaption(params.productName, params.category, params.keySellingPoints, params.targetPlatform),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         scenes: genScenes,
       };
 
-      setProjects((prev) => {
-        const next = [newProj, ...prev];
-        triggerSave(next, newProj.id);
-        return next;
-      });
+      hasUnsavedSheetChangesRef.current = true;
+      setSaveStatus('pending');
+      setProjects((prev) => [newProj, ...prev]);
       setCurrentProjectId(newProj.id);
       setIsAIGeneratorOpen(false);
-      showToast('🎉 Storyboard AI berhasil dibuat!');
+      showToast('🎉 Storyboard AI berhasil dibuat! (Siap disinkronkan ke Google Sheets)');
+
+      if (googleToken && currentUser) {
+        void logActivityToSheets(googleToken, {
+          userId: currentUser.id,
+          username: currentUser.username,
+          role: currentUser.role,
+          action: 'AI_GENERATE',
+          target: newProj.title,
+          details: `Generate storyboard AI (${genScenes.length} adegan, produk: ${params.productName})`,
+          status: 'success',
+        });
+      }
     } catch (e) {
       console.error('Generate storyboard error:', e);
       showToast('Gagal terhubung ke generator AI.');
@@ -883,6 +1136,7 @@ export default function HomePage() {
         preferredCameraAngles: data.preferredCameraAngles || p.preferredCameraAngles,
         targetPlatform: data.targetPlatform || p.targetPlatform,
         targetAudience: data.targetAudience || p.targetAudience,
+        targetDuration: data.targetDuration || p.targetDuration,
       };
     });
     showToast(`✓ Data produk "${data.productName}" berhasil dipasang ke naskah aktif! ✨`);
@@ -995,12 +1249,14 @@ export default function HomePage() {
   const handleCreateNewProject = () => {
     const newProj: StoryboardProject = {
       id: generateId(),
+      ownerUsername: currentUser?.username || 'admin',
       title: 'Naskah Storyboard Baru',
       categoryId: 'before_after',
       productName: 'Produk Baru',
       persona: 'Wanita',
       tone: 'Santai, Mengalir & Natural (Teman Curhat)',
       targetPlatform: 'TikTok Shop',
+      targetDuration: 30,
       keySellingPoints: 'Kualitas terbaik, hasil nyata, terjangkau.',
       caption: 'Wajib coba produk ini! Bikin takjub & super praktis. Klik keranjang di bawah ya! ✨ #fyp #viral',
       createdAt: new Date().toISOString(),
@@ -1010,56 +1266,77 @@ export default function HomePage() {
           id: generateId(),
           order: 1,
           cameraAngle: 'POV / Close-up',
-          visualAction: 'Kreator menyapa dengan ekspresi kaget dan gestur menyetop scrolling.',
-          popupText: 'JANGAN SKIP DULU! 🔥',
-          soundEffect: 'Vine boom & Scratch',
-          dialogVO: 'Stop scrolling! Kalian wajib tahu rahasia yang satu ini!',
-          notesMood: 'Gaya teks: Bold Red. High energy.',
+          visualAction: 'Tangan dengan 5 jari alami mengangkat kemasan produk asli secara mantap di atas meja, melawan gravitasi dengan inersia nyata di bawah pencahayaan directional hangat.',
+          popupText: 'PERNAH NGALAMIN INI JUGA? 🤔',
+          soundEffect: 'Vine boom & Soft pop',
+          dialogVO: 'Ternyata masih banyak yang belum tahu cara paling praktis buat hasil maksimal!',
+          notesMood: 'Gaya teks: Bold Modern Tag. Pencahayaan natural realistis.',
           duration: 3,
-          googleFlowPrompt: '[Image 1 Reference: Produk Baru] POV close-up creator with surprised expression halting scroll, holding product - On-Screen Pop-up Text Overlay: "JANGAN SKIP DULU! 🔥" - 9:16 vertical UGC video, 4k 60fps.',
+          googleFlowPrompt: '[Image 1 Reference: Produk Baru] POV close-up creator holding product with anatomically realistic hand grip, authentic mass inertia, strict physical laws, matching cast shadows, consistent directional lighting, zero morphing - On-Screen Pop-up Text Overlay: "PERNAH NGALAMIN INI JUGA? 🤔" - 9:16 vertical UGC video, 4k 60fps.',
           imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         },
         {
           id: generateId(),
           order: 2,
           cameraAngle: 'Medium Close-up',
-          visualAction: 'Demonstrasi produk ke kamera dengan antusias.',
+          visualAction: 'Kreator memperagakan penggunaan produk dengan gerakan tangan biomekanik alami tanpa clipping di bawah pencahayaan directional yang serasi dengan bayangan jatuh nyata.',
           popupText: 'HASIL NYATA BANGET ✨',
           soundEffect: 'Swoosh & Chime',
-          dialogVO: 'Ini dia produk yang bikin perubahan instan dan bikin nagih!',
-          notesMood: 'Gaya teks: Clean Modern.',
+          dialogVO: 'Ini dia produk yang bikin perubahan instan dan beneran terbukti efisien!',
+          notesMood: 'Gaya teks: Clean Modern. Bayangan konsisten.',
           duration: 3,
-          googleFlowPrompt: '[Image 1 Reference: Produk Baru] Medium close-up creator demonstrating product to camera with genuine excitement - On-Screen Pop-up Text Overlay: "HASIL NYATA BANGET ✨" - branding matching reference image, 9:16 vertical.',
+          googleFlowPrompt: '[Image 1 Reference: Produk Baru] Medium close-up creator demonstrating product to camera with genuine excitement, realistic physical interaction without clipping, matching cast shadows, zero glitch - On-Screen Pop-up Text Overlay: "HASIL NYATA BANGET ✨" - branding matching reference image, 9:16 vertical 4k 60fps.',
           imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         },
       ],
     };
 
-    setProjects((prev) => {
-      const next = [newProj, ...prev];
-      triggerSave(next, newProj.id);
-      return next;
-    });
+    hasUnsavedSheetChangesRef.current = true;
+    setSaveStatus('pending');
+    setProjects((prev) => [newProj, ...prev]);
     setCurrentProjectId(newProj.id);
     setIsProjectsModalOpen(false);
     showToast('Naskah baru dibuat!');
+
+    if (googleToken && currentUser) {
+      void logActivityToSheets(googleToken, {
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'PROJECT_CREATE',
+        target: newProj.title,
+        details: `Membuat project naskah baru (${newProj.id})`,
+        status: 'success',
+      });
+    }
   };
 
   const handleDuplicateProject = (proj: StoryboardProject) => {
     const duplicated: StoryboardProject = {
       ...proj,
       id: generateId(),
+      ownerUsername: currentUser?.username || proj.ownerUsername,
       title: `${proj.title} (Copy)`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    setProjects((prev) => {
-      const next = [duplicated, ...prev];
-      triggerSave(next, duplicated.id);
-      return next;
-    });
+    hasUnsavedSheetChangesRef.current = true;
+    setSaveStatus('pending');
+    setProjects((prev) => [duplicated, ...prev]);
     setCurrentProjectId(duplicated.id);
     showToast(`Project "${proj.title}" berhasil diduplikasi!`);
+
+    if (googleToken && currentUser) {
+      void logActivityToSheets(googleToken, {
+        userId: currentUser.id,
+        username: currentUser.username,
+        role: currentUser.role,
+        action: 'PROJECT_DUPLICATE',
+        target: duplicated.title,
+        details: `Duplikasi dari "${proj.title}"`,
+        status: 'success',
+      });
+    }
   };
 
   const handleDeleteProject = (projId: string) => {
@@ -1067,19 +1344,58 @@ export default function HomePage() {
       showToast('Minimal harus ada 1 project naskah.');
       return;
     }
-    const filtered = projects.filter((p) => p.id !== projId);
-    setProjects(filtered);
-    const nextId = currentProjectId === projId ? filtered[0].id : currentProjectId;
-    if (currentProjectId === projId) {
-      setCurrentProjectId(filtered[0].id);
-    }
-    triggerSave(filtered, nextId);
-    showToast('Project naskah berhasil dihapus');
+    const targetProj = projects.find((p) => p.id === projId);
+    const tabName = currentUser?.sheetTabName || sanitizeTabName(currentUser?.username || 'admin');
+
+    setConfirmDialog({
+      isOpen: true,
+      title: `Hapus Naskah "${targetProj?.title || projId}"?`,
+      description:
+        'Naskah ini akan dihapus dari daftar "Naskah Saya" dan disinkronkan ke worksheet Google Sheets pribadi Anda.',
+      details: [
+        `Judul Naskah: ${targetProj?.title || '-'}`,
+        `Worksheet Database: ${tabName}`,
+      ],
+      confirmLabel: 'Ya, Hapus Naskah',
+      tone: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog((prev) => (prev ? { ...prev, isProcessing: true } : null));
+        const filtered = projects.filter((p) => p.id !== projId);
+        setProjects(filtered);
+        if (currentProjectId === projId && filtered[0]) {
+          setCurrentProjectId(filtered[0].id);
+        }
+        if (googleTokenRef.current && currentUserRef.current) {
+          await syncNowToSheets('PROJECT_MUTATION', filtered);
+          await logActivityToSheets(googleTokenRef.current, {
+            userId: currentUserRef.current.id,
+            username: currentUserRef.current.username,
+            role: currentUserRef.current.role,
+            action: 'PROJECT_DELETE',
+            target: targetProj?.title || projId,
+            details: `Menghapus naskah dari database ${tabName}`,
+            status: 'info',
+          });
+        }
+        setConfirmDialog(null);
+        showToast('Project naskah berhasil dihapus');
+      },
+    });
   };
 
-  // If not authenticated or not mounted yet, show password gate
-  if (!mounted || !isAuthenticated) {
-    return <PasswordGate onSuccess={() => setIsAuthenticated(true)} />;
+  // If not authenticated or not mounted yet, show multi-user login gate
+  if (!mounted || !currentUser) {
+    return (
+      <PasswordGate
+        googleToken={googleToken}
+        googleEmail={googleEmail}
+        onGoogleConnected={(token, email) => {
+          setGoogleToken(token);
+          setGoogleEmail(email);
+        }}
+        onSuccess={handleAuthSuccess}
+      />
+    );
   }
 
   return (
@@ -1105,6 +1421,12 @@ export default function HomePage() {
         saveStatus={saveStatus}
         lastSavedTime={lastSavedTime}
         onManualSave={handleManualSave}
+        currentUser={currentUser}
+        googleConnected={Boolean(googleToken)}
+        onConnectGoogle={() => void handleConnectGoogle()}
+        onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
+        autoSaveEnabled={autoSaveEnabled}
+        autoSaveCountdown={autoSaveCountdown}
       />
 
       {/* Main Workspace Layout */}
@@ -1124,6 +1446,8 @@ export default function HomePage() {
         {/* Main Content Area */}
         <main className="flex-1 bg-[#070a12] overflow-y-auto p-4 md:p-6 lg:p-7 custom-scrollbar">
           <div className="max-w-6xl mx-auto space-y-5">
+
+            {/* Context header continues cleanly without deleted Google Sheets bar */}
             
             {/* Context Bar: Current Format, Summary & Quick Triggers */}
             <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
@@ -1494,53 +1818,104 @@ export default function HomePage() {
       )}
 
       {/* MODALS */}
-      <AIGeneratorModal
-        isOpen={isAIGeneratorOpen}
-        onClose={() => setIsAIGeneratorOpen(false)}
-        currentCategoryName={activeCategory.name}
-        onGenerate={handleGenerateStoryboard}
-        isGenerating={isGeneratingAI}
-        initialSmartInput={aiGeneratorInitialInput}
-      />
+      {isAIGeneratorOpen && (
+        <AIGeneratorModal
+          isOpen={isAIGeneratorOpen}
+          onClose={() => setIsAIGeneratorOpen(false)}
+          currentCategoryName={activeCategory.name}
+          onGenerate={handleGenerateStoryboard}
+          isGenerating={isGeneratingAI}
+          initialSmartInput={aiGeneratorInitialInput}
+        />
+      )}
 
-      <HookGeneratorModal
-        isOpen={isHooksModalOpen}
-        onClose={() => setIsHooksModalOpen(false)}
-        productName={currentProject.productName || 'Produk'}
-        category={activeCategory.name}
-        onSelectHook={handleApplyHook}
-      />
+      {isHooksModalOpen && (
+        <HookGeneratorModal
+          isOpen={isHooksModalOpen}
+          onClose={() => setIsHooksModalOpen(false)}
+          productName={currentProject.productName || 'Produk'}
+          category={activeCategory.name}
+          onSelectHook={handleApplyHook}
+        />
+      )}
 
-      <TeleprompterModal
-        isOpen={isTeleprompterOpen}
-        onClose={() => setIsTeleprompterOpen(false)}
-        title={currentProject.title}
-        scenes={currentProject.scenes}
-      />
+      {isTeleprompterOpen && (
+        <TeleprompterModal
+          isOpen={isTeleprompterOpen}
+          onClose={() => setIsTeleprompterOpen(false)}
+          title={currentProject.title}
+          scenes={currentProject.scenes}
+        />
+      )}
 
-      <ExportModal
-        isOpen={isExportModalOpen}
-        onClose={() => setIsExportModalOpen(false)}
-        title={currentProject.title}
-        categoryName={activeCategory.name}
-        referenceImage={currentProject.referenceImage}
-        caption={currentProject.caption}
-        scenes={currentProject.scenes}
-        hookVariants={currentProject.hookVariants}
-        initialTab={exportModalInitialTab}
-        onImportJSON={handleImportJSON}
-      />
+      {isExportModalOpen && (
+        <ExportModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          title={currentProject.title}
+          categoryName={activeCategory.name}
+          referenceImage={currentProject.referenceImage}
+          caption={currentProject.caption}
+          scenes={currentProject.scenes}
+          hookVariants={currentProject.hookVariants}
+          initialTab={exportModalInitialTab}
+          onImportJSON={handleImportJSON}
+        />
+      )}
 
-      <ProjectManagerModal
-        isOpen={isProjectsModalOpen}
-        onClose={() => setIsProjectsModalOpen(false)}
-        projects={projects}
-        currentProjectId={currentProject.id}
-        onSelectProject={(id) => setCurrentProjectId(id)}
-        onCreateNewProject={handleCreateNewProject}
-        onDuplicateProject={handleDuplicateProject}
-        onDeleteProject={handleDeleteProject}
-      />
+      {isProjectsModalOpen && (
+        <ProjectManagerModal
+          isOpen={isProjectsModalOpen}
+          onClose={() => setIsProjectsModalOpen(false)}
+          projects={projects}
+          currentProjectId={currentProject.id}
+          onSelectProject={(id) => setCurrentProjectId(id)}
+          onCreateNewProject={handleCreateNewProject}
+          onDuplicateProject={handleDuplicateProject}
+          onDeleteProject={handleDeleteProject}
+          currentUser={currentUser}
+        />
+      )}
+
+      {confirmDialog && confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#0e1525] border border-[#243250] rounded-2xl p-5 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-white">{confirmDialog.title}</h3>
+            <p className="text-xs text-slate-300 leading-relaxed">{confirmDialog.description}</p>
+            {confirmDialog.details && confirmDialog.details.length > 0 && (
+              <ul className="bg-[#090d18] border border-[#1c273f] rounded-xl p-3 space-y-1 text-[11px] text-slate-400">
+                {confirmDialog.details.map((d, idx) => (
+                  <li key={idx} className="truncate">• {d}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={confirmDialog.isProcessing}
+                onClick={() => setConfirmDialog(null)}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {confirmDialog.cancelLabel || 'Batal'}
+              </button>
+              <button
+                type="button"
+                disabled={confirmDialog.isProcessing}
+                onClick={() => void confirmDialog.onConfirm()}
+                className={`px-4 py-2 rounded-xl text-white text-xs font-bold cursor-pointer disabled:opacity-50 ${
+                  confirmDialog.tone === 'danger'
+                    ? 'bg-rose-600 hover:bg-rose-500'
+                    : confirmDialog.tone === 'warning'
+                    ? 'bg-amber-600 hover:bg-amber-500'
+                    : 'bg-purple-600 hover:bg-purple-500'
+                }`}
+              >
+                {confirmDialog.isProcessing ? 'Memproses...' : confirmDialog.confirmLabel || 'Konfirmasi'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

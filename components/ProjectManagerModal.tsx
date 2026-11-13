@@ -21,9 +21,10 @@ import {
   Smartphone,
   Info
 } from 'lucide-react';
-import { StoryboardProject } from '../types';
+import { StoryboardProject, PublicAppUser } from '../types';
 import { formatDuration, copyToClipboard } from '../utils/helpers';
 import { UGC_CATEGORIES } from '../data/categories';
+import { sanitizeTabName } from '../utils/storyboardStorage';
 
 interface ProjectManagerModalProps {
   isOpen: boolean;
@@ -34,6 +35,7 @@ interface ProjectManagerModalProps {
   onCreateNewProject: () => void;
   onDuplicateProject: (project: StoryboardProject) => void;
   onDeleteProject: (projectId: string) => void;
+  currentUser?: PublicAppUser | null;
 }
 
 export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
@@ -45,6 +47,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
   onCreateNewProject,
   onDuplicateProject,
   onDeleteProject,
+  currentUser,
 }) => {
   const [selectedId, setSelectedId] = useState<string>(currentProjectId || (projects[0]?.id || ''));
   const [activeTab, setActiveTab] = useState<'all' | 'deskripsi' | 'usp' | 'caption' | 'adegan'>('all');
@@ -137,16 +140,21 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
               <FolderOpen className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-base font-extrabold text-white tracking-tight">
                   Project & Storyboard Manager (Naskah Saya)
                 </h2>
-                <span className="text-[10px] bg-purple-950/90 text-purple-300 border border-purple-700/60 px-2 py-0.5 rounded-full font-bold">
-                  {projects.length} Naskah Tersimpan
+                <span className="text-[11px] font-mono tabular-nums text-purple-300 bg-purple-950/80 border border-purple-700/60 px-2 py-0.5 rounded font-bold">
+                  {projects.length} Naskah
                 </span>
+                {currentUser && (
+                  <span className="text-[11px] font-mono text-emerald-300 bg-emerald-950/70 border border-emerald-700/50 px-2 py-0.5 rounded font-semibold">
+                    Sheet: {currentUser.sheetTabName || sanitizeTabName(currentUser.username)}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400">
-                Pusat data naskah lengkap: link ekstraksi, parameter UGC (USP & persona), caption, dan seluruh adegan.
+                Pusat data naskah Google Sheets: link produk, informasi produk, USP, persona, durasi, angle kamera, tone, caption, dan adegan.
               </p>
             </div>
           </div>
@@ -458,23 +466,23 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                       </h4>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                       <div className="p-3 rounded-xl bg-[#090d18] border border-[#1c263c]">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                           Persona Talent
                         </span>
                         <div className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-                          <User className="w-3.5 h-3.5" />
-                          <span>{activeProject.persona || 'Wanita'}</span>
+                          <User className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{activeProject.persona || 'Wanita'}</span>
                         </div>
                       </div>
 
                       <div className="p-3 rounded-xl bg-[#090d18] border border-[#1c263c]">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                          Tone of Voice
+                          Voice Tone
                         </span>
                         <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                          <Volume2 className="w-3.5 h-3.5" />
+                          <Volume2 className="w-3.5 h-3.5 shrink-0" />
                           <span className="truncate">{activeProject.tone || 'Santai & Meyakinkan'}</span>
                         </div>
                       </div>
@@ -484,8 +492,27 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                           Target Platform
                         </span>
                         <div className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                          <Smartphone className="w-3.5 h-3.5" />
-                          <span>{activeProject.targetPlatform || 'TikTok Shop'}</span>
+                          <Smartphone className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{activeProject.targetPlatform || 'TikTok Shop'}</span>
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-[#090d18] border border-[#1c263c]">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                          Target Durasi
+                        </span>
+                        <div className="text-xs font-bold font-mono tabular-nums text-sky-300 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 shrink-0" />
+                          <span>{activeProject.targetDuration || totalSeconds} Detik</span>
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-[#090d18] border border-[#1c263c]">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                          Angle Kamera
+                        </span>
+                        <div className="text-xs font-bold text-purple-300 truncate">
+                          {activeProject.cameraAngleStyle || 'Dinamis Multi-Angle'}
                         </div>
                       </div>
                     </div>
