@@ -98,21 +98,102 @@ def build_synthid_video_filter(width: int = 0, height: int = 0) -> str:
         "chromashift=cbh=1:cbv=0:crh=-1:crv=0,"
         "colorchannelmixer=rr=1.014:rg=-0.011:rb=-0.003:gr=-0.007:gg=1.009:gb=-0.002:br=-0.004:bg=-0.009:bb=1.013,"
         "eq=contrast=1.025:brightness=-0.003:saturation=1.02:gamma=1.015,"
-        "unsharp=5:5:0.42:3:3:0.15,"
+        "unsharp=5:5:0.24:3:3:0.0,"
         "vignette=angle=PI/7,"
-        "noise=c0s=4.5:c1s=2.6:c2s=2.6:allf=t+u,"
+        "noise=c0s=1.5:c1s=0:c2s=0:allf=t,"
+        "setsar=1"
+    )
+
+def build_safe_mode_video_filter(width: int = 0, height: int = 0) -> str:
+    """
+    Safe Mode Temporal Re-Encoding Filtergraph:
+    Prioritizes strict monotonic temporal frame re-encoding (CFR PTS-STARTPTS, zero time-warp,
+    zero oscillating crop jitter) while disrupting pixel-domain SynthID watermarks cleanly.
+    """
+    if width >= 64 and height >= 64:
+        target_w = (width // 2) * 2
+        target_h = (height // 2) * 2
+        up_w = ((int(target_w * 1.03) + 1) // 2) * 2
+        up_h = ((int(target_h * 1.03) + 1) // 2) * 2
+        geom_steps = (
+            f"scale={up_w}:{up_h}:flags=bicubic,"
+            f"crop={target_w}:{target_h}:(iw-{target_w})/2:(ih-{target_h})/2,"
+            f"scale={target_w}:{target_h}:flags=lanczos+accurate_rnd,"
+        )
+    else:
+        geom_steps = (
+            "scale=trunc(iw*1.03/2)*2:trunc(ih*1.03/2)*2:flags=bicubic,"
+            "crop=trunc(iw/1.03/2)*2:trunc(ih/1.03/2)*2,"
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd,"
+        )
+
+    return (
+        "setpts=PTS-STARTPTS,"
+        "fps=fps=30000/1001:round=near,"
+        "format=yuv420p,"
+        "hqdn3d=1.2:1.0:2.2:1.6,"
+        f"{geom_steps}"
+        "chromashift=cbh=1:cbv=0:crh=-1:crv=0,"
+        "colorchannelmixer=rr=1.008:rg=-0.006:rb=-0.002:gr=-0.004:gg=1.006:gb=-0.002:br=-0.002:bg=-0.006:bb=1.008,"
+        "eq=contrast=1.015:brightness=-0.002:saturation=1.015:gamma=1.01,"
+        "unsharp=5:5:0.20:3:3:0.0,"
+        "noise=c0s=1.3:c1s=0:c2s=0:allf=t,"
+        "setsar=1"
+    )
+
+def build_unified_video_filter(width: int = 0, height: int = 0, duration_sec: float = 0.0) -> str:
+    """
+    Unified All-in-One Pipeline (Safe Mode Temporal CFR + Deep Anti-SynthID Optical/CMOS Disruption):
+    Combines strict monotonic CFR pacing (30fps smartphone clock, 0.07s synced boundary trim)
+    with full-frame center-breaking rotation/lens/hue/luma-only CMOS disruption.
+    """
+    trim_prefix = "trim=start=0.07,setpts=PTS-STARTPTS," if duration_sec > 2.0 else "setpts=PTS-STARTPTS,"
+    if width >= 64 and height >= 64:
+        target_w = (width // 2) * 2
+        target_h = (height // 2) * 2
+        up_w = ((int(target_w * 1.06) + 1) // 2) * 2
+        up_h = ((int(target_h * 1.06) + 1) // 2) * 2
+        geom_steps = (
+            f"scale={up_w}:{up_h}:flags=bicubic,"
+            "lenscorrection=cx=0.493:cy=0.507:k1=-0.025:k2=0.008,"
+            "rotate=0.0065:ow=iw:oh=ih:bilinear=1,"
+            f"crop={target_w}:{target_h}:(iw-{target_w})*0.56:(ih-{target_h})*0.44,"
+            f"scale={target_w}:{target_h}:flags=lanczos+accurate_rnd,"
+        )
+    else:
+        geom_steps = (
+            "scale=trunc(iw*1.06/2)*2:trunc(ih*1.06/2)*2:flags=bicubic,"
+            "lenscorrection=cx=0.493:cy=0.507:k1=-0.025:k2=0.008,"
+            "rotate=0.0065:ow=iw:oh=ih:bilinear=1,"
+            "crop=trunc(iw/1.06/2)*2:trunc(ih/1.06/2)*2:(iw-out_w)*0.56:(ih-out_h)*0.44,"
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd,"
+        )
+
+    return (
+        f"{trim_prefix}"
+        "fps=fps=30:round=near,"
+        "format=yuv420p,"
+        "hqdn3d=2.4:2.0:3.2:2.6,"
+        f"{geom_steps}"
+        "chromashift=cbh=1:cbv=0:crh=-1:crv=0,"
+        "hue=h=1.4:s=1.015,"
+        "colorchannelmixer=rr=1.011:rg=-0.008:rb=-0.003:gr=-0.005:gg=1.007:gb=-0.002:br=-0.003:bg=-0.007:bb=1.010,"
+        "eq=contrast=1.018:brightness=-0.002:saturation=1.015:gamma=1.012,"
+        "unsharp=5:5:0.16:3:3:0.0,"
+        "vignette=angle=PI/8,"
+        "noise=c0s=1.2:c1s=0:c2s=0:allf=t,"
         "setsar=1"
     )
 
 def build_synthid_audio_filter_complex(voice_label: str = "[0:a]", out_label: str = "[aout]") -> str:
     return (
-        "anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL];"
-        "anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR];"
+        "anoisesrc=color=pink:amplitude=0.00042:sample_rate=48000:seed=104729[pL];"
+        "anoisesrc=color=pink:amplitude=0.00042:sample_rate=48000:seed=224737[pR];"
         "[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo];"
-        "anoisesrc=color=white:amplitude=0.0128:sample_rate=48000:seed=319993[aL];"
-        "anoisesrc=color=white:amplitude=0.0128:sample_rate=48000:seed=492871[aR];"
-        "[aL][aR]amerge=inputs=2,highpass=f=13900,highpass=f=13900,lowpass=f=20400[room_hi];"
-        "[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.38:d=0.20,volume=0.85[room];"
+        "anoisesrc=color=white:amplitude=0.0132:sample_rate=48000:seed=319993[aL];"
+        "anoisesrc=color=white:amplitude=0.0132:sample_rate=48000:seed=492871[aR];"
+        "[aL][aR]amerge=inputs=2,highpass=f=14100,highpass=f=14100,lowpass=f=20200[room_hi];"
+        "[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.38:d=0.20,volume=0.88[room];"
         f"{voice_label}asetpts=PTS-STARTPTS,aresample=48000,"
         "aformat=channel_layouts=stereo,"
         "afftdn=nr=11:nf=-36:tn=1,"
@@ -127,6 +208,71 @@ def build_synthid_audio_filter_complex(voice_label: str = "[0:a]", out_label: st
         "acompressor=threshold=-26dB:ratio=2.6:attack=8:release=120,"
         "asplit=2[vdry][ver_in];"
         "[ver_in]highpass=f=280,lowpass=f=4800,adelay=8|19,volume=0.13[ver];"
+        "[vdry][ver]amix=inputs=2:normalize=0[voice];"
+        f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95{out_label}"
+    )
+
+def build_safe_mode_audio_filter_complex(voice_label: str = "[0:a]", out_label: str = "[aout]") -> str:
+    """
+    Safe Mode Temporal-Locked Audio Filtergraph:
+    Maintains exact 1.0x duration/lip-sync via aresample=async=1:first_pts=0 while neutralizing TTS signatures.
+    """
+    return (
+        "anoisesrc=color=pink:amplitude=0.00040:sample_rate=48000:seed=104729[pL];"
+        "anoisesrc=color=pink:amplitude=0.00040:sample_rate=48000:seed=224737[pR];"
+        "[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo];"
+        "anoisesrc=color=white:amplitude=0.0128:sample_rate=48000:seed=319993[aL];"
+        "anoisesrc=color=white:amplitude=0.0128:sample_rate=48000:seed=492871[aR];"
+        "[aL][aR]amerge=inputs=2,highpass=f=14100,highpass=f=14100,lowpass=f=20200[room_hi];"
+        "[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.36:d=0.18,volume=0.86[room];"
+        f"{voice_label}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,"
+        "aformat=channel_layouts=stereo,"
+        "afftdn=nr=9:nf=-36:tn=1,"
+        "rubberband=tempo=1.0:pitch=0.985:formant=shifted,"
+        "highpass=f=65,"
+        "equalizer=f=185:t=q:w=1.0:g=1.2,"
+        "equalizer=f=3400:t=q:w=1.2:g=-0.9,"
+        "highshelf=f=9500:g=0.7,"
+        "aecho=0.94:0.90:14|23:0.035|0.020,"
+        "extrastereo=m=1.22,"
+        "asoftclip=type=tanh:threshold=0.92,"
+        "acompressor=threshold=-26dB:ratio=2.4:attack=8:release=120,"
+        "asplit=2[vdry][ver_in];"
+        "[ver_in]highpass=f=280,lowpass=f=4800,adelay=6|15,volume=0.10[ver];"
+        "[vdry][ver]amix=inputs=2:normalize=0[voice];"
+        f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95{out_label}"
+    )
+
+def build_unified_audio_filter_complex(voice_label: str = "[0:a]", out_label: str = "[aout]", duration_sec: float = 0.0) -> str:
+    """
+    Unified Temporal-Locked Anti-TTS Audio Filtergraph:
+    Strict 1.0x sync via matching 0.07s boundary trim + aresample=async=1:first_pts=0
+    + 2.6% rubberband pitch/formant shift + dual-seed stereo pink/air ambiance.
+    """
+    atrim_prefix = "atrim=start=0.07,asetpts=PTS-STARTPTS," if duration_sec > 2.0 else "asetpts=PTS-STARTPTS,"
+    return (
+        "anoisesrc=color=pink:amplitude=0.00032:sample_rate=48000:seed=104729[pL];"
+        "anoisesrc=color=pink:amplitude=0.00032:sample_rate=48000:seed=224737[pR];"
+        "[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo];"
+        "anoisesrc=color=white:amplitude=0.0138:sample_rate=48000:seed=319993[aL];"
+        "anoisesrc=color=white:amplitude=0.0138:sample_rate=48000:seed=492871[aR];"
+        "[aL][aR]amerge=inputs=2,highpass=f=14200,highpass=f=14200,lowpass=f=20200[room_hi];"
+        "[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.38:d=0.20,volume=0.85[room];"
+        f"{voice_label}{atrim_prefix}aresample=48000:async=1:first_pts=0,"
+        "aformat=channel_layouts=stereo,"
+        "afftdn=nr=11:nf=-36:tn=1,"
+        "rubberband=tempo=1.0:pitch=0.974:formant=shifted,"
+        "highpass=f=65,"
+        "equalizer=f=185:t=q:w=1.0:g=1.4,"
+        "equalizer=f=2400:t=q:w=1.8:g=-1.1,"
+        "equalizer=f=3400:t=q:w=1.2:g=-1.0,"
+        "highshelf=f=9500:g=0.8,"
+        "aecho=0.94:0.90:15|25:0.042|0.024,"
+        "extrastereo=m=1.26,"
+        "asoftclip=type=tanh:threshold=0.92,"
+        "acompressor=threshold=-26dB:ratio=2.5:attack=8:release=120,"
+        "asplit=2[vdry][ver_in];"
+        "[ver_in]highpass=f=280,lowpass=f=4800,adelay=7|17,volume=0.12[ver];"
         "[vdry][ver]amix=inputs=2:normalize=0[voice];"
         f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95{out_label}"
     )
@@ -374,6 +520,7 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
         "kling",
         "runway",
         "seedance",
+        "mdirappl",
     )
     container_boxes = ("moov", "trak", "mdia", "minf", "stbl", "edts", "dinf")
     mac_epoch_now = int(time.time()) + 2082844800 - 1860
@@ -386,7 +533,7 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
 
             def walk_and_clean(start: int, end: int, depth: int):
                 nonlocal sanitized_count
-                if depth > 7:
+                if depth > 8:
                     return
                 offset = start
                 while offset + 8 <= end:
@@ -424,6 +571,18 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
                             if ctime == 0:
                                 data[offset+hdr+4:offset+hdr+12] = ts_bytes_64
                                 data[offset+hdr+12:offset+hdr+20] = ts_bytes_64
+                    elif box_type == "stsd" and offset + hdr + 8 < offset + size:
+                        # FullBox: 4 bytes version/flags + 4 bytes entry_count
+                        walk_and_clean(offset + hdr + 8, offset + size, depth + 1)
+                    elif box_type in ("avc1", "avc3", "hev1", "hvc1", "mp4v") and size >= 86:
+                        # Wipe FFmpeg/libx264 hardcoded VisualSampleEntry compressorname (32 bytes at offset+50..offset+82)
+                        # and clear vendor field (offset+20..offset+24) to eliminate TAG:encoder=Lavc libx264
+                        comp_slice = data[offset+50:offset+82]
+                        if any(comp_slice):
+                            data[offset+50:offset+82] = b"\x00" * 32
+                            sanitized_count += 1
+                        if any(data[offset+20:offset+24]):
+                            data[offset+20:offset+24] = b"\x00\x00\x00\x00"
                     elif box_type in ("uuid", "c2pa", "jumb", "c2ma", "c2cl", "XMP_"):
                         data[offset+4:offset+8] = b"free"
                         data[offset+hdr:offset+size] = b"\x00" * (size - hdr)
@@ -454,7 +613,7 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
 def process_video(
     input_path: str,
     output_path: str,
-    mode: str = "deep_synthid",
+    mode: str = "unified",
     deep_meta_purge: bool = True,
     force_keyframes: bool = True,
     camera_profile: str = "samsung",
@@ -473,9 +632,22 @@ def process_video(
     codec_name = metrics["codec"]
     vid_w, vid_h = metrics["width"], metrics["height"]
     duration_sec = metrics["duration_sec"]
-    expected_frames = max(1, int(duration_sec * 0.961538 * 29.97)) if (mode == "deep_synthid" and duration_sec > 0) else metrics["total_frames"]
+    if mode == "deep_synthid" and duration_sec > 0:
+        expected_frames = max(1, int(duration_sec * 0.961538 * 29.97))
+    elif mode in ("all_in_one", "unified") and duration_sec > 0:
+        eff_dur = max(0.2, duration_sec - (0.07 if duration_sec > 2.0 else 0.0))
+        expected_frames = max(1, int(eff_dur * 30.0))
+    elif mode == "safe_mode" and duration_sec > 0:
+        expected_frames = max(1, int(duration_sec * 29.97))
+    else:
+        expected_frames = metrics["total_frames"]
 
-    video_filter_str = build_synthid_video_filter(vid_w, vid_h)
+    if mode in ("all_in_one", "unified"):
+        video_filter_str = build_unified_video_filter(vid_w, vid_h, duration_sec)
+    elif mode == "safe_mode":
+        video_filter_str = build_safe_mode_video_filter(vid_w, vid_h)
+    else:
+        video_filter_str = build_synthid_video_filter(vid_w, vid_h)
     probe_msg = (
         f"   -> Stream Probe: Codec={codec_name.upper() or 'H264'} | "
         f"Res={f'{vid_w}x{vid_h}' if vid_w else 'Auto'} | "
@@ -513,15 +685,19 @@ def process_video(
         a_handler = "SoundHandle"
         cam_meta = ["-metadata", "make=samsung", "-metadata", "model=SM-S928B"]
 
-    encode_preset = "superfast" if duration_sec > 25 or (vid_w * vid_h > 1100000) else "veryfast"
+    encode_preset = "superfast" if duration_sec > 15 or (vid_w * vid_h >= 400000) else "veryfast"
 
     with tempfile.TemporaryDirectory() as temp_dir:
         pass1_path = os.path.join(temp_dir, "pass1_reencoded.mp4")
         source_for_pass2 = input_path
 
+        # In Safe Mode, Unified, and All-in-One Mode, strictly bypass keyframe-only injection (-g 45)
+        # and prioritize smooth closed-GOP temporal frame re-encoding with CFR pacing.
+        effective_force_keyframes = force_keyframes and (mode not in ("all_in_one", "safe_mode", "unified"))
+
         keyframe_flags = [
-            "-g", "45" if force_keyframes else "60",
-            "-keyint_min", "20",
+            "-g", "45" if effective_force_keyframes else "60",
+            "-keyint_min", "20" if effective_force_keyframes else "24",
             "-sc_threshold", "40",
             "-refs", "2",
             "-color_primaries", "bt709",
@@ -532,22 +708,20 @@ def process_video(
         x264_params = (
             "ref=2:bframes=2:b-adapt=1:nal-hrd=none:force-cfr=1:"
             "deblock=1,1:aq-mode=2:open-gop=0:scenecut=40:keyint=45:min-keyint=20"
-            if force_keyframes else
-            "ref=2:bframes=2:b-adapt=1:nal-hrd=none:force-cfr=1:deblock=1,1:aq-mode=2:open-gop=0:keyint=60:min-keyint=24"
+            if effective_force_keyframes else
+            "ref=2:bframes=2:b-adapt=1:nal-hrd=none:force-cfr=1:deblock=1,1:aq-mode=2:open-gop=0:scenecut=40:keyint=60:min-keyint=24"
         )
 
-        # PASS 1: Multi-Domain Audio-Visual Anti-AI Re-Synthesis & Smartphone B-Frame Encoding
-        if mode == "deep_synthid":
-            p1_msg = (
-                "-> [PASS 1/2 • AUDIO-VISUAL ANTI-AI v20] "
-                "Menjalankan Filter CMOS Optik Bebas-Ghost + 29.97fps B-Frames (refs=2) + Rubberband Pitch/Formant + Dual-Seed Pink Room Air (-cutoff 20200)..."
+        # SINGLE-COMMAND ALL-IN-ONE EXPORT PROFILE (Safe Temporal CFR + Deep Anti-SynthID + Zero-SEI Container Purge)
+        if mode == "all_in_one":
+            aio_msg = (
+                "-> [ALL-IN-ONE SINGLE PIPELINE] Safe Mode Temporal CFR + Deep 5-Layer Anti-SynthID "
+                "+ Zero-SEI (-bsf:v filter_units=remove_types=6) + OEM Stamping dalam 1 command FFmpeg terpadu..."
             )
-            logs.append(p1_msg)
-            tracker.push_log(p1_msg)
+            logs.append(aio_msg)
+            tracker.push_log(aio_msg)
 
-            pass1_bsf = "filter_units=remove_types=39|40" if codec_name in ("hevc", "h265") else "filter_units=remove_types=6"
-
-            pass1_cmd = [
+            aio_cmd = [
                 FFMPEG_BIN,
                 "-y",
                 "-threads", "0",
@@ -556,9 +730,9 @@ def process_video(
             ]
 
             if has_audio:
-                audio_fc = build_synthid_audio_filter_complex("[0:a]", "[aout]")
+                audio_fc = build_unified_audio_filter_complex("[0:a]", "[aout]", duration_sec)
                 full_fc = f"[0:v]{video_filter_str}[vout];{audio_fc}"
-                pass1_cmd.extend([
+                aio_cmd.extend([
                     "-filter_complex", full_fc,
                     "-map", "[vout]",
                     "-map", "[aout]",
@@ -568,70 +742,18 @@ def process_video(
                     "-cutoff", "20500",
                 ])
             else:
-                pass1_cmd.extend([
+                aio_cmd.extend([
                     "-map", "0:v:0",
                     "-vf", video_filter_str,
                     "-an",
                 ])
 
-            pass1_cmd.extend([
-                "-c:v", "libx264",
-                "-preset", encode_preset,
-                "-profile:v", "high",
-                "-level", "4.1",
-                "-crf", "19",
-                "-bf", "2",
-                "-pix_fmt", "yuv420p",
-                "-color_primaries", "bt709",
-                "-color_trc", "bt709",
-                "-colorspace", "bt709",
-                *keyframe_flags,
-                "-x264-params", x264_params,
-                "-bsf:v", pass1_bsf,
-                "-fflags", "+bitexact",
-                "-flags:v", "+bitexact",
-                "-flags:a", "+bitexact",
-                "-map_metadata", "-1",
-                "-map_chapters", "-1",
-                pass1_path
-            ])
-
-            rc1, err1 = run_ffmpeg_streaming(
-                pass1_cmd,
-                tracker,
-                stage="pass1_reencode",
-                stage_label="Pass 1/2: Audio-Visual Anti-AI Filtering & B-Frame Synthesis",
-                start_pct=10,
-                end_pct=82,
-                expected_duration=duration_sec * 0.961538 if duration_sec > 0 else 0,
-                expected_frames=expected_frames,
-                prefix="ffmpeg-reencode",
-            )
-            if rc1 == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384:
-                source_for_pass2 = pass1_path
-                t_lines = extract_ffmpeg_telemetry(err1, "ffmpeg-reencode")
-                logs.extend(t_lines)
-                done1_msg = "✓ [PASS 1/2] Re-sintesis Audio-Visual selesai: 29.97fps bebas ghost, B-Frames refs=2, Rubberband + Stereo Pink Room Air aktif."
-                logs.append(done1_msg)
-                tracker.push_log(done1_msg)
-            else:
-                err_msg = err1.splitlines()[-1] if err1 else "Unknown error"
-                raise RuntimeError(f"FFmpeg Pass 1 Re-encode Frame Filter gagal: {err_msg}")
-        elif force_keyframes:
-            kf_msg = "-> [PASS 1/2 • FORCE KEYFRAME RE-ENCODE] Menyuntikkan IDR Keyframes & B-Frames (CRF 18)..."
-            logs.append(kf_msg)
-            tracker.push_log(kf_msg)
-
-            pass1_kf_cmd = [
-                FFMPEG_BIN,
-                "-y",
-                "-threads", "0",
-                "-i", input_path,
-                "-map", "0:v:0",
-            ]
-            if has_audio:
-                pass1_kf_cmd.extend(["-map", "0:a?", "-c:a", "copy"])
-            pass1_kf_cmd.extend([
+            lang_tag = "und" if camera_profile == "neutral" else "eng"
+            aio_cmd.extend([
+                "-dn",
+                "-sn",
+                "-fps_mode", "cfr",
+                "-video_track_timescale", "90000",
                 "-c:v", "libx264",
                 "-preset", encode_preset,
                 "-profile:v", "high",
@@ -641,92 +763,274 @@ def process_video(
                 "-pix_fmt", "yuv420p",
                 *keyframe_flags,
                 "-x264-params", x264_params,
-                "-fflags", "+bitexact",
-                "-flags:v", "+bitexact",
+                "-bsf:v", "filter_units=remove_types=6",
                 "-map_metadata", "-1",
+                "-map_metadata:g", "-1",
+                "-map_metadata:s:v", "-1",
+                "-map_metadata:s:a", "-1",
                 "-map_chapters", "-1",
-                pass1_path
+                "-metadata", "encoder=",
+                "-write_tmcd", "0",
+                *cam_meta,
+                "-metadata:s:v:0", f"handler_name={v_handler}",
+                "-metadata:s:v:0", f"language={lang_tag}",
             ])
-            rc1kf, err1kf = run_ffmpeg_streaming(
-                pass1_kf_cmd,
+            if has_audio:
+                aio_cmd.extend([
+                    "-metadata:s:a:0", f"handler_name={a_handler}",
+                    "-metadata:s:a:0", f"language={lang_tag}",
+                ])
+
+            aio_cmd.extend([
+                "-brand", camera_brand,
+                "-fflags", "+genpts+bitexact",
+                "-flags:v", "+bitexact",
+                "-flags:a", "+bitexact",
+                "-movflags", "+faststart",
+                output_path,
+            ])
+
+            rc_aio, err_aio = run_ffmpeg_streaming(
+                aio_cmd,
                 tracker,
                 stage="pass1_reencode",
-                stage_label="Pass 1/2: Menyuntikkan IDR Keyframes & B-Frames",
+                stage_label="All-in-One Pipeline (Safe CFR + Deep Anti-SynthID + Zero-SEI)",
                 start_pct=10,
-                end_pct=82,
-                expected_duration=duration_sec,
+                end_pct=94,
+                expected_duration=max(0.2, duration_sec - (0.07 if duration_sec > 2.0 else 0.0)) if duration_sec > 0 else 0,
                 expected_frames=expected_frames,
-                prefix="ffmpeg-keyframe",
+                prefix="ffmpeg-all-in-one",
             )
-            if rc1kf == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384:
-                source_for_pass2 = pass1_path
-                logs.extend(extract_ffmpeg_telemetry(err1kf, "ffmpeg-keyframe"))
-                donekf_msg = "✓ [PASS 1/2] IDR Keyframes 1s Closed-GOP berhasil disuntikkan."
-                logs.append(donekf_msg)
-                tracker.push_log(donekf_msg)
+            if rc_aio != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) <= 16384:
+                err_msg = err_aio.splitlines()[-1] if err_aio else "All-in-One FFmpeg pipeline failed"
+                raise RuntimeError(f"FFmpeg All-in-One Pipeline gagal: {err_msg}")
 
-        # Detect codec on pass2 source
-        p2_metrics = probe_stream_metrics(source_for_pass2)
-        pass2_codec = p2_metrics["codec"]
-        sei_filter = "filter_units=remove_types=39|40" if pass2_codec in ("hevc", "h265") else "filter_units=remove_types=6"
+            logs.extend(extract_ffmpeg_telemetry(err_aio, "ffmpeg-all-in-one"))
+            done_aio = (
+                "✓ [ALL-IN-ONE SELESAI] Safe CFR + Deep Anti-SynthID + Zero-SEI (Type 6) "
+                "+ Faststart selesai dalam 1 eksekusi pipeline."
+            )
+            logs.append(done_aio)
+            tracker.push_log(done_aio)
+        else:
+            # PASS 1: Unified OR Safe Mode OR Deep Anti-SynthID
+            if mode in ("unified", "deep_synthid", "safe_mode"):
+                is_temporal_cfr = mode in ("safe_mode", "unified")
+                if mode == "unified":
+                    p1_msg = (
+                        "-> [PASS 1/2 • PAKET TERPADU ANTI-GLITCH + ANTI-SYNTHID] "
+                        "Temporal CFR ketat (PTS-STARTPTS, Closed-GOP, Bypass Keyframe-Only) + Optik CMOS Anti-SynthID + Audio Rubberband & Stereo Pink Air (-cutoff 20500)..."
+                    )
+                elif mode == "safe_mode":
+                    p1_msg = (
+                        "-> [PASS 1/2 • SAFE MODE TEMPORAL ANTI-GLITCH] "
+                        "Re-encoding ketat frame-by-frame CFR (PTS-STARTPTS, Closed-GOP, Bypass Keyframe-Only Injection) + Audio Synced Anti-TTS..."
+                    )
+                else:
+                    p1_msg = (
+                        "-> [PASS 1/2 • AUDIO-VISUAL ANTI-AI v20] "
+                        "Menjalankan Filter CMOS Optik Bebas-Ghost + 29.97fps B-Frames (refs=2) + Rubberband Pitch/Formant + Dual-Seed Pink Room Air (-cutoff 20200)..."
+                    )
+                logs.append(p1_msg)
+                tracker.push_log(p1_msg)
 
-        p2_msg = f"-> [PASS 2/2 • REMUXING & ZERO-SEI PURGE] Menulis ulang container MP4 (-c copy -bsf:v {sei_filter} -brand {camera_brand})..."
-        logs.append(p2_msg)
-        tracker.push_log(p2_msg)
+                pass1_bsf = "filter_units=remove_types=39|40" if codec_name in ("hevc", "h265") else "filter_units=remove_types=6"
 
-        pass2_cmd = [
-            FFMPEG_BIN,
-            "-y",
-            "-i", source_for_pass2,
-            *(["-avoid_negative_ts", "make_zero"] if (force_keyframes and source_for_pass2 == input_path) else []),
-            "-map", "0:v:0",
-        ]
-        if has_audio:
-            pass2_cmd.extend(["-map", "0:a?"])
+                pass1_cmd = [
+                    FFMPEG_BIN,
+                    "-y",
+                    "-threads", "0",
+                    "-filter_threads", "0",
+                    "-i", input_path,
+                ]
 
-        pass2_cmd.extend([
-            "-dn",
-            "-sn",
-            "-c", "copy",
-            "-bsf:v", sei_filter,
-            "-map_metadata", "-1",
-            "-map_metadata:g", "-1",
-            "-map_metadata:s:v", "-1",
-            "-map_metadata:s:a", "-1",
-            "-map_chapters", "-1",
-            "-metadata", "encoder=",
-            "-write_tmcd", "0",
-            *cam_meta,
-            "-metadata:s:v:0", f"handler_name={v_handler}",
-        ])
-        if has_audio:
-            pass2_cmd.extend(["-metadata:s:a:0", f"handler_name={a_handler}"])
+                if has_audio:
+                    if mode == "unified":
+                        audio_fc = build_unified_audio_filter_complex("[0:a]", "[aout]", duration_sec)
+                    elif mode == "safe_mode":
+                        audio_fc = build_safe_mode_audio_filter_complex("[0:a]", "[aout]")
+                    else:
+                        audio_fc = build_synthid_audio_filter_complex("[0:a]", "[aout]")
+                    full_fc = f"[0:v]{video_filter_str}[vout];{audio_fc}"
+                    pass1_cmd.extend([
+                        "-filter_complex", full_fc,
+                        "-map", "[vout]",
+                        "-map", "[aout]",
+                        "-c:a", "aac",
+                        "-b:a", "256k",
+                        "-ar", "48000",
+                        "-cutoff", "20500",
+                    ])
+                else:
+                    pass1_cmd.extend([
+                        "-map", "0:v:0",
+                        "-vf", video_filter_str,
+                        "-an",
+                    ])
 
-        pass2_cmd.extend([
-            "-brand", camera_brand,
-            "-fflags", "+bitexact",
-            "-flags:v", "+bitexact",
-            "-flags:a", "+bitexact",
-            "-movflags", "+faststart",
-            output_path
-        ])
+                pass1_cmd.extend([
+                    "-fps_mode", "cfr",
+                    "-c:v", "libx264",
+                    "-preset", encode_preset,
+                    "-profile:v", "high",
+                    "-level", "4.1",
+                    "-crf", "18" if is_temporal_cfr else "19",
+                    "-bf", "2",
+                    "-pix_fmt", "yuv420p",
+                    *keyframe_flags,
+                    "-x264-params", x264_params,
+                    "-bsf:v", pass1_bsf,
+                    "-fflags", "+genpts+bitexact" if is_temporal_cfr else "+bitexact",
+                    "-flags:v", "+bitexact",
+                    "-flags:a", "+bitexact",
+                    "-map_metadata", "-1",
+                    "-map_chapters", "-1",
+                    pass1_path
+                ])
 
-        rc2, err2 = run_ffmpeg_streaming(
-            pass2_cmd,
-            tracker,
-            stage="pass2_remux",
-            stage_label="Pass 2/2: Zero-SEI Container Rewrite & Hardware OEM Stamping",
-            start_pct=84,
-            end_pct=94,
-            expected_duration=p2_metrics["duration_sec"] or duration_sec,
-            expected_frames=p2_metrics["total_frames"] or expected_frames,
-            prefix="ffmpeg-remux",
-        )
-        if rc2 != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) < 1024:
-            err_msg = err2.splitlines()[-1] if err2 else "Pass 2 failed"
-            raise RuntimeError(f"FFmpeg Pass 2 Gagal: {err_msg}")
+                rc1, err1 = run_ffmpeg_streaming(
+                    pass1_cmd,
+                    tracker,
+                    stage="pass1_reencode",
+                    stage_label=(
+                        "Pass 1/2 (Unified Pipeline): Temporal CFR Anti-Glitch + Deep Anti-SynthID"
+                        if mode == "unified" else
+                        "Pass 1/2 (Safe Mode): Strict Temporal CFR Frame Re-Encoding (Anti-Glitch)"
+                        if mode == "safe_mode" else
+                        "Pass 1/2: Audio-Visual Anti-AI Filtering & B-Frame Synthesis"
+                    ),
+                    start_pct=10,
+                    end_pct=82,
+                    expected_duration=(duration_sec if is_temporal_cfr else duration_sec * 0.961538) if duration_sec > 0 else 0,
+                    expected_frames=expected_frames,
+                    prefix="ffmpeg-unified" if mode == "unified" else ("ffmpeg-safemode" if mode == "safe_mode" else "ffmpeg-reencode"),
+                )
+                if rc1 == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384:
+                    source_for_pass2 = pass1_path
+                    t_lines = extract_ffmpeg_telemetry(err1, "ffmpeg-unified" if mode == "unified" else ("ffmpeg-safemode" if mode == "safe_mode" else "ffmpeg-reencode"))
+                    logs.extend(t_lines)
+                    done1_msg = (
+                        "✓ [PASS 1/2 UNIFIED] Temporal CFR anti-glitch + Optik CMOS Anti-SynthID + Audio Rubberband/Pink Air selesai mulus (0% stutter)."
+                        if mode == "unified" else
+                        "✓ [PASS 1/2 SAFE MODE] Re-encoding temporal CFR ketat selesai mulus (0% stutter, Keyframe-Only Injection dilewati, 0% SEI)."
+                        if mode == "safe_mode" else
+                        "✓ [PASS 1/2] Re-sintesis Audio-Visual selesai: 29.97fps bebas ghost, B-Frames refs=2, Rubberband + Stereo Pink Room Air aktif."
+                    )
+                    logs.append(done1_msg)
+                    tracker.push_log(done1_msg)
+                else:
+                    err_msg = err1.splitlines()[-1] if err1 else "Unknown error"
+                    raise RuntimeError(f"FFmpeg Pass 1 Re-encode Frame Filter gagal: {err_msg}")
+            elif effective_force_keyframes:
+                kf_msg = "-> [PASS 1/2 • FORCE KEYFRAME RE-ENCODE] Menyuntikkan IDR Keyframes & B-Frames (CRF 18)..."
+                logs.append(kf_msg)
+                tracker.push_log(kf_msg)
 
-        logs.extend(extract_ffmpeg_telemetry(err2, "ffmpeg-remux"))
+                pass1_kf_cmd = [
+                    FFMPEG_BIN,
+                    "-y",
+                    "-threads", "0",
+                    "-i", input_path,
+                    "-map", "0:v:0",
+                ]
+                if has_audio:
+                    pass1_kf_cmd.extend(["-map", "0:a?", "-c:a", "copy"])
+                pass1_kf_cmd.extend([
+                    "-c:v", "libx264",
+                    "-preset", encode_preset,
+                    "-profile:v", "high",
+                    "-level", "4.1",
+                    "-crf", "18",
+                    "-bf", "2",
+                    "-pix_fmt", "yuv420p",
+                    *keyframe_flags,
+                    "-x264-params", x264_params,
+                    "-fflags", "+bitexact",
+                    "-flags:v", "+bitexact",
+                    "-map_metadata", "-1",
+                    "-map_chapters", "-1",
+                    pass1_path
+                ])
+                rc1kf, err1kf = run_ffmpeg_streaming(
+                    pass1_kf_cmd,
+                    tracker,
+                    stage="pass1_reencode",
+                    stage_label="Pass 1/2: Menyuntikkan IDR Keyframes & B-Frames",
+                    start_pct=10,
+                    end_pct=82,
+                    expected_duration=duration_sec,
+                    expected_frames=expected_frames,
+                    prefix="ffmpeg-keyframe",
+                )
+                if rc1kf == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384:
+                    source_for_pass2 = pass1_path
+                    logs.extend(extract_ffmpeg_telemetry(err1kf, "ffmpeg-keyframe"))
+                    donekf_msg = "✓ [PASS 1/2] IDR Keyframes 1s Closed-GOP berhasil disuntikkan."
+                    logs.append(donekf_msg)
+                    tracker.push_log(donekf_msg)
+
+            # Detect codec on pass2 source
+            p2_metrics = probe_stream_metrics(source_for_pass2)
+            pass2_codec = p2_metrics["codec"]
+            sei_filter = "filter_units=remove_types=39|40" if pass2_codec in ("hevc", "h265") else "filter_units=remove_types=6"
+
+            p2_msg = f"-> [PASS 2/2 • REMUXING & ZERO-SEI PURGE] Menulis ulang container MP4 (-c copy -bsf:v {sei_filter} -brand {camera_brand})..."
+            logs.append(p2_msg)
+            tracker.push_log(p2_msg)
+
+            pass2_cmd = [
+                FFMPEG_BIN,
+                "-y",
+                "-i", source_for_pass2,
+                *(["-avoid_negative_ts", "make_zero"] if (effective_force_keyframes and source_for_pass2 == input_path) else []),
+                "-map", "0:v:0",
+            ]
+            if has_audio:
+                pass2_cmd.extend(["-map", "0:a?"])
+
+            pass2_cmd.extend([
+                "-dn",
+                "-sn",
+                "-c", "copy",
+                "-bsf:v", sei_filter,
+                "-map_metadata", "-1",
+                "-map_metadata:g", "-1",
+                "-map_metadata:s:v", "-1",
+                "-map_metadata:s:a", "-1",
+                "-map_chapters", "-1",
+                "-metadata", "encoder=",
+                "-write_tmcd", "0",
+                *cam_meta,
+                "-metadata:s:v:0", f"handler_name={v_handler}",
+            ])
+            if has_audio:
+                pass2_cmd.extend(["-metadata:s:a:0", f"handler_name={a_handler}"])
+
+            pass2_cmd.extend([
+                "-brand", camera_brand,
+                "-fflags", "+bitexact",
+                "-flags:v", "+bitexact",
+                "-flags:a", "+bitexact",
+                "-movflags", "+faststart",
+                output_path
+            ])
+
+            rc2, err2 = run_ffmpeg_streaming(
+                pass2_cmd,
+                tracker,
+                stage="pass2_remux",
+                stage_label="Pass 2/2: Zero-SEI Container Rewrite & Hardware OEM Stamping",
+                start_pct=84,
+                end_pct=94,
+                expected_duration=p2_metrics["duration_sec"] or duration_sec,
+                expected_frames=p2_metrics["total_frames"] or expected_frames,
+                prefix="ffmpeg-remux",
+            )
+            if rc2 != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) < 1024:
+                err_msg = err2.splitlines()[-1] if err2 else "Pass 2 failed"
+                raise RuntimeError(f"FFmpeg Pass 2 Gagal: {err_msg}")
+
+            logs.extend(extract_ffmpeg_telemetry(err2, "ffmpeg-remux"))
 
         tracker.update(
             force=True,
@@ -760,7 +1064,7 @@ def main():
     parser = argparse.ArgumentParser(description="Cloud Python FFmpeg Cleaner Pipeline")
     parser.add_argument("--input", required=True, help="Path to input video")
     parser.add_argument("--output", required=True, help="Path to output cleaned video")
-    parser.add_argument("--mode", default="deep_synthid", choices=["deep_synthid", "remux_only"])
+    parser.add_argument("--mode", default="all_in_one", choices=["all_in_one", "unified", "deep_synthid", "safe_mode", "remux_only"])
     parser.add_argument("--deep-meta-purge", default="true", choices=["true", "false"])
     parser.add_argument("--force-keyframes", default="true", choices=["true", "false"])
     parser.add_argument("--camera-profile", default="samsung", choices=["samsung", "apple", "xiaomi", "neutral"])

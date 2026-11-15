@@ -5,15 +5,21 @@ import { createFile } from 'mp4box';
 import {
   Activity,
   AlertTriangle,
+  Bug,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Copy,
   Cpu,
   Download,
   Eye,
   FileSearch,
-  Film,
+  Layers,
+  Play,
   RefreshCw,
+  Share2,
+  ShieldAlert,
   ShieldCheck,
   Terminal,
   UploadCloud,
@@ -22,6 +28,7 @@ import {
 } from 'lucide-react';
 import type { ExternalProbeReport } from '@/lib/video-probe';
 import type { CleanerProgressState } from '@/lib/meta-cleaner-progress';
+import { WatermarkNoiseVisualizer } from './WatermarkNoiseVisualizer';
 
 interface LogEntry {
   id: string;
@@ -170,22 +177,53 @@ const VALID_TOP_BOXES = new Set([
 
 /**
  * Validates that a candidate output buffer is a genuine, playable MP4 video
- * and NOT an HTML error/redirect page (such as 10 KB cookie_check.html or warmup.html).
+ * and NOT an HTML error/redirect page (such as cookie_check.html or proxy timeout HTML).
  */
-function isValidMp4VideoBuffer(bytes: Uint8Array, sourceByteLength: number): boolean {
+function validateMp4Buffer(
+  bytes: Uint8Array,
+  sourceByteLength: number
+): { valid: boolean; reason?: string } {
   if (!bytes || bytes.byteLength < 512) {
-    return false;
-  }
-
-  // Reject HTML error/redirect responses (e.g. <!DOCTYPE or <html)
-  if (bytes[0] === 0x3c || (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf && bytes[3] === 0x3c)) {
-    return false;
+    return {
+      valid: false,
+      reason: `Buffer output terlalu kecil (${bytes?.byteLength ?? 0} bytes).`,
+    };
   }
 
   const decoder = new TextDecoder('ascii', { fatal: false });
+
+  // Reject HTML error/redirect responses (e.g. <!DOCTYPE or <html)
+  if (
+    bytes[0] === 0x3c ||
+    (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf && bytes[3] === 0x3c)
+  ) {
+    const snippet = decoder.decode(bytes.subarray(0, 120)).replace(/\s+/g, ' ').trim();
+    return {
+      valid: false,
+      reason: `Server/Proxy mengembalikan halaman HTML bukan MP4 (${snippet.slice(0, 80)}...).`,
+    };
+  }
+
+  // Reject JSON error payloads accidentally returned as 200
+  if (bytes[0] === 0x7b || bytes[0] === 0x5b) {
+    try {
+      const parsed = JSON.parse(new TextDecoder('utf-8').decode(bytes));
+      if (parsed?.error) {
+        return { valid: false, reason: String(parsed.error) };
+      }
+    } catch {}
+    return {
+      valid: false,
+      reason: 'Server mengembalikan respons JSON/teks, bukan stream MP4 biner.',
+    };
+  }
+
   const firstBoxType = decoder.decode(bytes.subarray(4, 8));
   if (!VALID_TOP_BOXES.has(firstBoxType)) {
-    return false;
+    return {
+      valid: false,
+      reason: `Header top-level atom tidak valid ("${firstBoxType.replace(/[^\x20-\x7e]/g, '?')}").`,
+    };
   }
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -222,7 +260,16 @@ function isValidMp4VideoBuffer(bytes: Uint8Array, sourceByteLength: number): boo
   }
 
   const minRequiredBytes = Math.min(8192, Math.max(1024, Math.floor(sourceByteLength * 0.05)));
-  return (hasMoov || hasMdat) && bytes.byteLength >= minRequiredBytes;
+  if (!hasMoov && !hasMdat) {
+    return { valid: false, reason: 'Atom moov/mdat tidak ditemukan dalam output MP4.' };
+  }
+  if (bytes.byteLength < minRequiredBytes) {
+    return {
+      valid: false,
+      reason: `Ukuran MP4 output (${bytes.byteLength}B) di bawah batas minimum (${minRequiredBytes}B).`,
+    };
+  }
+  return { valid: true };
 }
 
 function findMdatRanges(bytes: Uint8Array): Array<{ start: number; end: number }> {
@@ -265,7 +312,7 @@ function neutralizeContainerBoxesInPlace(bytes: Uint8Array): void {
   const decoder = new TextDecoder('ascii', { fatal: false });
 
   const clean = (start: number, end: number, depth: number) => {
-    if (depth > 7) return;
+    if (depth > 8) return;
     let offset = start;
 
     while (offset + 8 <= end) {
@@ -285,7 +332,12 @@ function neutralizeContainerBoxesInPlace(bytes: Uint8Array): void {
 
       if (size < headerSize || offset + size > end) break;
 
-      if (['uuid', 'c2pa', 'jumb', 'c2ma', 'c2cl', 'XMP_'].includes(type)) {
+      if (type === 'stsd' && offset + headerSize + 8 < offset + size) {
+        clean(offset + headerSize + 8, offset + size, depth + 1);
+      } else if (['avc1', 'avc3', 'hev1', 'hvc1', 'mp4v'].includes(type) && size >= 86) {
+        bytes.fill(0x00, offset + 50, offset + 82);
+        bytes.fill(0x00, offset + 20, offset + 24);
+      } else if (['uuid', 'c2pa', 'jumb', 'c2ma', 'c2cl', 'XMP_'].includes(type)) {
         bytes[offset + 4] = 0x66;
         bytes[offset + 5] = 0x72;
         bytes[offset + 6] = 0x65;
@@ -318,7 +370,10 @@ function neutralizeContainerBoxesInPlace(bytes: Uint8Array): void {
           bytes[offset + 7] = 0x65;
           bytes.fill(0x00, offset + headerSize, offset + size);
         } else {
-          clean(offset + headerSize, offset + size, depth + 1);
+          const nextStart = type === 'meta' ? offset + headerSize + 4 : offset + headerSize;
+          if (nextStart < offset + size) {
+            clean(nextStart, offset + size, depth + 1);
+          }
         }
       } else if (CONTAINER_BOX_TYPES.has(type)) {
         clean(offset + headerSize, offset + size, depth + 1);
@@ -463,7 +518,7 @@ async function inspectVideoBuffer(
       const nalHdr = uint8[pos + 4];
       const nalType = nalHdr & 0x1f;
 
-      if (nalType === 6 || nalType === 39 || nalType === 40) {
+      if ((nalType === 6 && (nalHdr & 0xe0) === 0) || nalType === 39 || nalType === 40) {
         const payloadType = uint8[pos + 5];
         if (payloadType === 5 || payloadType === 4 || payloadType === 0) {
           directMdatSeiCount++;
@@ -479,14 +534,13 @@ async function inspectVideoBuffer(
     }
   }
 
-  // 2. Direct container header scan outside mdat for Lavf, Google partial stamps, Shopee s264, and AI vendor tags
+  // 2. Direct container header scan outside mdat for Lavf, Lavc, Google partial stamps, Shopee s264, and AI vendor tags
   const mdatStart = mdatRanges.length > 0 ? mdatRanges[0].start - 8 : uint8.length;
   const containerSlice = textDecoder.decode(uint8.subarray(0, mdatStart));
   const containerLower = containerSlice.toLowerCase();
   for (const vs of VENDOR_SIGNATURES) {
     if (containerLower.includes(vs.toLowerCase()) && !rawVendors.includes(vs)) {
       rawVendors.push(vs);
-      rawUdtaMetaFound = true;
     }
   }
 
@@ -666,7 +720,17 @@ async function inspectVideoBuffer(
     falsePositiveCheck,
     falsePositiveClean: true,
     riskText: hasThreat
-      ? `Terdeteksi AI (${detectedSeiDetails.includes('SHOPEE') ? 'Shopee Video' : allVendors.includes('Lavf') ? 'Lavf/Bot Re-encoded' : 'SynthID / SEI 6'})`
+      ? `Terdeteksi AI (${
+          detectedSeiDetails.includes('SHOPEE')
+            ? 'Shopee Video'
+            : seiFound
+              ? 'SEI Type 6 Bitstream'
+              : c2paFound || uuidFound || udtaMetaFound
+                ? 'C2PA / Provenance Box'
+                : allVendors.some((v) => v === 'Lavf' || v === 'Lavc' || v === 'x264 - core')
+                  ? 'Lavc/Lavf Encoder Stamp'
+                  : 'SynthID / Metadata Marker'
+        })`
       : isAfter
         ? `AMAN / LOLOS DETEKTOR AI (${cameraProfile.toUpperCase()} CAM)`
         : 'AMAN / LOLOS DETEKTOR V3 (BUKAN AI)',
@@ -686,9 +750,6 @@ export const MetaCleanerPro: React.FC = () => {
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
   const [previewUrlBefore, setPreviewUrlBefore] = useState<string | null>(null);
   const [previewUrlAfter, setPreviewUrlAfter] = useState<string | null>(null);
-  const [deepSynthIdMode, setDeepSynthIdMode] = useState<boolean>(true);
-  const [deepMetaPurge, setDeepMetaPurge] = useState<boolean>(true);
-  const [forceKeyframeInsertion, setForceKeyframeInsertion] = useState<boolean>(true);
   const [cameraProfile, setCameraProfile] = useState<'samsung' | 'apple' | 'xiaomi' | 'neutral'>('samsung');
 
   const [fileStatus, setFileStatus] = useState<{ text: string; color: 'amber' | 'emerald' | 'rose' }>({
@@ -711,8 +772,27 @@ export const MetaCleanerPro: React.FC = () => {
   const [probeErrorAfter, setProbeErrorAfter] = useState<string | null>(null);
   const [showRawProbeJson, setShowRawProbeJson] = useState(false);
 
-  // Live Cloud FFmpeg progress state
+  // FFprobe SEI & C2PA/UUID Diagnostic Tool states
+  const [diagTarget, setDiagTarget] = useState<'before' | 'after'>('before');
+  const [diagFilter, setDiagFilter] = useState<'all' | 'triggers' | 'sei' | 'meta'>('all');
+  const [showFfprobeConsole, setShowFfprobeConsole] = useState(false);
+  const [copiedDiag, setCopiedDiag] = useState(false);
+
+  // Live Cloud FFmpeg progress state, stall detection, resync, & server attachment download URL
   const [cloudProgress, setCloudProgress] = useState<CleanerProgressState | null>(null);
+  const [serverDownloadUrl, setServerDownloadUrl] = useState<string | null>(null);
+  const [lastJobId, setLastJobId] = useState<string | null>(null);
+  const [supportsNativeShare, setSupportsNativeShare] = useState(false);
+  const [isStreamHung, setIsStreamHung] = useState(false);
+  const [hungAtPercent, setHungAtPercent] = useState<number | null>(null);
+  const [resyncAttempts, setResyncAttempts] = useState(0);
+  const [isResyncing, setIsResyncing] = useState(false);
+
+  useEffect(() => {
+    setSupportsNativeShare(
+      typeof navigator !== 'undefined' && typeof navigator.share === 'function'
+    );
+  }, []);
 
   const [logs, setLogs] = useState<LogEntry[]>([
     {
@@ -732,6 +812,8 @@ export const MetaCleanerPro: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const terminalRef = useRef<HTMLDivElement | null>(null);
   const seenServerLogRef = useRef<Set<string>>(new Set());
+  const activeJobIdRef = useRef<string | null>(null);
+  const abortPollingRef = useRef<boolean>(false);
 
   const appendLog = useCallback(
     (text: string, color: LogEntry['color'] = 'slate') => {
@@ -842,9 +924,11 @@ export const MetaCleanerPro: React.FC = () => {
         if (target === 'before') {
           setBeforeProbe(probe);
           setBeforeState(applyProbeToCardState);
+          setDiagTarget('before');
         } else {
           setAfterProbe(probe);
           setAfterState(applyProbeToCardState);
+          setDiagTarget('after');
         }
 
         appendLog(
@@ -879,6 +963,14 @@ export const MetaCleanerPro: React.FC = () => {
     setCurrentFile(file);
     setProcessedBlob(null);
     setPreviewUrlAfter(null);
+    setServerDownloadUrl(null);
+    setLastJobId(null);
+    setIsStreamHung(false);
+    setHungAtPercent(null);
+    setResyncAttempts(0);
+    setIsResyncing(false);
+    abortPollingRef.current = true;
+    activeJobIdRef.current = null;
     setAfterState(INITIAL_AFTER_STATE);
     setBeforeProbe(null);
     setAfterProbe(null);
@@ -915,74 +1007,245 @@ export const MetaCleanerPro: React.FC = () => {
     }
   };
 
-  const executeAutoSanitization = async () => {
-    if (!fileArrayBuffer || !currentFile || isProcessing) return;
+  const triggerTelemetryResync = async (
+    targetJobId: string,
+    stalledAtPercent?: number
+  ): Promise<{
+    resynced: boolean;
+    resultReady: boolean;
+    stalled: boolean;
+    ageMs: number;
+    state?: CleanerProgressState;
+  } | null> => {
+    setIsResyncing(true);
+    try {
+      const res = await fetch('/api/meta-cleaner/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: targetJobId,
+          action: 'resync',
+          stalledAtPercent,
+        }),
+        cache: 'no-store',
+        credentials: 'include',
+      });
+      if (!res.ok) return null;
+      const payload = await res.json();
+      return payload;
+    } catch {
+      return null;
+    } finally {
+      setIsResyncing(false);
+    }
+  };
+
+  const executeAutoSanitization = async (resumeOpts?: {
+    isResume?: boolean;
+    previousJobId?: string | null;
+    resumeFromPercent?: number | null;
+  }) => {
+    if (!fileArrayBuffer || !currentFile) return;
+    if (isProcessing && !resumeOpts?.isResume) return;
+
+    if (resumeOpts?.isResume) {
+      abortPollingRef.current = true;
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    abortPollingRef.current = false;
 
     setIsProcessing(true);
+    setIsStreamHung(false);
+    setHungAtPercent(null);
+    setResyncAttempts(0);
+    setIsResyncing(false);
     setProcessedBlob(null);
+    setServerDownloadUrl(null);
+    setLastJobId(null);
     setAfterProbe(null);
     setProbeErrorAfter(null);
-    setLogs([]);
-    seenServerLogRef.current.clear();
 
-    const jobId = `mc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    setProgressText('MENGINISIALISASI CLOUD FFMPEG...');
-    setCloudProgress({
-      jobId,
-      stage: 'queued',
-      message: 'Mengunggah stream video ke Cloud Python/Node FFmpeg Worker...',
-      percent: 2,
-      frame: 0,
-      totalFrames: 0,
-      fps: 0,
-      speed: '0x',
-      outTimeSec: 0,
-      durationSec: 0,
-      engine: 'Cloud Python/Node FFmpeg',
-      logs: [],
-      updatedAt: new Date().toISOString(),
-    });
+    if (!resumeOpts?.isResume) {
+      setLogs([]);
+      seenServerLogRef.current.clear();
+    } else {
+      appendLog(
+        `[RESUME PROCESSING] Memeriksa ulang pekerjaan sebelumnya & menyambung pipeline All-in-One (dari titik stall ${resumeOpts.resumeFromPercent ?? 77}%)...`,
+        'amber'
+      );
+    }
 
+    const baseName = currentFile.name.replace(/\.[^/.]+$/, '');
+    const outputFileName = `${baseName}_output_bersih.mp4`;
     const sourceByteLength = fileArrayBuffer.byteLength;
 
-    appendLog(
-      `[CLOUD ANTI-SYNTHID & ZERO-SEI ENGINE] Memulai pemrosesan server-side pada: ${currentFile.name} (${(sourceByteLength / (1024 * 1024)).toFixed(2)} MB) [Job: ${jobId}]`,
-      'indigo'
-    );
-    appendLog(
-      `-> Mode: ${deepSynthIdMode ? 'Deep Anti-SynthID Frame-by-Frame (5-Layer)' : 'Lossless Remux + Keyframes'} | Deep Meta Purge: ${deepMetaPurge ? 'AKTIF (Strict Zero-SEI)' : 'Standard'} | Profil OEM: ${cameraProfile.toUpperCase()}`,
-      'amber'
-    );
+    const finalizeCompletedMp4 = async (
+      completedJobId: string,
+      candidateUint8: Uint8Array,
+      engineHeader: string,
+      activeDownloadUrl: string
+    ) => {
+      const mp4Check = validateMp4Buffer(candidateUint8, sourceByteLength);
+      if (!mp4Check.valid) {
+        throw new Error(
+          mp4Check.reason || 'Output video dari Cloud FFmpeg tidak lolos validasi MP4.'
+        );
+      }
 
-    // Start live stream progress polling while server-side FFmpeg runs
-    const pollInterval = window.setInterval(async () => {
-      try {
-        const pRes = await fetch(`/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}`, {
-          cache: 'no-store',
-          credentials: 'include',
-        });
-        if (!pRes.ok) return;
-        const pData = (await pRes.json()) as CleanerProgressState;
-        if (!pData || !pData.stage) return;
-        setCloudProgress(pData);
-        const framePart =
-          pData.frame > 0
-            ? ` • Frame ${pData.frame}${pData.totalFrames > 0 ? `/${pData.totalFrames}` : ''}`
-            : '';
-        setProgressText(`${pData.percent}%${framePart}`);
+      neutralizeContainerBoxesInPlace(candidateUint8);
+      const isPythonEngine = engineHeader.toLowerCase().includes('python');
+      const engineUsed = isPythonEngine
+        ? 'Cloud Python FFmpeg Wrapper (All-in-One Pipeline)'
+        : 'Cloud Node.js FFmpeg Wrapper (All-in-One Anti-SynthID + Bitexact)';
 
-        if (Array.isArray(pData.logs)) {
-          for (const line of pData.logs) {
-            if (!seenServerLogRef.current.has(line)) {
-              seenServerLogRef.current.add(line);
-              appendLog(`   ${line}`, line.startsWith('✓') ? 'emerald' : 'indigo');
-            }
+      setLastJobId(completedJobId);
+      setServerDownloadUrl(activeDownloadUrl);
+      setIsStreamHung(false);
+      setHungAtPercent(null);
+
+      setCloudProgress((prev) => ({
+        jobId: completedJobId,
+        stage: 'completed',
+        message: `Selesai 100% (${(candidateUint8.byteLength / (1024 * 1024)).toFixed(2)} MB) • Verifikasi FFprobe...`,
+        percent: 100,
+        frame: prev?.frame || prev?.totalFrames || 0,
+        totalFrames: prev?.totalFrames || prev?.frame || 0,
+        fps: prev?.fps || 0,
+        speed: prev?.speed || '1x',
+        outTimeSec: prev?.outTimeSec || prev?.durationSec || 0,
+        durationSec: prev?.durationSec || 0,
+        engine: engineUsed,
+        logs: prev?.logs || [],
+        updatedAt: new Date().toISOString(),
+        downloadUrl: activeDownloadUrl,
+        outputSizeBytes: candidateUint8.byteLength,
+      }));
+
+      const cleanBlob = new Blob([candidateUint8 as unknown as BlobPart], {
+        type: 'video/mp4',
+      });
+      setProcessedBlob(cleanBlob);
+      setPreviewUrlAfter(URL.createObjectURL(cleanBlob));
+
+      const inspectedAfter = await inspectVideoBuffer(candidateUint8, true, cameraProfile);
+      setAfterState(inspectedAfter);
+      setProgressText('SELESAI 100%');
+
+      appendLog(
+        `✓ [${isPythonEngine ? 'CLOUD PYTHON ALL-IN-ONE' : 'CLOUD NODE ALL-IN-ONE'}] Video selesai diproses dalam 1 pipeline terpadu (${(candidateUint8.byteLength / (1024 * 1024)).toFixed(2)} MB).`,
+        'emerald'
+      );
+      appendLog(
+        `✓ [HARDWARE CAMERA OEM] Profil kamera disuntikkan: ${
+          cameraProfile === 'apple'
+            ? 'Apple iPhone 15 Pro (Core Media Video)'
+            : cameraProfile === 'samsung'
+              ? 'Samsung Galaxy S24 Ultra (VideoHandle)'
+              : cameraProfile === 'xiaomi'
+                ? 'Xiaomi 14 Ultra (HyperOS / Leica)'
+                : 'Netral / Bitexact Clean'
+        }.`,
+        'indigo'
+      );
+
+      await runExternalProbe(cleanBlob, outputFileName, 'after');
+    };
+
+    const syncProgressSnapshot = (pData: CleanerProgressState) => {
+      if (!pData || !pData.stage) return;
+      setCloudProgress(pData);
+      const framePart =
+        pData.frame > 0
+          ? ` • Frame ${pData.frame}${pData.totalFrames > 0 ? `/${pData.totalFrames}` : ''}`
+          : '';
+      setProgressText(`${pData.percent}%${framePart}`);
+
+      if (Array.isArray(pData.logs)) {
+        for (const line of pData.logs) {
+          if (!seenServerLogRef.current.has(line)) {
+            seenServerLogRef.current.add(line);
+            appendLog(`   ${line}`, line.startsWith('✓') ? 'emerald' : 'indigo');
           }
         }
-      } catch {}
-    }, 400);
+      }
+    };
+
+    const jobId = `mc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    activeJobIdRef.current = jobId;
+
+    let pollInterval: number | undefined;
 
     try {
+      // If resuming from a stalled stream, check if the previous job already finished on disk first
+      if (resumeOpts?.isResume && resumeOpts.previousJobId) {
+        setProgressText('RESYNC STREAM SEBELUMNYA...');
+        const prevSync = await triggerTelemetryResync(
+          resumeOpts.previousJobId,
+          resumeOpts.resumeFromPercent ?? undefined
+        );
+        if (prevSync?.resultReady || prevSync?.state?.stage === 'completed') {
+          const recoveredJobId = resumeOpts.previousJobId;
+          const recoveredUrl = `/api/meta-cleaner/download?jobId=${encodeURIComponent(recoveredJobId)}&filename=${encodeURIComponent(outputFileName)}`;
+          const dlRes = await fetch(
+            `/api/meta-cleaner/download?jobId=${encodeURIComponent(recoveredJobId)}&inline=1&t=${Date.now()}`,
+            { cache: 'no-store', credentials: 'include' }
+          );
+          if (dlRes.ok) {
+            const recoveredBytes = new Uint8Array(await dlRes.arrayBuffer());
+            appendLog(
+              `✓ [RESYNC BERHASIL] Hasil dari Job ${recoveredJobId} ditemukan selesai di server! Mengunduh output...`,
+              'emerald'
+            );
+            await finalizeCompletedMp4(
+              recoveredJobId,
+              recoveredBytes,
+              prevSync.state?.engine || 'Cloud-Python-FFmpeg-FrameFilter',
+              recoveredUrl
+            );
+            return;
+          }
+        }
+      }
+
+      setProgressText('MENGINISIALISASI ALL-IN-ONE FFMPEG...');
+      setCloudProgress({
+        jobId,
+        stage: 'queued',
+        message: 'Mengunggah video ke Cloud All-in-One Pipeline (Safe + Deep + Lossless)...',
+        percent: 2,
+        frame: 0,
+        totalFrames: 0,
+        fps: 0,
+        speed: '0x',
+        outTimeSec: 0,
+        durationSec: 0,
+        engine: 'Cloud Python/Node FFmpeg (All-in-One)',
+        logs: [],
+        updatedAt: new Date().toISOString(),
+      });
+
+      appendLog(
+        `[CLOUD ALL-IN-ONE EXPORT PROFILE] Memulai 1-command pipeline pada: ${currentFile.name} (${(sourceByteLength / (1024 * 1024)).toFixed(2)} MB) [Job: ${jobId}]`,
+        'indigo'
+      );
+      appendLog(
+        `-> Chained Pipeline: Safe Mode Temporal CFR + Deep 5-Layer Anti-SynthID + Lossless Zero-SEI & Faststart OEM (${cameraProfile.toUpperCase()})`,
+        'amber'
+      );
+
+      pollInterval = window.setInterval(async () => {
+        if (abortPollingRef.current) return;
+        try {
+          const pRes = await fetch(`/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}`, {
+            cache: 'no-store',
+            credentials: 'include',
+          });
+          if (!pRes.ok || abortPollingRef.current) return;
+          const pData = (await pRes.json()) as CleanerProgressState;
+          syncProgressSnapshot(pData);
+        } catch {}
+      }, 450);
+
       await fetch('/api/health', {
         method: 'GET',
         cache: 'no-store',
@@ -993,10 +1256,11 @@ export const MetaCleanerPro: React.FC = () => {
         const formData = new FormData();
         formData.append('jobId', jobId);
         formData.append('file', currentFile);
-        formData.append('mode', deepSynthIdMode ? 'deep_synthid' : 'remux_only');
-        formData.append('deepMetaPurge', deepMetaPurge ? 'true' : 'false');
-        formData.append('forceKeyframeInsertion', forceKeyframeInsertion ? 'true' : 'false');
+        formData.append('mode', 'all_in_one');
+        formData.append('deepMetaPurge', 'true');
+        formData.append('forceKeyframeInsertion', 'false');
         formData.append('cameraProfile', cameraProfile);
+        formData.append('asyncMode', 'true');
 
         return await fetch(`/api/meta-cleaner${window.location.search || ''}`, {
           method: 'POST',
@@ -1019,96 +1283,183 @@ export const MetaCleanerPro: React.FC = () => {
         throw new Error(errMsg);
       }
 
-      const encodedLogs = response.headers.get('X-MetaCleaner-Logs');
-      if (encodedLogs) {
-        try {
-          const binaryStr = atob(encodedLogs);
-          const bytes = new Uint8Array(binaryStr.length);
-          for (let idx = 0; idx < binaryStr.length; idx++) {
-            bytes[idx] = binaryStr.charCodeAt(idx);
-          }
-          const jsonStr = new TextDecoder('utf-8').decode(bytes);
-          const decoded = JSON.parse(jsonStr);
-          if (Array.isArray(decoded.logs)) {
-            for (const line of decoded.logs) {
-              if (!seenServerLogRef.current.has(line)) {
-                seenServerLogRef.current.add(line);
-                const color =
-                  line.startsWith('✓')
-                    ? 'emerald'
-                    : line.includes('[ffmpeg-reencode]') || line.includes('[ffmpeg-remux]') || line.includes('[PASS ')
-                      ? 'indigo'
-                      : 'slate';
-                appendLog(`   ${line}`, color);
+      const respContentType = (response.headers.get('content-type') || '').toLowerCase();
+      let candidateUint8: Uint8Array;
+      let engineHeader = response.headers.get('X-MetaCleaner-Engine') || '';
+      let activeDownloadUrl = `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&filename=${encodeURIComponent(outputFileName)}`;
+
+      if (response.status === 202 || respContentType.includes('application/json')) {
+        const ack = await response.json().catch(() => null);
+        if (!ack?.accepted && !ack?.success) {
+          throw new Error(ack?.error || 'Server gagal memulai antrean Cloud FFmpeg.');
+        }
+        if (pollInterval !== undefined) {
+          window.clearInterval(pollInterval);
+          pollInterval = undefined;
+        }
+
+        const startedAt = Date.now();
+        const maxWaitMs = 260000;
+        let transientErrors = 0;
+        let finalState: CleanerProgressState | null = null;
+
+        // 77% stall detection & automatic resync telemetry tracking
+        let lastSignature = '';
+        let lastChangeAt = Date.now();
+        let localResyncCount = 0;
+        let lastResyncAtMs = 0;
+
+        while (Date.now() - startedAt < maxWaitMs) {
+          if (abortPollingRef.current) return;
+          await new Promise((r) => setTimeout(r, 450));
+          if (abortPollingRef.current) return;
+
+          try {
+            const pRes = await fetch(`/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}`, {
+              cache: 'no-store',
+              credentials: 'include',
+            });
+            if (!pRes.ok) {
+              transientErrors++;
+              if (transientErrors > 15) {
+                throw new Error(`Progress polling gagal berulang (HTTP ${pRes.status}).`);
+              }
+              continue;
+            }
+            transientErrors = 0;
+            const pData = (await pRes.json()) as CleanerProgressState;
+            syncProgressSnapshot(pData);
+
+            if (pData.stage === 'completed' || pData.resultReady) {
+              finalState = pData;
+              break;
+            }
+            if (pData.stage === 'failed') {
+              throw new Error(pData.error || pData.message || 'Cloud FFmpeg gagal memproses video.');
+            }
+
+            const sig = `${pData.percent}:${pData.frame}:${pData.outTimeSec}:${pData.stage}`;
+            if (sig !== lastSignature) {
+              lastSignature = sig;
+              lastChangeAt = Date.now();
+              setIsStreamHung(false);
+              setHungAtPercent(null);
+            } else if (pData.percent > 0 && pData.percent < 100) {
+              const idleMs = Date.now() - lastChangeAt;
+              const isSeventySevenStall = pData.percent >= 74 && pData.percent <= 82;
+              const stallThresholdMs = isSeventySevenStall ? 6000 : 10000;
+
+              if (idleMs >= stallThresholdMs && Date.now() - lastResyncAtMs >= 6500) {
+                localResyncCount++;
+                lastResyncAtMs = Date.now();
+                setResyncAttempts(localResyncCount);
+                appendLog(
+                  `[TELEMETRY RESYNC #${localResyncCount}] Deteksi stall di ${pData.percent}% (${(idleMs / 1000).toFixed(1)}s tanpa perubahan) — memicu resync ke endpoint telemetri...`,
+                  'amber'
+                );
+
+                const resyncPayload = await triggerTelemetryResync(jobId, pData.percent);
+                if (abortPollingRef.current) return;
+
+                if (resyncPayload?.state) {
+                  syncProgressSnapshot(resyncPayload.state);
+                }
+                if (resyncPayload?.resultReady || resyncPayload?.state?.stage === 'completed') {
+                  finalState = resyncPayload.state || pData;
+                  break;
+                }
+                if (resyncPayload?.stalled || localResyncCount >= 2) {
+                  setIsStreamHung(true);
+                  setHungAtPercent(pData.percent);
+                  appendLog(
+                    `[STREAM HANG] Stream Cloud FFmpeg terhenti di ${pData.percent}%. Klik "Resume Processing" pada panel telemetri untuk melanjutkan.`,
+                    'rose'
+                  );
+                }
               }
             }
+          } catch (pollErr: any) {
+            if (pollErr?.message?.includes('Cloud FFmpeg gagal')) {
+              throw pollErr;
+            }
+            transientErrors++;
+            if (transientErrors > 15) {
+              throw new Error(pollErr?.message || 'Koneksi polling ke Cloud FFmpeg terputus.');
+            }
           }
-        } catch {}
+        }
+
+        if (abortPollingRef.current) return;
+
+        if (!finalState) {
+          setIsStreamHung(true);
+          setHungAtPercent(cloudProgress?.percent ?? 77);
+          throw new Error('Waktu pemrosesan Cloud FFmpeg melebihi batas. Gunakan tombol Resume Processing.');
+        }
+
+        engineHeader = finalState.engine || 'Cloud-Python-FFmpeg-FrameFilter';
+        if (finalState.downloadUrl) {
+          activeDownloadUrl = `${finalState.downloadUrl}&filename=${encodeURIComponent(outputFileName)}`;
+        }
+
+        setProgressText('MENGUNDUH HASIL DARI CLOUD...');
+        const dlRes = await fetch(
+          `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&inline=1&t=${Date.now()}`,
+          {
+            cache: 'no-store',
+            credentials: 'include',
+          }
+        );
+        if (!dlRes.ok) {
+          let dlErr = `Gagal mengambil hasil video (HTTP ${dlRes.status})`;
+          try {
+            const j = await dlRes.json();
+            if (j?.error) dlErr = j.error;
+          } catch {}
+          throw new Error(dlErr);
+        }
+        const dlArrayBuffer = await dlRes.arrayBuffer();
+        candidateUint8 = new Uint8Array(dlArrayBuffer);
+      } else {
+        const encodedLogs = response.headers.get('X-MetaCleaner-Logs');
+        if (encodedLogs) {
+          try {
+            const binaryStr = atob(encodedLogs);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let idx = 0; idx < binaryStr.length; idx++) {
+              bytes[idx] = binaryStr.charCodeAt(idx);
+            }
+            const jsonStr = new TextDecoder('utf-8').decode(bytes);
+            const decoded = JSON.parse(jsonStr);
+            if (Array.isArray(decoded.logs)) {
+              for (const line of decoded.logs) {
+                if (!seenServerLogRef.current.has(line)) {
+                  seenServerLogRef.current.add(line);
+                  const color =
+                    line.startsWith('✓')
+                      ? 'emerald'
+                      : line.includes('[ffmpeg-reencode]') || line.includes('[ffmpeg-remux]') || line.includes('[PASS ') || line.includes('[ALL-IN-ONE')
+                        ? 'indigo'
+                        : 'slate';
+                  appendLog(`   ${line}`, color);
+                }
+              }
+            }
+          } catch {}
+        }
+
+        const cleanedArrayBuffer = await response.arrayBuffer();
+        candidateUint8 = new Uint8Array(cleanedArrayBuffer);
       }
 
-      const cleanedArrayBuffer = await response.arrayBuffer();
-      const candidateUint8 = new Uint8Array(cleanedArrayBuffer);
-
-      if (!isValidMp4VideoBuffer(candidateUint8, sourceByteLength)) {
-        throw new Error('Output video dari Cloud FFmpeg tidak lolos validasi MP4.');
-      }
-
-      neutralizeContainerBoxesInPlace(candidateUint8);
-      const engineHeader = response.headers.get('X-MetaCleaner-Engine') || '';
-      const isPythonEngine = engineHeader.toLowerCase().includes('python');
-      const engineUsed = isPythonEngine
-        ? 'Cloud Python FFmpeg Wrapper (Strict Frame-by-Frame Filtering)'
-        : 'Cloud Node.js FFmpeg Wrapper (Frame-by-Frame Anti-SynthID + Bitexact)';
-
-      setCloudProgress((prev) => ({
-        jobId,
-        stage: 'completed',
-        message: `Selesai 100% (${(candidateUint8.byteLength / (1024 * 1024)).toFixed(2)} MB) • Verifikasi FFprobe...`,
-        percent: 100,
-        frame: prev?.frame || prev?.totalFrames || 0,
-        totalFrames: prev?.totalFrames || prev?.frame || 0,
-        fps: prev?.fps || 0,
-        speed: prev?.speed || '1x',
-        outTimeSec: prev?.outTimeSec || prev?.durationSec || 0,
-        durationSec: prev?.durationSec || 0,
-        engine: engineUsed,
-        logs: prev?.logs || [],
-        updatedAt: new Date().toISOString(),
-      }));
-
-      const cleanBlob = new Blob([candidateUint8 as unknown as BlobPart], {
-        type: 'video/mp4',
-      });
-      setProcessedBlob(cleanBlob);
-      setPreviewUrlAfter(URL.createObjectURL(cleanBlob));
-
-      const inspectedAfter = await inspectVideoBuffer(candidateUint8, true, cameraProfile);
-      setAfterState(inspectedAfter);
-      setProgressText('SELESAI 100%');
-
-      appendLog(
-        `✓ [${isPythonEngine ? 'CLOUD PYTHON FFMPEG' : 'CLOUD NODE FFMPEG'}] Video selesai dire-encode frame-by-frame & diremux Zero-SEI (${(candidateUint8.byteLength / (1024 * 1024)).toFixed(2)} MB).`,
-        'emerald'
-      );
-      appendLog(
-        `✓ [HARDWARE CAMERA OEM] Profil kamera disuntikkan: ${
-          cameraProfile === 'apple'
-            ? 'Apple iPhone 15 Pro (Core Media Video)'
-            : cameraProfile === 'samsung'
-              ? 'Samsung Galaxy S24 Ultra (VideoHandle)'
-              : cameraProfile === 'xiaomi'
-                ? 'Xiaomi 14 Ultra (HyperOS / Leica)'
-                : 'Netral / Bitexact Clean'
-        }.`,
-        'indigo'
-      );
-
-      // Run external ffprobe + trace_headers verification on sanitized output
-      const baseName = currentFile.name.replace(/\.[^/.]+$/, '');
-      await runExternalProbe(cleanBlob, `${baseName}_output_bersih.mp4`, 'after');
+      if (abortPollingRef.current) return;
+      await finalizeCompletedMp4(jobId, candidateUint8, engineHeader, activeDownloadUrl);
     } catch (serverErr: any) {
+      if (abortPollingRef.current) return;
       const errMsg = serverErr?.message || 'Gagal menjalankan Cloud FFmpeg API';
-      setProgressText('GAGAL');
+      setProgressText('GAGAL / TERHENTI');
+      setIsStreamHung(true);
+      setHungAtPercent((prev) => prev ?? cloudProgress?.percent ?? null);
       setCloudProgress((prev) =>
         prev
           ? {
@@ -1121,26 +1472,59 @@ export const MetaCleanerPro: React.FC = () => {
       );
       appendLog(`[CLOUD FFMPEG ERROR] ${errMsg}`, 'rose');
     } finally {
-      window.clearInterval(pollInterval);
-      setIsProcessing(false);
+      if (pollInterval !== undefined) {
+        window.clearInterval(pollInterval);
+      }
+      if (!abortPollingRef.current) {
+        setIsProcessing(false);
+      }
     }
   };
 
-  const downloadCleanFile = () => {
-    if (!processedBlob) return;
+  const getOutputFileName = () => {
     const baseName = currentFile ? currentFile.name.replace(/\.[^/.]+$/, '') : 'video';
-    const fileName = `${baseName}_output_bersih.mp4`;
+    return `${baseName}_output_bersih.mp4`;
+  };
 
+  const downloadFromMemoryBlob = () => {
+    if (!processedBlob) return;
+    const fileName = getOutputFileName();
     const url = URL.createObjectURL(processedBlob);
     const a = document.createElement('a');
     a.href = url;
     a.download = fileName;
+    a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
-      document.body.removeChild(a);
+      if (a.parentNode) document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    }, 1500);
+    }, 60000);
+  };
+
+  const shareCleanFileMobile = async () => {
+    if (!processedBlob) return;
+    const fileName = getOutputFileName();
+    try {
+      const fileObj = new File([processedBlob], fileName, { type: 'video/mp4' });
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        const canShareFiles =
+          typeof navigator.canShare !== 'function' || navigator.canShare({ files: [fileObj] });
+        if (canShareFiles) {
+          await navigator.share({
+            files: [fileObj],
+            title: fileName,
+          });
+          appendLog(`✓ [SHARE / SIMPAN HP] Video "${fileName}" dibagikan ke sistem perangkat.`, 'emerald');
+          return;
+        }
+      }
+      downloadFromMemoryBlob();
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      appendLog(`[DOWNLOAD INFO] Share sheet tidak tersedia, beralih ke unduhan langsung...`, 'amber');
+      downloadFromMemoryBlob();
+    }
   };
 
   return (
@@ -1166,14 +1550,12 @@ export const MetaCleanerPro: React.FC = () => {
         <div className="flex items-center space-x-2">
           <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono font-bold rounded-full flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            {deepMetaPurge ? 'Cloud Deep Meta Purge Active' : 'Cloud Zero-SEI Filter Ready'}
+            All-in-One Anti-AI + Anti-Glitch Ready
           </span>
-          {forceKeyframeInsertion && (
-            <span className="hidden sm:flex px-2.5 py-1 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-mono font-bold rounded-full items-center gap-1">
-              <Film className="w-3.5 h-3.5" />
-              <span>IDR Keyframes</span>
-            </span>
-          )}
+          <span className="hidden sm:flex px-2.5 py-1 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold rounded-full items-center gap-1">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>CFR + Deep Scrub + Zero-SEI</span>
+          </span>
         </div>
       </div>
 
@@ -1232,61 +1614,27 @@ export const MetaCleanerPro: React.FC = () => {
                   {currentFile ? `${(currentFile.size / (1024 * 1024)).toFixed(2)} MB` : '-'}
                 </span>
               </div>
-              <div className="flex justify-between items-center text-slate-400">
-                <span className="text-slate-500">Mode Engine:</span>
-                <button
-                  type="button"
-                  onClick={() => setDeepSynthIdMode((prev) => !prev)}
-                  className={`font-mono font-bold text-[11px] px-2.5 py-0.5 rounded border transition cursor-pointer ${
-                    deepSynthIdMode
-                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
-                      : 'bg-indigo-500/15 border-indigo-500/40 text-indigo-400'
-                  }`}
-                >
-                  {deepSynthIdMode ? 'Deep Anti-SynthID + SEI' : 'Lossless Remux + SEI'}
-                </button>
-              </div>
-              <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
+              <div className="pt-2 border-t border-slate-800/80 space-y-2">
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-bold flex items-center gap-1">
-                    <span>Deep Meta Purge:</span>
+                  <span className="text-slate-300 font-bold">All-in-One Export Profile (Single Pipeline):</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                    SAFE + DEEP + LOSSLESS
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setDeepMetaPurge((prev) => !prev)}
-                    className={`font-mono font-bold text-[11px] px-2.5 py-0.5 rounded border transition cursor-pointer ${
-                      deepMetaPurge
-                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-sm shadow-amber-950/50'
-                        : 'bg-slate-800 border-slate-700 text-slate-400'
-                    }`}
-                  >
-                    {deepMetaPurge ? 'AKTIF (Strict Zero-SEI)' : 'NONAKTIF (Standard)'}
-                  </button>
                 </div>
-                <p className="text-[10px] text-slate-400 leading-snug">
-                  Menulis ulang container video di Cloud FFmpeg dengan parameter ketat (<code>-c copy -dn -sn -write_tmcd 0 -bsf:v filter_units=remove_types=6 -fflags +bitexact</code>) untuk menjamin 0% SEI tersisa.
-                </p>
-              </div>
-              <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-bold flex items-center gap-1">
-                    <span>Force Keyframe Insertion:</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setForceKeyframeInsertion((prev) => !prev)}
-                    className={`font-mono font-bold text-[11px] px-2.5 py-0.5 rounded border transition cursor-pointer ${
-                      forceKeyframeInsertion
-                        ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 shadow-sm shadow-cyan-950/50'
-                        : 'bg-slate-800 border-slate-700 text-slate-400'
-                    }`}
-                  >
-                    {forceKeyframeInsertion ? 'AKTIF (Anti-Glitch 1s IDR)' : 'NONAKTIF'}
-                  </button>
+                <div className="space-y-1.5 text-[10px] font-mono">
+                  <div className="flex items-center gap-2 text-cyan-300 bg-cyan-950/25 border border-cyan-900/40 rounded-lg px-2.5 py-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+                    <span>1. Safe Mode Temporal CFR • Anti-Glitch (Bypass Keyframe-Only)</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/25 border border-emerald-900/40 rounded-lg px-2.5 py-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                    <span>2. Deep 5-Layer Anti-SynthID • Optik CMOS &amp; Audio Rubberband</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-indigo-300 bg-indigo-950/25 border border-indigo-900/40 rounded-lg px-2.5 py-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
+                    <span>3. Lossless Zero-SEI &amp; Purge C2PA/UUID • Chained 1-Command Faststart</span>
+                  </div>
                 </div>
-                <p className="text-[10px] text-slate-400 leading-snug">
-                  Menyuntikkan IDR Keyframes berkala (1 detik Closed-GOP) agar video mulus 100% bebas glitch saat SEI Type 6 dihapus.
-                </p>
               </div>
 
               <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
@@ -1312,7 +1660,7 @@ export const MetaCleanerPro: React.FC = () => {
             </div>
 
             <button
-              onClick={executeAutoSanitization}
+              onClick={() => executeAutoSanitization()}
               disabled={!fileArrayBuffer || isProcessing}
               className={
                 !fileArrayBuffer || isProcessing
@@ -1328,11 +1676,7 @@ export const MetaCleanerPro: React.FC = () => {
               ) : (
                 <>
                   <ShieldCheck className="w-4 h-4" />
-                  <span>
-                    {forceKeyframeInsertion
-                      ? 'Proses via Cloud FFmpeg (Anti-SynthID + Zero-SEI + IDR)'
-                      : 'Jalankan Cloud FFmpeg Deep Meta Purge'}
-                  </span>
+                  <span>Export All-in-One (Safe + Deep + Zero-SEI • 1-Click)</span>
                 </>
               )}
             </button>
@@ -1341,20 +1685,31 @@ export const MetaCleanerPro: React.FC = () => {
 
         {/* LIVE CLOUD FFMPEG STREAM PROGRESS PANEL */}
         {(isProcessing || cloudProgress) && cloudProgress && (
-          <div className="bg-slate-900 border border-indigo-500/30 rounded-2xl p-4 sm:p-5 shadow-xl space-y-3">
+          <div className={`bg-slate-900 border rounded-2xl p-4 sm:p-5 shadow-xl space-y-3 ${isStreamHung ? 'border-amber-500/50' : 'border-indigo-500/30'}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Cpu className={`w-4 h-4 ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : 'text-indigo-400 animate-pulse'}`} />
+              <div className="flex items-center gap-2 flex-wrap">
+                <Cpu className={`w-4 h-4 ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : isStreamHung ? 'text-amber-400' : 'text-indigo-400 animate-pulse'}`} />
                 <span className="text-xs font-extrabold uppercase tracking-wider text-white">
                   Cloud FFmpeg Stream Telemetry
                 </span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-indigo-300 border border-slate-700">
                   {cloudProgress.stage}
                 </span>
+                {resyncAttempts > 0 && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    Resync #{resyncAttempts}
+                  </span>
+                )}
+                {isResyncing && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>Resyncing...</span>
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-3 text-[11px] font-mono">
                 <span className="text-slate-400">{cloudProgress.engine}</span>
-                <span className={`font-bold ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : 'text-cyan-400'}`}>
+                <span className={`font-bold ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : isStreamHung ? 'text-amber-300' : 'text-cyan-400'}`}>
                   {cloudProgress.percent}%
                 </span>
               </div>
@@ -1367,14 +1722,16 @@ export const MetaCleanerPro: React.FC = () => {
                     ? 'bg-rose-500'
                     : cloudProgress.stage === 'completed'
                       ? 'bg-emerald-500'
-                      : 'bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400'
+                      : isStreamHung
+                        ? 'bg-amber-500'
+                        : 'bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400'
                 }`}
                 style={{ width: `${Math.min(100, Math.max(0, cloudProgress.percent))}%` }}
               />
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-300">
-              <span className="truncate max-w-full sm:max-w-[60%]">{cloudProgress.message}</span>
+              <span className="whitespace-normal break-words max-w-full sm:max-w-[65%]">{cloudProgress.message}</span>
               <div className="flex items-center gap-3 text-slate-400">
                 <span>
                   Frame: <strong className="text-slate-100">{cloudProgress.frame}</strong>
@@ -1388,6 +1745,61 @@ export const MetaCleanerPro: React.FC = () => {
                 </span>
               </div>
             </div>
+
+            {(isStreamHung || cloudProgress.stage === 'failed' || (isProcessing && cloudProgress.percent >= 74 && cloudProgress.percent < 100)) && (
+              <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5">
+                <span className="text-[11px] font-mono text-amber-300">
+                  {isStreamHung
+                    ? `Stall terdeteksi di ${hungAtPercent ?? cloudProgress.percent}% — stream telemetri terhenti.`
+                    : cloudProgress.stage === 'failed'
+                      ? 'Pemrosesan terhenti — Anda dapat menyambung ulang langsung.'
+                      : 'Memantau titik sinkronisasi 77% — auto-resync aktif.'}
+                </span>
+                <div className="flex items-center gap-2">
+                  {isProcessing && (
+                    <button
+                      type="button"
+                      disabled={isResyncing}
+                      onClick={async () => {
+                        const targetId = activeJobIdRef.current || cloudProgress.jobId;
+                        if (!targetId) return;
+                        setResyncAttempts((n) => n + 1);
+                        appendLog(`[MANUAL RESYNC] Meminta sinkronisasi telemetri untuk Job ${targetId}...`, 'amber');
+                        const r = await triggerTelemetryResync(targetId, cloudProgress.percent);
+                        if (r?.state) {
+                          setCloudProgress(r.state);
+                        }
+                        if (r?.stalled) {
+                          setIsStreamHung(true);
+                          setHungAtPercent(cloudProgress.percent);
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isResyncing ? 'animate-spin' : ''}`} />
+                      <span>Resync Telemetry</span>
+                    </button>
+                  )}
+
+                  {(isStreamHung || cloudProgress.stage === 'failed') && fileArrayBuffer && currentFile && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        executeAutoSanitization({
+                          isResume: true,
+                          previousJobId: activeJobIdRef.current || cloudProgress.jobId,
+                          resumeFromPercent: hungAtPercent ?? cloudProgress.percent,
+                        })
+                      }
+                      className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-amber-900/30"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      <span>Resume Processing</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1591,24 +2003,75 @@ export const MetaCleanerPro: React.FC = () => {
               )}
             </div>
 
-            <div className="pt-1">
-              <button
-                disabled={!processedBlob}
-                onClick={downloadCleanFile}
-                className={
-                  !processedBlob
-                    ? 'w-full py-2.5 bg-slate-800 text-slate-500 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-not-allowed'
-                    : 'w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-900/40'
-                }
-              >
-                <Download className="w-4 h-4" />
-                <span>
-                  Unduh Berkas Bersih ({processedBlob ? `${(processedBlob.size / (1024 * 1024)).toFixed(2)} MB` : 'output_bersih.mp4'})
-                </span>
-              </button>
+            <div className="pt-1 space-y-2">
+              {processedBlob && serverDownloadUrl && lastJobId ? (
+                <a
+                  href={serverDownloadUrl}
+                  download={getOutputFileName()}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-900/40"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>
+                    Unduh Berkas Bersih ({(processedBlob.size / (1024 * 1024)).toFixed(2)} MB)
+                  </span>
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!processedBlob}
+                  onClick={downloadFromMemoryBlob}
+                  className={
+                    !processedBlob
+                      ? 'w-full py-2.5 bg-slate-800 text-slate-500 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-not-allowed'
+                      : 'w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-900/40'
+                  }
+                >
+                  <Download className="w-4 h-4" />
+                  <span>
+                    Unduh Berkas Bersih ({processedBlob ? `${(processedBlob.size / (1024 * 1024)).toFixed(2)} MB` : 'output_bersih.mp4'})
+                  </span>
+                </button>
+              )}
+
+              {processedBlob && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={downloadFromMemoryBlob}
+                    className="flex-1 min-w-[140px] py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Unduh Offline (RAM)</span>
+                  </button>
+                  {supportsNativeShare && (
+                    <button
+                      type="button"
+                      onClick={shareCleanFileMobile}
+                      className="flex-1 min-w-[140px] py-2 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 font-bold text-[11px] rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Share2 className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Simpan / Bagikan (HP)</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
+
+        {/* HIGH-FREQUENCY WATERMARK NOISE VISUALIZER (BEFORE VS AFTER) */}
+        {previewUrlBefore && (
+          <WatermarkNoiseVisualizer
+            previewUrlBefore={previewUrlBefore}
+            previewUrlAfter={previewUrlAfter}
+            beforeFileName={currentFile?.name}
+            afterFileName={
+              processedBlob && currentFile
+                ? `${currentFile.name.replace(/\.[^/.]+$/, '')}_output_bersih.mp4`
+                : undefined
+            }
+          />
+        )}
 
         {/* EXTERNAL FFPROBE & BITSTREAM VALIDATION UTILITY (BEFORE VS AFTER) */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
@@ -1971,6 +2434,312 @@ export const MetaCleanerPro: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* FFPROBE SEI NAL & C2PA/UUID METADATA DIAGNOSTIC ISOLATION TOOL */}
+        {(beforeProbe?.ffprobeDiagnostic || afterProbe?.ffprobeDiagnostic) && (() => {
+          const activeProbe =
+            diagTarget === 'after' && afterProbe
+              ? afterProbe
+              : beforeProbe || afterProbe;
+          const diag = activeProbe?.ffprobeDiagnostic;
+          if (!diag) return null;
+
+          const beforeTrigCount = beforeProbe?.ffprobeDiagnostic?.aiTriggerChecklist.length ?? 0;
+          const afterTrigCount = afterProbe?.ffprobeDiagnostic?.aiTriggerChecklist.length ?? 0;
+
+          const handleCopyDiag = async () => {
+            try {
+              await navigator.clipboard.writeText(diag.rawFfprobeSummaryText);
+              setCopiedDiag(true);
+              setTimeout(() => setCopiedDiag(false), 1800);
+            } catch {}
+          };
+
+          return (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center">
+                    <Bug className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2 flex-wrap">
+                      <span>Diagnostik FFprobe: Isolasi SEI NAL Units &amp; Blok C2PA / UUID</span>
+                      <span
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                          diag.aiTriggerChecklist.length === 0
+                            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                            : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+                        }`}
+                      >
+                        {diag.aiTriggerChecklist.length === 0
+                          ? '0 PEMICU AI TERISOLASI'
+                          : `${diag.aiTriggerChecklist.length} PEMICU "AI DETECTED"`}
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Membedah output <code>ffprobe</code> frame side-data, stream non-AV, atom ISO-BMFF (<code>uuid</code>/<code>c2pa</code>/<code>jumb</code>), dan payload NAL SEI untuk melacak penyebab pasti flag AI.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Target Switcher (Before vs After) */}
+                <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    disabled={!beforeProbe}
+                    onClick={() => setDiagTarget('before')}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer disabled:opacity-40 ${
+                      diagTarget === 'before'
+                        ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Input (Sebelum) • {beforeTrigCount}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!afterProbe}
+                    onClick={() => setDiagTarget('after')}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer disabled:opacity-40 ${
+                      diagTarget === 'after'
+                        ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Output (Sesudah) • {afterTrigCount}
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Telemetry Counters + Filter Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono w-full lg:w-auto flex-1">
+                  <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
+                    <div className="text-[10px] text-slate-500">SEI NAL Terisolasi</div>
+                    <div className={diag.isolatedSeiUnits.length > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
+                      {diag.isolatedSeiUnits.length} unit
+                    </div>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
+                    <div className="text-[10px] text-slate-500">Blok C2PA/UUID/Meta</div>
+                    <div className={diag.isolatedMetadataBlocks.length > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
+                      {diag.isolatedMetadataBlocks.length} blok
+                    </div>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
+                    <div className="text-[10px] text-slate-500">Frame Side-Data</div>
+                    <div className={diag.packetSideDataCount > 0 ? 'text-amber-300 font-bold' : 'text-emerald-400 font-bold'}>
+                      {diag.packetSideDataCount} item
+                    </div>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
+                    <div className="text-[10px] text-slate-500">Data / TMCD Stream</div>
+                    <div className={diag.dataStreamsCount > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
+                      {diag.dataStreamsCount} stream
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {(
+                    [
+                      { id: 'all', label: 'Semua' },
+                      { id: 'triggers', label: `Pemicu AI (${diag.aiTriggerChecklist.length})` },
+                      { id: 'sei', label: `SEI NAL (${diag.isolatedSeiUnits.length})` },
+                      { id: 'meta', label: `C2PA / UUID (${diag.isolatedMetadataBlocks.length})` },
+                    ] as const
+                  ).map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setDiagFilter(f.id)}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                        diagFilter === f.id
+                          ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 1. AI Trigger Checklist */}
+              {(diagFilter === 'all' || diagFilter === 'triggers') && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Daftar Pemicu Flag &quot;AI Detected&quot; ({diagTarget === 'after' && afterProbe ? 'Output' : 'Input'})</span>
+                  </div>
+                  {diag.aiTriggerChecklist.length === 0 ? (
+                    <div className="bg-emerald-950/25 border border-emerald-500/30 rounded-xl p-3 text-xs text-emerald-300 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>Tidak ada sisa SEI NAL Unit, blok C2PA/JUMBF/UUID, maupun anomali muxer/audio-visual yang memicu flag AI.</span>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {diag.aiTriggerChecklist.map((trig) => (
+                        <div
+                          key={trig.id}
+                          className={`rounded-xl p-3 border text-xs space-y-1 ${
+                            trig.severity === 'critical'
+                              ? 'bg-rose-950/25 border-rose-500/35'
+                              : 'bg-amber-950/20 border-amber-500/30'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-slate-100">{trig.title}</span>
+                            <span
+                              className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded uppercase ${
+                                trig.severity === 'critical'
+                                  ? 'bg-rose-500/20 text-rose-300'
+                                  : 'bg-amber-500/20 text-amber-300'
+                              }`}
+                            >
+                              {trig.layer}
+                            </span>
+                          </div>
+                          <div className="text-[11px] font-mono text-slate-300 break-words">{trig.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 2. Isolated SEI NAL Units */}
+              {(diagFilter === 'all' || diagFilter === 'sei') && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Unit SEI (Supplemental Enhancement Information) Terisolasi ({diag.isolatedSeiUnits.length})</span>
+                  </div>
+                  {diag.isolatedSeiUnits.length === 0 ? (
+                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[11px] font-mono text-emerald-400">
+                      ✓ 0 unit SEI NAL (H.264 Type 6 / HEVC Type 39|40) ditemukan pada video ini.
+                    </div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                      {diag.isolatedSeiUnits.map((unit) => (
+                        <div
+                          key={`${unit.index}-${unit.source}-${unit.byteOffsetHex || unit.payloadType}`}
+                          className="bg-slate-950 border border-rose-900/40 rounded-xl p-3 text-[11px] font-mono space-y-1.5"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
+                                SEI #{unit.index} • NAL Type {unit.nalUnitType}
+                              </span>
+                              <span className="text-cyan-300 font-bold">{unit.payloadTypeLabel}</span>
+                              <span className="text-slate-500">src: {unit.source}</span>
+                            </div>
+                            <span className="text-slate-400">
+                              {unit.byteOffsetHex ? `@${unit.byteOffsetHex} • ` : ''}
+                              {unit.sizeBytes}B
+                            </span>
+                          </div>
+                          {unit.uuid16Hex && (
+                            <div className="text-amber-300 break-all">
+                              UUID-16: <span className="text-slate-200">{unit.uuid16Hex}</span>
+                            </div>
+                          )}
+                          <div className="text-slate-300 break-all">
+                            ASCII: <span className="text-rose-200">{unit.decodedAscii}</span>
+                          </div>
+                          {unit.rawHexPreview && unit.rawHexPreview !== '-' && (
+                            <div className="text-[10px] text-slate-500 break-all">
+                              HEX: {unit.rawHexPreview}
+                            </div>
+                          )}
+                          <div className="text-[10px] text-amber-300 pt-0.5">
+                            → {unit.triggerReason}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 3. Isolated C2PA / JUMBF / UUID / Metadata Blocks */}
+              {(diagFilter === 'all' || diagFilter === 'meta') && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <FileSearch className="w-3.5 h-3.5 text-fuchsia-400" />
+                    <span>Blok Metadata C2PA / JUMBF / UUID / Tag FFprobe Terisolasi ({diag.isolatedMetadataBlocks.length})</span>
+                  </div>
+                  {diag.isolatedMetadataBlocks.length === 0 ? (
+                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[11px] font-mono text-emerald-400">
+                      ✓ 0 blok metadata C2PA, JUMBF, UUID, atau stream data tambahan terdeteksi.
+                    </div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                      {diag.isolatedMetadataBlocks.map((blk) => (
+                        <div
+                          key={blk.id}
+                          className="bg-slate-950 border border-amber-900/40 rounded-xl p-3 text-[11px] font-mono space-y-1"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-1.5 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-300 font-bold">
+                                {blk.category}
+                              </span>
+                              <span className="text-slate-100 font-bold">{blk.boxOrStreamName}</span>
+                              <span className="text-slate-500">path: {blk.path}</span>
+                            </div>
+                            <span className="text-slate-400">
+                              @{blk.offsetHex} • {blk.sizeBytes}B
+                            </span>
+                          </div>
+                          {blk.uuidHex && (
+                            <div className="text-cyan-300 break-all">
+                              UUID Hex: <span className="text-slate-200">{blk.uuidHex}</span>
+                            </div>
+                          )}
+                          <div className="text-slate-300 break-all">
+                            Payload/Value: <span className="text-amber-200">{blk.asciiPreview}</span>
+                          </div>
+                          <div className="text-[10px] text-rose-300 pt-0.5">
+                            → {blk.triggerReason}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 4. Collapsible Raw FFprobe Diagnostic Console */}
+              <div className="pt-2 border-t border-slate-800 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowFfprobeConsole((prev) => !prev)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-mono font-bold text-cyan-300 flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    {showFfprobeConsole ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    <span>{showFfprobeConsole ? 'Sembunyikan Output Raw FFprobe' : 'Lihat Output Raw FFprobe Diagnostic'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyDiag}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200 flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    {copiedDiag ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedDiag ? 'Tersalin!' : 'Salin Laporan FFprobe'}</span>
+                  </button>
+                </div>
+                {showFfprobeConsole && (
+                  <pre className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-[10px] font-mono text-slate-300 max-h-64 overflow-auto leading-relaxed">
+                    {diag.rawFfprobeSummaryText}
+                  </pre>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* TERMINAL LOG DISPLAY */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">

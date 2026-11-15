@@ -18,7 +18,8 @@ import {
   Clock,
   Layers,
   ChevronRight,
-  FileText
+  FileText,
+  Eraser,
 } from 'lucide-react';
 import { UGC_CATEGORIES } from '../data/categories';
 import { UGCTemplateCategory, StoryboardProject } from '../types';
@@ -31,6 +32,7 @@ interface SidebarProps {
   currentProjectId?: string;
   onSelectProject?: (id: string) => void;
   onCreateNewProject?: () => void;
+  onClearProjects?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -41,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentProjectId,
   onSelectProject,
   onCreateNewProject,
+  onClearProjects,
 }) => {
   const [activeTab, setActiveTab] = useState<'categories' | 'projects'>('categories');
 
@@ -76,10 +79,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const activeCat = UGC_CATEGORIES.find((c) => c.id === selectedCategoryId) || UGC_CATEGORIES[0];
 
   return (
-    <aside className="w-full lg:w-64 xl:w-72 bg-[#090d16] border-r border-[#1a2336] flex flex-col shrink-0">
+    <aside className="w-full lg:w-64 xl:w-72 bg-[#090d16] border-r border-[#1a2336] flex flex-col shrink-0 min-h-0">
       
       {/* Top Navigation Tabs: Formats vs Saved Projects */}
-      <div className="p-3 border-b border-[#1a2336] flex items-center gap-1.5 bg-[#0b101b]">
+      <div className="p-3 border-b border-[#1a2336] flex items-center gap-1.5 bg-[#0b101b] shrink-0">
         <button
           onClick={() => setActiveTab('categories')}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-bold transition-all ${
@@ -182,20 +185,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Tab 2: Saved Projects List */}
       {activeTab === 'projects' && (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="p-3 border-b border-[#1a2336]">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="p-3 border-b border-[#1a2336] flex items-center gap-2 shrink-0">
             {onCreateNewProject && (
               <button
                 onClick={onCreateNewProject}
-                className="w-full flex items-center justify-center gap-1.5 bg-[#141c2c] hover:bg-[#1b253b] text-purple-300 border border-purple-800/50 hover:border-purple-600 text-xs font-bold py-2 px-3 rounded-xl transition-all shadow-sm"
+                className="flex-1 flex items-center justify-center gap-1.5 bg-[#141c2c] hover:bg-[#1b253b] text-purple-300 border border-purple-800/50 hover:border-purple-600 text-xs font-bold py-2 px-3 rounded-xl transition-all shadow-sm cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Buat Naskah Baru</span>
+                <span>Buat Naskah</span>
+              </button>
+            )}
+            {onClearProjects && projects.length > 1 && (
+              <button
+                onClick={onClearProjects}
+                className="flex items-center justify-center gap-1 bg-rose-950/60 hover:bg-rose-900/70 text-rose-300 hover:text-white border border-rose-700/50 text-xs font-bold py-2 px-2.5 rounded-xl transition-all shadow-sm cursor-pointer"
+                title="Clear semua naskah menumpuk & sisakan 1 naskah bersih"
+              >
+                <Eraser className="w-3.5 h-3.5" />
+                <span>Clear</span>
               </button>
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5 custom-scrollbar">
+          <div className="flex-1 min-h-0 max-h-[52vh] lg:max-h-[calc(100vh-145px)] overflow-y-auto overscroll-contain p-2.5 space-y-1.5 custom-scrollbar">
             {projects.map((proj) => {
               const isSelected = proj.id === currentProjectId;
               const duration = proj.scenes.reduce((sum, s) => sum + (Number(s.duration) || 0), 0);

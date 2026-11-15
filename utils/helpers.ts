@@ -37,8 +37,8 @@ export function copyToClipboard(text: string): Promise<boolean> {
  */
 export function compressImageFileToDataUrl(
   file: File,
-  maxDim = 768,
-  quality = 0.78
+  maxDim = 640,
+  quality = 0.72
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

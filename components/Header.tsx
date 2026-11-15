@@ -14,11 +14,9 @@ import {
   Zap,
   Lock,
   ShieldCheck,
-  Shield,
-  ExternalLink,
-  User as UserIcon,
+  HardDrive,
 } from 'lucide-react';
-import { StoryboardViewMode, Scene, PublicAppUser } from '../types';
+import { StoryboardViewMode, Scene } from '../types';
 import { formatDuration } from '../utils/helpers';
 
 interface HeaderProps {
@@ -40,11 +38,6 @@ interface HeaderProps {
   saveStatus?: 'saved' | 'saving' | 'error' | 'pending';
   lastSavedTime?: string | null;
   onManualSave?: () => void;
-  currentUser?: PublicAppUser | null;
-  googleConnected?: boolean;
-  onConnectGoogle?: () => void;
-  onOpenAdminDashboard?: () => void;
-  autoSaveEnabled?: boolean;
   autoSaveCountdown?: number;
 }
 
@@ -67,12 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
   saveStatus = 'saved',
   lastSavedTime,
   onManualSave,
-  currentUser,
-  googleConnected = false,
-  onConnectGoogle,
-  onOpenAdminDashboard,
-  autoSaveEnabled = false,
-  autoSaveCountdown = 60,
+  autoSaveCountdown = 10,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState(title);
@@ -222,7 +210,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
 
-          {/* Local Auto-Save Status */}
+          {/* Local Storage 10s Auto-Save Status */}
           <button
             onClick={onManualSave}
             type="button"
@@ -235,37 +223,24 @@ export const Header: React.FC<HeaderProps> = ({
                 ? 'bg-sky-950/50 border-sky-500/40 text-sky-300'
                 : 'bg-emerald-950/40 hover:bg-emerald-900/40 border-emerald-500/40 text-emerald-300'
             }`}
-            title="Simpan naskah storyboard ke memori lokal browser sekarang"
+            title="Auto-save ke Local Storage setiap 10 detik. Klik untuk simpan sekarang."
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <HardDrive className="w-3.5 h-3.5 shrink-0" />
             <span className="text-[11px] font-semibold font-mono tabular-nums whitespace-nowrap hidden sm:inline">
-              {lastSavedTime ? `Tersimpan ${lastSavedTime}` : 'Auto-Save Lokal'}
+              {saveStatus === 'saving'
+                ? 'Menyimpan...'
+                : saveStatus === 'error'
+                ? 'Gagal Simpan'
+                : saveStatus === 'pending'
+                ? `Perubahan • Auto ${autoSaveCountdown}d`
+                : lastSavedTime
+                ? `Tersimpan ${lastSavedTime} • ${autoSaveCountdown}d`
+                : `Auto-Save ${autoSaveCountdown}d`}
+            </span>
+            <span className="text-[11px] font-semibold font-mono tabular-nums sm:hidden">
+              {autoSaveCountdown}d
             </span>
           </button>
-
-          {/* Active User Indicator */}
-          {currentUser && (
-            <div
-              className="hidden md:flex items-center gap-1.5 bg-[#101726] border border-[#1e2a42] rounded-xl px-2.5 py-1 text-[11px] text-slate-300"
-              title={`Login sebagai ${currentUser.displayName} (DB: ${currentUser.sheetTabName})`}
-            >
-              <UserIcon className="w-3 h-3 text-purple-400 shrink-0" />
-              <span className="font-mono font-semibold text-white">@{currentUser.username}</span>
-            </div>
-          )}
-
-          {/* Admin Dashboard Trigger */}
-          {currentUser?.role === 'admin' && onOpenAdminDashboard && (
-            <button
-              type="button"
-              onClick={onOpenAdminDashboard}
-              className="flex items-center gap-1.5 bg-purple-950/70 hover:bg-purple-900/70 text-purple-200 border border-purple-500/40 text-xs font-bold px-2.5 py-1.5 rounded-xl transition-all active:scale-95 whitespace-nowrap cursor-pointer"
-              title="Buka Dashboard Admin (Monitor Aktivitas & CRUD User)"
-            >
-              <Shield className="w-3.5 h-3.5 text-purple-300" />
-              <span>Admin</span>
-            </button>
-          )}
 
           {/* Quick Viral Hooks */}
           <button

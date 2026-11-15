@@ -3,16 +3,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import {
-  bootstrapSheetsDatabase,
-  fetchUserProjectsFromSheets,
-  syncProjectsToSheets,
-  logActivityToSheets,
-  saveUserDraftMirror,
-  loadUserDraftMirror,
-  mergeDraftImagesIntoSheetProjects,
-  sanitizeTabName,
-  SPREADSHEET_URL,
-  SESSION_USER_KEY,
+  saveProjectsToLocalStorage,
+  loadProjectsFromLocalStorage,
+  loadProjectsFromIndexedDB,
+  mergeIndexedDBImagesIntoProjects,
+  clearLegacyAdminStorageKeys,
+  AUTO_SAVE_INTERVAL_SECONDS,
+  nowTimeId,
 } from '@/utils/storyboardStorage';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
@@ -73,7 +70,6 @@ import {
   StoryboardViewMode,
   HookVariant,
   AutoDetectResult,
-  PublicAppUser,
 } from '@/types';
 import { copyToClipboard, generateId, postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
 import { formatShortCaption, generateRichFallback } from '@/lib/gemini-ugc';
@@ -95,8 +91,6 @@ import {
   Image as ImageIcon,
   X,
   Loader2,
-  FileSpreadsheet,
-  ExternalLink,
 } from 'lucide-react';
 
 // Initial project matching UGC Before & After format with 6 rich scenes
@@ -232,12 +226,10 @@ const INITIAL_BEFORE_AFTER_PROJECT: StoryboardProject = {
 export default function HomePage() {
   const [mounted, setMounted] = useState(false);
 
-  // Multi-user auth + in-memory Google Sheets token state
-  const [currentUser, setCurrentUser] = useState<PublicAppUser | null>(null);
-  const [googleToken, setGoogleToken] = useState<string | null>(null);
-  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  // Studio password gate auth state (local-only, no admin/user roles)
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Projects State (isolated per logged-in user)
+  // Projects State (stored in browser Local Storage)
   const [projects, setProjects] = useState<StoryboardProject[]>([INITIAL_BEFORE_AFTER_PROJECT]);
   const [currentProjectId, setCurrentProjectId] = useState<string>(INITIAL_BEFORE_AFTER_PROJECT.id);
 
@@ -260,139 +252,131 @@ export default function HomePage() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportModalInitialTab, setExportModalInitialTab] = useState<'table' | 'caption' | 'script' | 'capcut' | 'json'>('table');
   const [isProjectsModalOpen, setIsProjectsModalOpen] = useState(false);
-  const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
   const [isJsonCopied, setIsJsonCopied] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [enhancingSceneId, setEnhancingSceneId] = useState<string | null>(null);
 
-  // Google Sheets Database & 1-Minute Auto-Save State
+  // Local Storage & 10-Second Auto-Save State
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error' | 'pending'>('saved');
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
-  const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(false);
-  const [autoSaveCountdown, setAutoSaveCountdown] = useState<number>(60);
+  const [autoSaveCountdown, setAutoSaveCountdown] = useState<number>(AUTO_SAVE_INTERVAL_SECONDS);
 
   const projectsRef = useRef(projects);
-  const currentUserRef = useRef(currentUser);
-  const googleTokenRef = useRef(googleToken);
-  const hasUnsavedSheetChangesRef = useRef(false);
+  const currentProjectIdRef = useRef(currentProjectId);
+  const hasUnsavedChangesRef = useRef(false);
 
   useEffect(() => {
     projectsRef.current = projects;
-    currentUserRef.current = currentUser;
-    googleTokenRef.current = googleToken;
-  }, [projects, currentUser, googleToken]);
+    currentProjectIdRef.current = currentProjectId;
+  }, [projects, currentProjectId]);
 
-  // Hydrate multi-user session & initialize Firebase Auth state listener
+  // Show temporary toast notification
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
+  }, []);
+
+  // Hydrate auth gate & projects from Local Storage + IndexedDB on mount
   useEffect(() => {
     setMounted(true);
+    let cancelled = false;
 
+    let initialProjects: StoryboardProject[] | null = null;
     try {
-      const savedSession = localStorage.getItem(SESSION_USER_KEY);
-      if (savedSession) {
-        const parsedUser = JSON.parse(savedSession) as PublicAppUser;
-        if (parsedUser?.username) {
-          setCurrentUser(parsedUser);
-          const draft = loadUserDraftMirror(parsedUser.username);
-          if (draft.projects && draft.projects.length > 0) {
-            setProjects(draft.projects);
-            if (draft.currentProjectId && draft.projects.some((p) => p.id === draft.currentProjectId)) {
-              setCurrentProjectId(draft.currentProjectId);
-            } else {
-              setCurrentProjectId(draft.projects[0].id);
-            }
-          }
+      const authed = localStorage.getItem(AUTH_STORAGE_KEY) === 'true';
+      setIsAuthenticated(authed);
+
+      const loaded = loadProjectsFromLocalStorage();
+      if (loaded.projects && loaded.projects.length > 0) {
+        initialProjects = loaded.projects;
+        setProjects(loaded.projects);
+        if (
+          loaded.currentProjectId &&
+          loaded.projects.some((p) => p.id === loaded.currentProjectId)
+        ) {
+          setCurrentProjectId(loaded.currentProjectId);
+        } else {
+          setCurrentProjectId(loaded.projects[0].id);
         }
+        setLastSavedTime(nowTimeId());
       }
     } catch {}
 
     setIsStorageLoaded(true);
-  }, []);
 
-  // Save draft mirror whenever active user edits projects
-  useEffect(() => {
-    if (!isStorageLoaded || !currentUser) return;
-    saveUserDraftMirror(currentUser.username, projects, currentProjectId);
-  }, [projects, currentProjectId, currentUser, isStorageLoaded]);
-
-  // Core Google Sheets Sync Worker
-  const syncNowToSheets = useCallback(
-    async (
-      mode: 'AUTO_SAVE_1M' | 'MANUAL_SAVE' | 'PROJECT_MUTATION',
-      overrideProjects?: StoryboardProject[]
-    ) => {
-      const token = googleTokenRef.current;
-      const user = currentUserRef.current;
-      const list = overrideProjects || projectsRef.current;
-      if (!token || !user || list.length === 0) return;
-
-      setSaveStatus('saving');
-      const res = await syncProjectsToSheets(token, user, list, mode);
-      if (res.success) {
-        hasUnsavedSheetChangesRef.current = false;
-        setSaveStatus('saved');
-        setLastSavedTime(res.timestamp);
+    // Restore full high-res reference images from IndexedDB if Local Storage trimmed them for quota
+    void loadProjectsFromIndexedDB().then((idb) => {
+      if (cancelled || !idb.projects || idb.projects.length === 0) return;
+      if (initialProjects && initialProjects.length > 0) {
+        setProjects((prev) => mergeIndexedDBImagesIntoProjects(prev, idb.projects!));
       } else {
-        setSaveStatus('error');
-        if (res.needsReauth) {
-          setGoogleToken(null);
-          setAutoSaveEnabled(false);
+        setProjects(idb.projects);
+        if (idb.currentProjectId && idb.projects.some((p) => p.id === idb.currentProjectId)) {
+          setCurrentProjectId(idb.currentProjectId);
+        } else {
+          setCurrentProjectId(idb.projects[0].id);
         }
+        setLastSavedTime(nowTimeId());
       }
-    },
-    []
-  );
+    });
 
-  // Read-only initial fetch from user's isolated DB tab once Google Token & User are active
-  useEffect(() => {
-    if (!googleToken || !currentUser) return;
-    let cancelled = false;
-
-    const loadUserSheetsProjects = async () => {
-      try {
-        const res = await fetchUserProjectsFromSheets(googleToken, currentUser);
-        if (cancelled) return;
-        if (res.success) {
-          if (res.projects.length > 0) {
-            const draft = loadUserDraftMirror(currentUser.username);
-            const merged = mergeDraftImagesIntoSheetProjects(res.projects, draft.projects);
-            setProjects(merged);
-            setCurrentProjectId(merged[0].id);
-            setSaveStatus('saved');
-            setLastSavedTime(
-              new Date().toLocaleTimeString('id-ID', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              })
-            );
-          }
-        } else if (res.needsReauth) {
-          setGoogleToken(null);
-        }
-      } catch {}
-    };
-
-    loadUserSheetsProjects();
     return () => {
       cancelled = true;
     };
-  }, [googleToken, currentUser]);
+  }, []);
 
-  // 1-Minute (60 seconds) Auto-Save Interval to Google Sheets
+  // Core Local Storage Save Worker
+  const performLocalSave = useCallback(
+    (
+      showFeedbackToast = false,
+      overrideProjects?: StoryboardProject[],
+      overrideProjectId?: string
+    ) => {
+      const list = overrideProjects ?? projectsRef.current;
+      const activeId = overrideProjectId ?? currentProjectIdRef.current;
+      if (!list || list.length === 0) return;
+
+      setSaveStatus('saving');
+      const res = saveProjectsToLocalStorage(list, activeId);
+      if (res.success) {
+        hasUnsavedChangesRef.current = false;
+        setSaveStatus('saved');
+        setLastSavedTime(res.timestamp);
+        setAutoSaveCountdown(AUTO_SAVE_INTERVAL_SECONDS);
+        if (showFeedbackToast) {
+          showToast(
+            res.trimmedLargeImages
+              ? '💾 Tersimpan aman! Naskah di Local Storage & foto referensi di IndexedDB.'
+              : '💾 Semua naskah berhasil disimpan ke Local Storage!'
+          );
+        }
+      } else {
+        setSaveStatus('error');
+        if (showFeedbackToast) {
+          showToast(res.error || 'Gagal menyimpan ke Local Storage.');
+        }
+      }
+    },
+    [showToast]
+  );
+
+  // 10-Second Auto-Save Interval to Local Storage
   useEffect(() => {
-    if (!autoSaveEnabled || !googleToken || !currentUser) {
-      setAutoSaveCountdown(60);
+    if (!isAuthenticated || !isStorageLoaded) {
+      setAutoSaveCountdown(AUTO_SAVE_INTERVAL_SECONDS);
       return;
     }
 
     const timer = setInterval(() => {
       setAutoSaveCountdown((prev) => {
         if (prev <= 1) {
-          void syncNowToSheets('AUTO_SAVE_1M');
-          return 60;
+          performLocalSave(false);
+          return AUTO_SAVE_INTERVAL_SECONDS;
         }
         return prev - 1;
       });
@@ -401,114 +385,71 @@ export default function HomePage() {
     return () => {
       clearInterval(timer);
     };
-  }, [autoSaveEnabled, googleToken, currentUser, syncNowToSheets]);
+  }, [isAuthenticated, isStorageLoaded, performLocalSave]);
 
-  const handleConnectGoogle = async (): Promise<string | null> => {
-    showToast('Penyimpanan berjalan otomatis via Local Storage browser.');
-    return null;
-  };
+  // Flush unsaved changes immediately before tab hide / page unload
+  useEffect(() => {
+    if (!isAuthenticated || !isStorageLoaded) return;
 
-  const requestEnableAutoSaveAndInit = () => {
-    const user = currentUser;
-    if (!user) return;
-    const tabName = user.sheetTabName || sanitizeTabName(user.username);
+    const flushUnsaved = () => {
+      if (hasUnsavedChangesRef.current && projectsRef.current.length > 0) {
+        saveProjectsToLocalStorage(projectsRef.current, currentProjectIdRef.current);
+        hasUnsavedChangesRef.current = false;
+      }
+    };
 
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Aktifkan Database & Auto-Save 1 Menit ke Google Sheets?',
-      description:
-        'Sistem akan menyiapkan struktur database di Google Spreadsheet (tab _Users, _Activity_Logs, dan worksheet pribadi Anda) serta menyinkronkan data storyboard secara otomatis setiap 1 menit.',
-      details: [
-        `Spreadsheet Target: ${SPREADSHEET_URL}`,
-        `Database User (@${user.username}): Worksheet ${tabName}`,
-        'Interval Auto-Save: Setiap 60 detik (1 menit)',
-      ],
-      confirmLabel: 'Ya, Inisialisasi & Aktifkan 1 Menit',
-      tone: 'primary',
-      onConfirm: async () => {
-        let token = googleTokenRef.current;
-        if (!token) {
-          token = await handleConnectGoogle();
-        }
-        if (!token) {
-          setConfirmDialog(null);
-          return;
-        }
-        setConfirmDialog((prev) => (prev ? { ...prev, isProcessing: true } : null));
-        try {
-          await bootstrapSheetsDatabase(token, user.username);
-          await syncNowToSheets('MANUAL_SAVE');
-          setAutoSaveEnabled(true);
-          setAutoSaveCountdown(60);
-          setConfirmDialog(null);
-          showToast(`✅ Database ${tabName} siap & Auto-Save 1 menit aktif!`);
-        } catch (err: any) {
-          setConfirmDialog(null);
-          showToast(err?.message || 'Gagal menginisialisasi Google Sheets.');
-        }
-      },
-    });
-  };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushUnsaved();
+      }
+    };
 
-  // Explicit manual save confirmation action
+    window.addEventListener('beforeunload', flushUnsaved);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', flushUnsaved);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isAuthenticated, isStorageLoaded]);
+
+  // Explicit manual save action
   const handleManualSave = () => {
-    if (!googleToken) {
-      void handleConnectGoogle();
-      return;
-    }
-    const user = currentUser;
-    const tabName = user?.sheetTabName || sanitizeTabName(user?.username || 'admin');
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Simpan & Sinkronkan ke Google Sheets Sekarang?',
-      description:
-        'Data project, brief produk, parameter UGC, caption, dan seluruh adegan akan disimpan ke worksheet database pribadi Anda.',
-      details: [
-        `Worksheet Target: ${tabName}`,
-        `Jumlah Project: ${projects.length} Naskah`,
-      ],
-      confirmLabel: 'Simpan ke Google Sheets',
-      tone: 'primary',
-      onConfirm: async () => {
-        setConfirmDialog((prev) => (prev ? { ...prev, isProcessing: true } : null));
-        await syncNowToSheets('MANUAL_SAVE');
-        setAutoSaveEnabled(true);
-        setAutoSaveCountdown(60);
-        setConfirmDialog(null);
-        showToast('💾 Naskah Storyboard tersinkron ke Google Sheets!');
-      },
-    });
+    performLocalSave(true);
   };
 
-  const handleAuthSuccess = (user: PublicAppUser) => {
-    setCurrentUser(user);
+  const handleAuthSuccess = () => {
     try {
       localStorage.setItem(AUTH_STORAGE_KEY, 'true');
-      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
     } catch {}
 
-    const draft = loadUserDraftMirror(user.username);
-    if (draft.projects && draft.projects.length > 0) {
-      setProjects(draft.projects);
-      setCurrentProjectId(draft.currentProjectId || draft.projects[0].id);
-    } else {
-      setProjects([
-        {
-          ...INITIAL_BEFORE_AFTER_PROJECT,
-          id: `${INITIAL_BEFORE_AFTER_PROJECT.id}_${user.username}`,
-          ownerUsername: user.username,
-        },
-      ]);
-      setCurrentProjectId(`${INITIAL_BEFORE_AFTER_PROJECT.id}_${user.username}`);
+    const loaded = loadProjectsFromLocalStorage();
+    const hasLocal = Boolean(loaded.projects && loaded.projects.length > 0);
+    if (hasLocal && loaded.projects) {
+      setProjects(loaded.projects);
+      if (
+        loaded.currentProjectId &&
+        loaded.projects.some((p) => p.id === loaded.currentProjectId)
+      ) {
+        setCurrentProjectId(loaded.currentProjectId);
+      } else {
+        setCurrentProjectId(loaded.projects[0].id);
+      }
     }
-  };
+    setIsAuthenticated(true);
 
-  const handleSwitchWorkspaceUser = (targetUser: PublicAppUser) => {
-    setCurrentUser(targetUser);
-    try {
-      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(targetUser));
-    } catch {}
-    showToast(`Beralih ke database user @${targetUser.username} (${targetUser.sheetTabName})`);
+    void loadProjectsFromIndexedDB().then((idb) => {
+      if (!idb.projects || idb.projects.length === 0) return;
+      if (hasLocal) {
+        setProjects((prev) => mergeIndexedDBImagesIntoProjects(prev, idb.projects!));
+      } else {
+        setProjects(idb.projects);
+        if (idb.currentProjectId && idb.projects.some((p) => p.id === idb.currentProjectId)) {
+          setCurrentProjectId(idb.currentProjectId);
+        } else {
+          setCurrentProjectId(idb.projects[0].id);
+        }
+      }
+    });
   };
 
   // Active Project
@@ -563,40 +504,22 @@ export default function HomePage() {
     setIsExportModalOpen(true);
   };
 
-  // Show temporary toast notification
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 3000);
-  };
-
-  const handleLogout = async () => {
-    const user = currentUser;
-    if (googleToken && user) {
-      await logActivityToSheets(googleToken, {
-        userId: user.id,
-        username: user.username,
-        role: user.role,
-        action: 'LOGOUT',
-        target: user.sheetTabName,
-        details: 'Keluar & mengunci sesi studio',
-        status: 'info',
-      });
+  const handleLogout = () => {
+    if (projectsRef.current.length > 0) {
+      saveProjectsToLocalStorage(projectsRef.current, currentProjectIdRef.current);
+      hasUnsavedChangesRef.current = false;
     }
     try {
       localStorage.removeItem(AUTH_STORAGE_KEY);
-      localStorage.removeItem(SESSION_USER_KEY);
+      clearLegacyAdminStorageKeys();
     } catch {}
-    setGoogleToken(null);
-    setAutoSaveEnabled(false);
-    setCurrentUser(null);
+    setIsAuthenticated(false);
     showToast('Studio telah dikunci');
   };
 
   // Update current project helper
   const updateCurrentProject = (updater: (prev: StoryboardProject) => StoryboardProject) => {
-    hasUnsavedSheetChangesRef.current = true;
+    hasUnsavedChangesRef.current = true;
     setSaveStatus('pending');
     setProjects((prev) => {
       const updatedList = prev.map((p) => {
@@ -604,7 +527,6 @@ export default function HomePage() {
           const updated = updater(p);
           return {
             ...updated,
-            ownerUsername: currentUser?.username || updated.ownerUsername,
             updatedAt: new Date().toISOString(),
           };
         }
@@ -1025,7 +947,6 @@ export default function HomePage() {
 
       const newProj: StoryboardProject = {
         id: generateId(),
-        ownerUsername: currentUser?.username || 'admin',
         title: resolvedData.title || `Storyboard ${params.category} - ${params.productName}`,
         categoryId: matchedCat.id,
         productName: params.productName,
@@ -1051,24 +972,12 @@ export default function HomePage() {
         scenes: genScenes,
       };
 
-      hasUnsavedSheetChangesRef.current = true;
-      setSaveStatus('pending');
-      setProjects((prev) => [newProj, ...prev]);
+      const nextList = [newProj, ...projectsRef.current];
+      setProjects(nextList);
       setCurrentProjectId(newProj.id);
       setIsAIGeneratorOpen(false);
-      showToast('🎉 Storyboard AI berhasil dibuat! (Siap disinkronkan ke Google Sheets)');
-
-      if (googleToken && currentUser) {
-        void logActivityToSheets(googleToken, {
-          userId: currentUser.id,
-          username: currentUser.username,
-          role: currentUser.role,
-          action: 'AI_GENERATE',
-          target: newProj.title,
-          details: `Generate storyboard AI (${genScenes.length} adegan, produk: ${params.productName})`,
-          status: 'success',
-        });
-      }
+      performLocalSave(false, nextList, newProj.id);
+      showToast('🎉 Storyboard AI berhasil dibuat & disimpan di Local Storage!');
     } catch (e) {
       console.error('Generate storyboard error:', e);
       showToast('Gagal terhubung ke generator AI.');
@@ -1249,7 +1158,6 @@ export default function HomePage() {
   const handleCreateNewProject = () => {
     const newProj: StoryboardProject = {
       id: generateId(),
-      ownerUsername: currentUser?.username || 'admin',
       title: 'Naskah Storyboard Baru',
       categoryId: 'before_after',
       productName: 'Produk Baru',
@@ -1291,52 +1199,27 @@ export default function HomePage() {
       ],
     };
 
-    hasUnsavedSheetChangesRef.current = true;
-    setSaveStatus('pending');
-    setProjects((prev) => [newProj, ...prev]);
+    const nextList = [newProj, ...projectsRef.current];
+    setProjects(nextList);
     setCurrentProjectId(newProj.id);
     setIsProjectsModalOpen(false);
-    showToast('Naskah baru dibuat!');
-
-    if (googleToken && currentUser) {
-      void logActivityToSheets(googleToken, {
-        userId: currentUser.id,
-        username: currentUser.username,
-        role: currentUser.role,
-        action: 'PROJECT_CREATE',
-        target: newProj.title,
-        details: `Membuat project naskah baru (${newProj.id})`,
-        status: 'success',
-      });
-    }
+    performLocalSave(false, nextList, newProj.id);
+    showToast('Naskah baru dibuat & tersimpan!');
   };
 
   const handleDuplicateProject = (proj: StoryboardProject) => {
     const duplicated: StoryboardProject = {
       ...proj,
       id: generateId(),
-      ownerUsername: currentUser?.username || proj.ownerUsername,
       title: `${proj.title} (Copy)`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    hasUnsavedSheetChangesRef.current = true;
-    setSaveStatus('pending');
-    setProjects((prev) => [duplicated, ...prev]);
+    const nextList = [duplicated, ...projectsRef.current];
+    setProjects(nextList);
     setCurrentProjectId(duplicated.id);
+    performLocalSave(false, nextList, duplicated.id);
     showToast(`Project "${proj.title}" berhasil diduplikasi!`);
-
-    if (googleToken && currentUser) {
-      void logActivityToSheets(googleToken, {
-        userId: currentUser.id,
-        username: currentUser.username,
-        role: currentUser.role,
-        action: 'PROJECT_DUPLICATE',
-        target: duplicated.title,
-        details: `Duplikasi dari "${proj.title}"`,
-        status: 'success',
-      });
-    }
   };
 
   const handleDeleteProject = (projId: string) => {
@@ -1345,57 +1228,94 @@ export default function HomePage() {
       return;
     }
     const targetProj = projects.find((p) => p.id === projId);
-    const tabName = currentUser?.sheetTabName || sanitizeTabName(currentUser?.username || 'admin');
 
     setConfirmDialog({
       isOpen: true,
       title: `Hapus Naskah "${targetProj?.title || projId}"?`,
       description:
-        'Naskah ini akan dihapus dari daftar "Naskah Saya" dan disinkronkan ke worksheet Google Sheets pribadi Anda.',
+        'Naskah ini akan dihapus permanen dari daftar "Naskah Saya" di Local Storage browser Anda.',
       details: [
         `Judul Naskah: ${targetProj?.title || '-'}`,
-        `Worksheet Database: ${tabName}`,
+        'Penyimpanan: Local Storage Browser',
       ],
       confirmLabel: 'Ya, Hapus Naskah',
       tone: 'danger',
-      onConfirm: async () => {
-        setConfirmDialog((prev) => (prev ? { ...prev, isProcessing: true } : null));
-        const filtered = projects.filter((p) => p.id !== projId);
+      onConfirm: () => {
+        const filtered = projectsRef.current.filter((p) => p.id !== projId);
+        const nextActiveId =
+          currentProjectId === projId && filtered[0] ? filtered[0].id : currentProjectId;
         setProjects(filtered);
-        if (currentProjectId === projId && filtered[0]) {
-          setCurrentProjectId(filtered[0].id);
+        if (nextActiveId !== currentProjectId) {
+          setCurrentProjectId(nextActiveId);
         }
-        if (googleTokenRef.current && currentUserRef.current) {
-          await syncNowToSheets('PROJECT_MUTATION', filtered);
-          await logActivityToSheets(googleTokenRef.current, {
-            userId: currentUserRef.current.id,
-            username: currentUserRef.current.username,
-            role: currentUserRef.current.role,
-            action: 'PROJECT_DELETE',
-            target: targetProj?.title || projId,
-            details: `Menghapus naskah dari database ${tabName}`,
-            status: 'info',
-          });
-        }
+        performLocalSave(false, filtered, nextActiveId);
         setConfirmDialog(null);
         showToast('Project naskah berhasil dihapus');
       },
     });
   };
 
-  // If not authenticated or not mounted yet, show multi-user login gate
-  if (!mounted || !currentUser) {
-    return (
-      <PasswordGate
-        googleToken={googleToken}
-        googleEmail={googleEmail}
-        onGoogleConnected={(token, email) => {
-          setGoogleToken(token);
-          setGoogleEmail(email);
-        }}
-        onSuccess={handleAuthSuccess}
-      />
-    );
+  const handleClearAllProjects = () => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Bersihkan Semua Naskah Storyboard?',
+      description:
+        'Semua project yang menumpuk di Local Storage akan dihapus dan direset menjadi 1 naskah default yang bersih agar tidak membebani browser.',
+      details: [
+        `Total Naskah Saat Ini: ${projects.length} Project`,
+        'Hasil Akhir: 1 Naskah Default Baru di Local Storage',
+      ],
+      confirmLabel: 'Ya, Bersihkan Semua',
+      tone: 'danger',
+      onConfirm: () => {
+        const freshDefault: StoryboardProject = {
+          ...INITIAL_BEFORE_AFTER_PROJECT,
+          id: generateId(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        const nextList = [freshDefault];
+        setProjects(nextList);
+        setCurrentProjectId(freshDefault.id);
+        performLocalSave(false, nextList, freshDefault.id);
+        setConfirmDialog(null);
+        setIsProjectsModalOpen(false);
+        showToast('🧹 Semua naskah dibersihkan! Tersisa 1 naskah default di Local Storage.');
+      },
+    });
+  };
+
+  const handleClearOtherProjects = () => {
+    if (projects.length <= 1) {
+      showToast('Hanya ada 1 naskah aktif saat ini.');
+      return;
+    }
+
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Hapus Naskah Lain & Sisakan Naskah Aktif?',
+      description:
+        'Seluruh naskah lain yang menumpuk akan dihapus dari Local Storage, dan hanya naskah yang sedang dibuka saat ini yang dipertahankan.',
+      details: [
+        `Naskah Dipertahankan: ${currentProject.title}`,
+        `Akan Dihapus: ${projects.length - 1} Naskah Lainnya`,
+      ],
+      confirmLabel: 'Ya, Sisakan Aktif',
+      tone: 'warning',
+      onConfirm: () => {
+        const nextList = [currentProject];
+        setProjects(nextList);
+        setCurrentProjectId(currentProject.id);
+        performLocalSave(false, nextList, currentProject.id);
+        setConfirmDialog(null);
+        showToast('🧹 Naskah lain dibersihkan! Hanya naskah aktif yang disimpan.');
+      },
+    });
+  };
+
+  // If not authenticated or not mounted yet, show PasswordGate
+  if (!mounted || !isAuthenticated) {
+    return <PasswordGate onSuccess={handleAuthSuccess} />;
   }
 
   return (
@@ -1421,11 +1341,6 @@ export default function HomePage() {
         saveStatus={saveStatus}
         lastSavedTime={lastSavedTime}
         onManualSave={handleManualSave}
-        currentUser={currentUser}
-        googleConnected={Boolean(googleToken)}
-        onConnectGoogle={() => void handleConnectGoogle()}
-        onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
-        autoSaveEnabled={autoSaveEnabled}
         autoSaveCountdown={autoSaveCountdown}
       />
 
@@ -1439,15 +1354,19 @@ export default function HomePage() {
           onTriggerAICategory={handleTriggerAICategory}
           projects={projects}
           currentProjectId={currentProject.id}
-          onSelectProject={(id) => setCurrentProjectId(id)}
+          onSelectProject={(id) => {
+            setCurrentProjectId(id);
+            performLocalSave(false, projectsRef.current, id);
+          }}
           onCreateNewProject={handleCreateNewProject}
+          onClearProjects={handleClearAllProjects}
         />
 
         {/* Main Content Area */}
         <main className="flex-1 bg-[#070a12] overflow-y-auto p-4 md:p-6 lg:p-7 custom-scrollbar">
           <div className="max-w-6xl mx-auto space-y-5">
 
-            {/* Context header continues cleanly without deleted Google Sheets bar */}
+            {/* Context header */}
             
             {/* Context Bar: Current Format, Summary & Quick Triggers */}
             <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
@@ -1869,11 +1788,15 @@ export default function HomePage() {
           onClose={() => setIsProjectsModalOpen(false)}
           projects={projects}
           currentProjectId={currentProject.id}
-          onSelectProject={(id) => setCurrentProjectId(id)}
+          onSelectProject={(id) => {
+            setCurrentProjectId(id);
+            performLocalSave(false, projectsRef.current, id);
+          }}
           onCreateNewProject={handleCreateNewProject}
           onDuplicateProject={handleDuplicateProject}
           onDeleteProject={handleDeleteProject}
-          currentUser={currentUser}
+          onClearAllProjects={handleClearAllProjects}
+          onClearOtherProjects={handleClearOtherProjects}
         />
       )}
 

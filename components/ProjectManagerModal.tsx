@@ -19,12 +19,13 @@ import {
   ArrowRight,
   Check,
   Smartphone,
-  Info
+  Info,
+  Search,
+  Eraser,
 } from 'lucide-react';
-import { StoryboardProject, PublicAppUser } from '../types';
+import { StoryboardProject } from '../types';
 import { formatDuration, copyToClipboard } from '../utils/helpers';
 import { UGC_CATEGORIES } from '../data/categories';
-import { sanitizeTabName } from '../utils/storyboardStorage';
 
 interface ProjectManagerModalProps {
   isOpen: boolean;
@@ -35,7 +36,8 @@ interface ProjectManagerModalProps {
   onCreateNewProject: () => void;
   onDuplicateProject: (project: StoryboardProject) => void;
   onDeleteProject: (projectId: string) => void;
-  currentUser?: PublicAppUser | null;
+  onClearAllProjects?: () => void;
+  onClearOtherProjects?: () => void;
 }
 
 export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
@@ -47,10 +49,12 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
   onCreateNewProject,
   onDuplicateProject,
   onDeleteProject,
-  currentUser,
+  onClearAllProjects,
+  onClearOtherProjects,
 }) => {
   const [selectedId, setSelectedId] = useState<string>(currentProjectId || (projects[0]?.id || ''));
   const [activeTab, setActiveTab] = useState<'all' | 'deskripsi' | 'usp' | 'caption' | 'adegan'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [copiedCaption, setCopiedCaption] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
@@ -67,6 +71,16 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
   }
 
   if (!isOpen) return null;
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredProjects = normalizedQuery
+    ? projects.filter(
+        (p) =>
+          p.title.toLowerCase().includes(normalizedQuery) ||
+          (p.productName || '').toLowerCase().includes(normalizedQuery) ||
+          (p.categoryId || '').toLowerCase().includes(normalizedQuery)
+      )
+    : projects;
 
   const activeProject = projects.find((p) => p.id === selectedId) || projects[0];
   const categoryInfo = UGC_CATEGORIES.find((c) => c.id === activeProject?.categoryId);
@@ -134,7 +148,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
       <div className="bg-[#0c101c] border border-[#212d47] rounded-3xl w-full max-w-5xl h-[92vh] max-h-[900px] flex flex-col shadow-2xl overflow-hidden">
         
         {/* Modal Header */}
-        <div className="p-4 md:p-5 border-b border-[#1c273e] flex items-center justify-between bg-gradient-to-r from-[#111728] via-[#0f1524] to-[#0d1220]">
+        <div className="p-4 md:p-5 border-b border-[#1c273e] flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-[#111728] via-[#0f1524] to-[#0d1220] shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-700 to-indigo-600 border border-purple-500/40 flex items-center justify-center text-white shadow-lg shadow-purple-950/50">
               <FolderOpen className="w-5 h-5" />
@@ -142,35 +156,47 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-base font-extrabold text-white tracking-tight">
-                  Project & Storyboard Manager (Naskah Saya)
+                  Project &amp; Storyboard Manager (Naskah Saya)
                 </h2>
                 <span className="text-[11px] font-mono tabular-nums text-purple-300 bg-purple-950/80 border border-purple-700/60 px-2 py-0.5 rounded font-bold">
                   {projects.length} Naskah
                 </span>
-                {currentUser && (
-                  <span className="text-[11px] font-mono text-emerald-300 bg-emerald-950/70 border border-emerald-700/50 px-2 py-0.5 rounded font-semibold">
-                    Sheet: {currentUser.sheetTabName || sanitizeTabName(currentUser.username)}
-                  </span>
-                )}
+                <span className="text-[11px] font-mono text-emerald-300 bg-emerald-950/70 border border-emerald-700/50 px-2 py-0.5 rounded font-semibold">
+                  Local Storage
+                </span>
               </div>
               <p className="text-xs text-slate-400">
-                Pusat data naskah Google Sheets: link produk, informasi produk, USP, persona, durasi, angle kamera, tone, caption, dan adegan.
+                Pusat data naskah Local Storage: link produk, informasi produk, USP, persona, durasi, angle kamera, tone, caption, dan adegan.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {onClearAllProjects && (
+              <button
+                type="button"
+                onClick={onClearAllProjects}
+                className="flex items-center gap-1.5 bg-rose-950/70 hover:bg-rose-900/80 text-rose-200 hover:text-white text-xs font-bold px-3 py-2 rounded-xl transition-all active:scale-95 border border-rose-700/50 cursor-pointer"
+                title="Hapus semua naskah storyboard yang menumpuk dan reset ke 1 naskah bersih"
+              >
+                <Eraser className="w-3.5 h-3.5 text-rose-400" />
+                <span>Clear Projects</span>
+              </button>
+            )}
+
             <button
+              type="button"
               onClick={onCreateNewProject}
-              className="flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-md shadow-purple-950/50 transition-all active:scale-95 border border-purple-400/30"
+              className="flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-md shadow-purple-950/50 transition-all active:scale-95 border border-purple-400/30 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Buat Naskah Baru</span>
             </button>
 
             <button
+              type="button"
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-[#182236] transition-colors"
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-[#182236] transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -180,22 +206,56 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
         {/* Modal Main Content: 2-Column Split */}
         <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
           
-          {/* LEFT COLUMN: Project List */}
-          <div className="w-full md:w-80 border-b md:border-b-0 md:border-r border-[#1a2337] bg-[#090d18] flex flex-col shrink-0">
-            <div className="p-3 border-b border-[#182136] bg-[#0c101d] flex items-center justify-between text-xs text-slate-400 font-semibold">
-              <span className="uppercase tracking-wider text-[10px] font-bold text-slate-300">
-                Daftar Naskah
-              </span>
-              <span>{projects.length} Total</span>
+          {/* LEFT COLUMN: Scrollable Project List */}
+          <div className="w-full md:w-80 max-h-[38vh] md:max-h-none md:h-full min-h-0 border-b md:border-b-0 md:border-r border-[#1a2337] bg-[#090d18] flex flex-col shrink-0">
+            <div className="p-3 border-b border-[#182136] bg-[#0c101d] space-y-2 shrink-0">
+              <div className="flex items-center justify-between text-xs text-slate-400 font-semibold gap-2">
+                <span className="uppercase tracking-wider text-[10px] font-bold text-slate-300">
+                  Daftar Naskah ({filteredProjects.length}/{projects.length})
+                </span>
+                {projects.length > 1 && onClearOtherProjects && (
+                  <button
+                    type="button"
+                    onClick={onClearOtherProjects}
+                    className="text-[10px] font-bold text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/40 px-2 py-0.5 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                    title="Hapus naskah lain yang menumpuk, sisakan naskah aktif saat ini"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" />
+                    <span>Sisakan Aktif</span>
+                  </button>
+                )}
+              </div>
+
+              {projects.length > 3 && (
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Cari judul atau produk..."
+                    className="w-full bg-[#090d18] border border-[#1d273e] focus:border-purple-500 rounded-xl py-1.5 pl-8 pr-7 text-[11px] text-white placeholder-slate-500 outline-none transition-colors"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2.5 space-y-2 custom-scrollbar">
-              {projects.length === 0 ? (
-                <div className="py-12 text-center text-slate-500 text-xs">
-                  Belum ada naskah tersimpan.
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2.5 space-y-2 custom-scrollbar">
+              {filteredProjects.length === 0 ? (
+                <div className="py-10 text-center text-slate-500 text-xs">
+                  {searchQuery ? 'Tidak ada naskah yang cocok.' : 'Belum ada naskah tersimpan.'}
                 </div>
               ) : (
-                projects.map((proj) => {
+                filteredProjects.map((proj) => {
                   const isSelected = proj.id === selectedId;
                   const isCurrentActive = proj.id === currentProjectId;
                   const projSecs = proj.scenes.reduce(
@@ -292,7 +352,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
 
           {/* RIGHT COLUMN: Comprehensive Inspector / Storyboard Detail */}
           {activeProject ? (
-            <div className="flex-1 flex flex-col min-w-0 bg-[#0c101d] overflow-hidden">
+            <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0c101d] overflow-hidden">
               
               {/* Top Banner of Selected Project */}
               <div className="p-4 md:p-5 border-b border-[#1b253b] bg-gradient-to-r from-[#12182a] to-[#0f1423] flex flex-wrap items-center justify-between gap-3 shrink-0">

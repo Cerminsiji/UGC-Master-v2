@@ -10,19 +10,12 @@ import {
   ArrowRight,
   Sparkles,
 } from 'lucide-react';
-import { PublicAppUser } from '@/types';
-import { sanitizeTabName } from '@/utils/storyboardStorage';
 
 export const AUTH_STORAGE_KEY = 'ugc_studio_gate_auth_v3';
-export const DEFAULT_ADMIN_USERNAME = 'admin';
-export const DEFAULT_ADMIN_PASSWORD = 'Ilalang@27';
-export const CORRECT_PASSWORD = DEFAULT_ADMIN_PASSWORD;
+export const CORRECT_PASSWORD = 'Ilalang@27';
 
 interface PasswordGateProps {
-  googleToken?: string | null;
-  googleEmail?: string | null;
-  onGoogleConnected?: (token: string, email: string | null) => void;
-  onSuccess: (user: PublicAppUser) => void;
+  onSuccess: () => void;
 }
 
 export const PasswordGate: React.FC<PasswordGateProps> = ({ onSuccess }) => {
@@ -43,19 +36,7 @@ export const PasswordGate: React.FC<PasswordGateProps> = ({ onSuccess }) => {
 
     try {
       if (password === CORRECT_PASSWORD) {
-        const studioUser: PublicAppUser = {
-          id: 'usr_admin_root',
-          username: DEFAULT_ADMIN_USERNAME,
-          displayName: 'Creator Studio',
-          email: 'studio@ugcmaster.id',
-          role: 'admin',
-          sheetTabName: sanitizeTabName(DEFAULT_ADMIN_USERNAME),
-          status: 'active',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          lastLoginAt: new Date().toISOString(),
-        };
-        onSuccess(studioUser);
+        onSuccess();
         return;
       }
 
@@ -155,7 +136,7 @@ export const PasswordGate: React.FC<PasswordGateProps> = ({ onSuccess }) => {
           </div>
           <div className="flex items-center gap-1 text-purple-400/90 font-semibold">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Creator Workspace</span>
+            <span>Local Storage Mode</span>
           </div>
         </div>
       </div>

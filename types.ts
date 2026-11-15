@@ -89,7 +89,6 @@ export interface StoryboardProject {
   targetAudience?: string;
   targetPlatform?: string;
   targetDuration?: number; // Target durasi video (detik)
-  ownerUsername?: string; // Pemilik naskah / database user
   caption?: string; // Auto caption & hashtags (max 150 chars)
   physicsConsistencyCheck?: boolean;
   scenes: Scene[];
@@ -97,37 +96,6 @@ export interface StoryboardProject {
   shotList?: ShotItem[];
   createdAt: string;
   updatedAt: string;
-}
-
-export type UserRole = 'admin' | 'user';
-export type UserStatus = 'active' | 'suspended';
-
-export interface AppUser {
-  id: string;
-  username: string;
-  displayName: string;
-  email: string;
-  role: UserRole;
-  password: string;
-  sheetTabName: string;
-  status: UserStatus;
-  createdAt: string;
-  updatedAt: string;
-  lastLoginAt?: string;
-}
-
-export type PublicAppUser = Omit<AppUser, 'password'>;
-
-export interface ActivityLogEntry {
-  id: string;
-  timestamp: string;
-  userId: string;
-  username: string;
-  role: UserRole;
-  action: string;
-  target: string;
-  details: string;
-  status: 'success' | 'error' | 'info';
 }
 
 export interface AIGenerateParams {

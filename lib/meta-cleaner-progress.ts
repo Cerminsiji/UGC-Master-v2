@@ -27,6 +27,12 @@ export interface CleanerProgressState {
   logs: string[];
   updatedAt: string;
   error?: string;
+  outputSizeBytes?: number;
+  downloadUrl?: string;
+  appliedFilter?: string;
+  resyncCount?: number;
+  lastResyncAt?: string;
+  resultReady?: boolean;
 }
 
 export function sanitizeJobId(raw: string | null | undefined): string {
@@ -37,6 +43,11 @@ export function sanitizeJobId(raw: string | null | undefined): string {
 export function getProgressFilePath(jobId: string): string {
   const safe = sanitizeJobId(jobId) || 'default';
   return path.join(os.tmpdir(), `metacleaner_progress_${safe}.json`);
+}
+
+export function getResultFilePath(jobId: string): string {
+  const safe = sanitizeJobId(jobId) || 'default';
+  return path.join(os.tmpdir(), `metacleaner_result_${safe}.mp4`);
 }
 
 export async function writeProgressAtomic(state: CleanerProgressState): Promise<void> {

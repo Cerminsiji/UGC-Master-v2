@@ -72,6 +72,52 @@ export interface AudioVisualForensicsReport {
   aiVerdict: 'CLEAN_ORGANIC' | 'SUSPICIOUS_SIGNALS' | 'HIGH_AI_RISK';
 }
 
+export interface IsolatedSeiUnit {
+  index: number;
+  source: 'ffprobe_side_data' | 'trace_headers' | 'mdat_nal';
+  nalUnitType: number;
+  payloadType: number;
+  payloadTypeLabel: string;
+  byteOffsetHex?: string;
+  sizeBytes: number;
+  uuid16Hex?: string;
+  decodedAscii: string;
+  rawHexPreview: string;
+  matchedAiMarkers: string[];
+  isAiTrigger: boolean;
+  triggerReason: string;
+}
+
+export interface IsolatedMetadataBlock {
+  id: string;
+  category: 'C2PA_JUMBF' | 'UUID_CLAIM' | 'UDTA_META' | 'DATA_STREAM' | 'FFPROBE_TAG';
+  boxOrStreamName: string;
+  path: string;
+  offsetHex: string;
+  sizeBytes: number;
+  uuidHex?: string;
+  asciiPreview: string;
+  matchedKeywords: string[];
+  isAiTrigger: boolean;
+  triggerReason: string;
+}
+
+export interface FfprobeDiagnosticReport {
+  commandExecuted: string;
+  rawFfprobeSummaryText: string;
+  packetSideDataCount: number;
+  dataStreamsCount: number;
+  isolatedSeiUnits: IsolatedSeiUnit[];
+  isolatedMetadataBlocks: IsolatedMetadataBlock[];
+  aiTriggerChecklist: Array<{
+    id: string;
+    layer: 'SEI_NAL' | 'C2PA_JUMBF' | 'UUID_BOX' | 'VENDOR_TAG' | 'CONTAINER_MUXER';
+    severity: 'critical' | 'warning';
+    title: string;
+    detail: string;
+  }>;
+}
+
 export interface ExternalProbeReport {
   probedAt: string;
   probeEngine: string;
@@ -122,6 +168,7 @@ export interface ExternalProbeReport {
   vendorTags: VendorTagEntry[];
   boxTreeSummary: Array<{ type: string; offset: number; size: number }>;
   audioVisualForensics: AudioVisualForensicsReport;
+  ffprobeDiagnostic: FfprobeDiagnosticReport;
   cleanliness: {
     isZeroSei: boolean;
     isZeroUuid: boolean;
@@ -429,6 +476,33 @@ async function runTraceHeadersStream(
   });
 }
 
+function getSeiPayloadLabel(payloadType: number): string {
+  switch (payloadType) {
+    case 0:
+      return 'buffering_period (0)';
+    case 1:
+      return 'pic_timing (1)';
+    case 4:
+      return 'user_data_registered_itu_t_t35 (4)';
+    case 5:
+      return 'user_data_unregistered (5)';
+    case 6:
+      return 'recovery_point (6)';
+    case 137:
+      return 'mastering_display_colour_volume (137)';
+    case 144:
+      return 'content_light_level_info (144)';
+    default:
+      return `sei_payload_type_${payloadType}`;
+  }
+}
+
+function bytesToHexPreview(slice: Uint8Array, maxBytes = 24): string {
+  return Array.from(slice.subarray(0, Math.min(slice.length, maxBytes)))
+    .map((b) => b.toString(16).padStart(2, '0').toUpperCase())
+    .join(' ');
+}
+
 function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const dec = new TextDecoder('ascii', { fatal: false });
@@ -436,6 +510,8 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
   const uuidClaims: UuidClaimEntry[] = [];
   const jumbfManifests: JumbfManifestEntry[] = [];
   const mdatRanges: Array<{ start: number; end: number }> = [];
+  const isolatedMetadataBlocks: IsolatedMetadataBlock[] = [];
+  const isolatedSeiUnits: IsolatedSeiUnit[] = [];
   let hasZeroCreationTime = false;
 
   const walk = (start: number, end: number, parentPath: string, depth: number) => {
@@ -463,6 +539,7 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
       }
 
       const currentPath = parentPath ? `${parentPath}/${type}` : type;
+      const offsetHex = `0x${offset.toString(16).toUpperCase()}`;
 
       if (type === 'mvhd' && offset + hdr + 12 <= offset + size) {
         const ver = buf[offset + hdr];
@@ -487,7 +564,9 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
           .join('');
         const bodySample = buf.subarray(offset + hdr, Math.min(offset + size, offset + hdr + 4096));
         const matches = extractAsciiKeywords(bodySample);
-        if (C2PA_UUID_HEX_PREFIXES.some((p) => uuidHex.toLowerCase().startsWith(p))) {
+        const asciiPreview = sanitizeAsciiPreview(bodySample, 140);
+        const isC2paUuid = C2PA_UUID_HEX_PREFIXES.some((p) => uuidHex.toLowerCase().startsWith(p));
+        if (isC2paUuid) {
           if (!matches.includes('c2pa-uuid')) matches.unshift('c2pa-uuid');
           jumbfManifests.push({
             boxType: 'uuid(c2pa)',
@@ -495,7 +574,7 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
             size,
             parentPath: currentPath,
             signatureMatches: matches,
-            previewAscii: sanitizeAsciiPreview(bodySample),
+            previewAscii: asciiPreview,
           });
         }
         uuidClaims.push({
@@ -505,17 +584,76 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
           parentPath: currentPath,
           signatureMatches: matches,
         });
+        if (isolatedMetadataBlocks.length < 40) {
+          isolatedMetadataBlocks.push({
+            id: `box_${offsetHex}_${type}`,
+            category: isC2paUuid ? 'C2PA_JUMBF' : 'UUID_CLAIM',
+            boxOrStreamName: isC2paUuid ? 'uuid (C2PA/JUMBF)' : 'uuid',
+            path: currentPath,
+            offsetHex,
+            sizeBytes: size,
+            uuidHex,
+            asciiPreview: asciiPreview || '(binary UUID payload)',
+            matchedKeywords: matches,
+            isAiTrigger: true,
+            triggerReason: isC2paUuid
+              ? `C2PA Content Credentials UUID (${uuidHex.slice(0, 16)}...) memicu flag AI`
+              : `Box UUID kustom (${uuidHex.slice(0, 16)}...) terdeteksi di container MP4`,
+          });
+        }
       } else if (type === 'c2pa' || type === 'jumb' || type === 'c2ma' || type === 'c2cl' || type === 'XMP_') {
         const bodySample = buf.subarray(offset + hdr, Math.min(offset + size, offset + hdr + 4096));
         const matches = extractAsciiKeywords(bodySample);
+        const asciiPreview = sanitizeAsciiPreview(bodySample, 140);
         jumbfManifests.push({
           boxType: type,
           offset,
           size,
           parentPath: currentPath,
           signatureMatches: matches.length > 0 ? matches : [type],
-          previewAscii: sanitizeAsciiPreview(bodySample),
+          previewAscii: asciiPreview,
         });
+        if (isolatedMetadataBlocks.length < 40) {
+          isolatedMetadataBlocks.push({
+            id: `box_${offsetHex}_${type}`,
+            category: 'C2PA_JUMBF',
+            boxOrStreamName: type,
+            path: currentPath,
+            offsetHex,
+            sizeBytes: size,
+            asciiPreview: asciiPreview || `(binary ${type} manifest)`,
+            matchedKeywords: matches.length > 0 ? matches : [type],
+            isAiTrigger: true,
+            triggerReason: `Manifes provenance ${type.toUpperCase()} / C2PA terdeteksi`,
+          });
+        }
+      } else if (type === 'udta' || type === 'meta' || type === 'ilst' || type === '©too' || type === '©enc' || type === 'tmcd') {
+        const bodySample = buf.subarray(offset + hdr, Math.min(offset + size, offset + hdr + 2048));
+        const matches = extractAsciiKeywords(bodySample);
+        const asciiPreview = sanitizeAsciiPreview(bodySample, 140);
+        if ((matches.length > 0 || type === 'tmcd') && isolatedMetadataBlocks.length < 40) {
+          isolatedMetadataBlocks.push({
+            id: `box_${offsetHex}_${type}`,
+            category: 'UDTA_META',
+            boxOrStreamName: type,
+            path: currentPath,
+            offsetHex,
+            sizeBytes: size,
+            asciiPreview: asciiPreview || '(metadata atom)',
+            matchedKeywords: matches.length > 0 ? matches : [type],
+            isAiTrigger: matches.length > 0 || type === 'tmcd',
+            triggerReason:
+              type === 'tmcd'
+                ? 'Timecode track atom (tmcd) tertinggal'
+                : `Atom ${type} memuat signature terflagging: ${matches.join(', ')}`,
+          });
+        }
+        if (ISO_CONTAINER_BOXES.has(type)) {
+          const nextOffset = type === 'meta' ? offset + hdr + 4 : offset + hdr;
+          if (nextOffset < offset + size) {
+            walk(nextOffset, offset + size, currentPath, depth + 1);
+          }
+        }
       } else if (ISO_CONTAINER_BOXES.has(type)) {
         const nextOffset = type === 'meta' ? offset + hdr + 4 : offset + hdr;
         if (nextOffset < offset + size) {
@@ -529,7 +667,103 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
 
   walk(0, buf.length, '', 0);
 
-  // Also scan mdat length-prefixed NALs for H.264 Type 6 / HEVC Type 39|40 SEI & ASCII traces
+  // Extract exact video-track sample offsets (stco/co64 + stsc + stsz) so AAC audio bytes in mdat are NEVER misparsed as SEI NALs
+  const videoSampleRanges: Array<{ start: number; end: number }> = [];
+  try {
+    const parseVideoTrakSamples = (moovStart: number, moovEnd: number) => {
+      let mOff = moovStart;
+      while (mOff + 8 <= moovEnd) {
+        const mSz = view.getUint32(mOff, false);
+        const mType = dec.decode(buf.subarray(mOff + 4, mOff + 8));
+        if (mSz < 8 || mOff + mSz > moovEnd) break;
+        if (mType === 'trak') {
+          let isVideoTrak = false;
+          let stcoOffsets: number[] = [];
+          let stscEntries: Array<{ firstChunk: number; samplesPerChunk: number }> = [];
+          let stszSizes: number[] = [];
+
+          const walkTrak = (s: number, e: number, d: number) => {
+            if (d > 6) return;
+            let p = s;
+            while (p + 8 <= e) {
+              const sz = view.getUint32(p, false);
+              const tp = dec.decode(buf.subarray(p + 4, p + 8));
+              if (sz < 8 || p + sz > e) break;
+              if (tp === 'hdlr' && p + 20 <= p + sz) {
+                const handlerType = dec.decode(buf.subarray(p + 16, p + 20));
+                if (handlerType === 'vide') isVideoTrak = true;
+              } else if (tp === 'stco' && p + 16 <= p + sz) {
+                const count = view.getUint32(p + 12, false);
+                for (let i = 0; i < count && p + 16 + i * 4 + 4 <= p + sz; i++) {
+                  stcoOffsets.push(view.getUint32(p + 16 + i * 4, false));
+                }
+              } else if (tp === 'co64' && p + 16 <= p + sz) {
+                const count = view.getUint32(p + 12, false);
+                for (let i = 0; i < count && p + 16 + i * 8 + 8 <= p + sz; i++) {
+                  const hi = view.getUint32(p + 16 + i * 8, false);
+                  const lo = view.getUint32(p + 16 + i * 8 + 4, false);
+                  stcoOffsets.push(hi * 4294967296 + lo);
+                }
+              } else if (tp === 'stsc' && p + 16 <= p + sz) {
+                const count = view.getUint32(p + 12, false);
+                for (let i = 0; i < count && p + 16 + i * 12 + 12 <= p + sz; i++) {
+                  stscEntries.push({
+                    firstChunk: view.getUint32(p + 16 + i * 12, false),
+                    samplesPerChunk: view.getUint32(p + 16 + i * 12 + 4, false),
+                  });
+                }
+              } else if (tp === 'stsz' && p + 20 <= p + sz) {
+                const fixedSz = view.getUint32(p + 12, false);
+                const count = view.getUint32(p + 16, false);
+                if (fixedSz > 0) {
+                  for (let i = 0; i < count; i++) stszSizes.push(fixedSz);
+                } else {
+                  for (let i = 0; i < count && p + 20 + i * 4 + 4 <= p + sz; i++) {
+                    stszSizes.push(view.getUint32(p + 20 + i * 4, false));
+                  }
+                }
+              } else if (ISO_CONTAINER_BOXES.has(tp)) {
+                walkTrak(p + 8, p + sz, d + 1);
+              }
+              p += sz;
+            }
+          };
+
+          walkTrak(mOff + 8, mOff + mSz, 0);
+          if (isVideoTrak && stcoOffsets.length > 0 && stszSizes.length > 0) {
+            let sampleIdx = 0;
+            for (let chunkIdx = 0; chunkIdx < stcoOffsets.length && sampleIdx < stszSizes.length; chunkIdx++) {
+              const chunkNum = chunkIdx + 1;
+              let spc = 1;
+              for (let eIdx = stscEntries.length - 1; eIdx >= 0; eIdx--) {
+                if (chunkNum >= stscEntries[eIdx].firstChunk) {
+                  spc = stscEntries[eIdx].samplesPerChunk;
+                  break;
+                }
+              }
+              let curPos = stcoOffsets[chunkIdx];
+              for (let sInChunk = 0; sInChunk < spc && sampleIdx < stszSizes.length; sInChunk++) {
+                const sLen = stszSizes[sampleIdx++];
+                if (curPos >= 0 && curPos + sLen <= buf.length) {
+                  videoSampleRanges.push({ start: curPos, end: curPos + sLen });
+                }
+                curPos += sLen;
+              }
+            }
+            return;
+          }
+        }
+        mOff += mSz;
+      }
+    };
+
+    const moovBox = boxTreeSummary.find((b) => b.type === 'moov');
+    if (moovBox) {
+      parseVideoTrakSamples(moovBox.offset + 8, Math.min(buf.length, moovBox.offset + moovBox.size));
+    }
+  } catch {}
+
+  // Scan exact video-track samples (or fallback cleanly without mid-stream byte drift) for H.264 Type 6 / HEVC Type 39|40 SEI
   const isHevc = codecName.toLowerCase().includes('hevc') || codecName.toLowerCase().includes('h265');
   let binarySeiCount = 0;
   let binaryType6 = 0;
@@ -538,45 +772,102 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
   const payloadTypes = new Set<number>();
   const asciiTraces = new Set<string>();
 
-  for (const r of mdatRanges) {
+  const rangesToScan = videoSampleRanges.length > 0 ? videoSampleRanges : mdatRanges;
+  for (const r of rangesToScan) {
     let pos = r.start;
-    const limit = Math.min(r.end, r.start + 35 * 1024 * 1024);
-    while (pos + 6 <= limit) {
+    while (pos + 6 <= r.end) {
       const nalLen =
         ((buf[pos] << 24) >>> 0) +
         ((buf[pos + 1] << 16) >>> 0) +
         ((buf[pos + 2] << 8) >>> 0) +
         (buf[pos + 3] >>> 0);
       if (nalLen < 2 || pos + 4 + nalLen > r.end) {
-        pos++;
-        continue;
+        break;
       }
       const hdr0 = buf[pos + 4];
       if (!isHevc) {
         const nalType = hdr0 & 0x1f;
-        if (nalType === 6 && (hdr0 & 0x80) === 0 && pos + 5 < r.end) {
+        const nalRefIdc = (hdr0 >> 5) & 0x03;
+        if (nalType === 6 && (hdr0 & 0x80) === 0 && nalRefIdc === 0 && pos + 5 < r.end) {
           const pType = buf[pos + 5];
-          if (pType === 5 || pType === 4 || pType === 0 || pType === 1) {
-            binarySeiCount++;
-            binaryType6++;
-            payloadTypes.add(pType);
-            const slice = buf.subarray(pos + 5, Math.min(pos + 4 + nalLen, pos + 512));
-            for (const hit of extractAsciiKeywords(slice)) {
-              asciiTraces.add(hit);
-            }
+          binarySeiCount++;
+          binaryType6++;
+          payloadTypes.add(pType);
+          const slice = buf.subarray(pos + 5, Math.min(pos + 4 + nalLen, pos + 512));
+          const hits = extractAsciiKeywords(slice);
+          for (const hit of hits) {
+            asciiTraces.add(hit);
+          }
+          if (isolatedSeiUnits.length < 30) {
+            const uuid16Hex =
+              pType === 5 && pos + 23 <= r.end && nalLen >= 19
+                ? Array.from(buf.subarray(pos + 7, pos + 23))
+                    .map((b) => b.toString(16).padStart(2, '0'))
+                    .join('')
+                : undefined;
+            const ascii = sanitizeAsciiPreview(slice, 120);
+            const isTrigger = pType === 5 || pType === 4 || hits.length > 0;
+            isolatedSeiUnits.push({
+              index: isolatedSeiUnits.length + 1,
+              source: 'mdat_nal',
+              nalUnitType: 6,
+              payloadType: pType,
+              payloadTypeLabel: getSeiPayloadLabel(pType),
+              byteOffsetHex: `0x${pos.toString(16).toUpperCase()}`,
+              sizeBytes: nalLen,
+              uuid16Hex,
+              decodedAscii: ascii || '(binary SEI payload)',
+              rawHexPreview: bytesToHexPreview(buf.subarray(pos + 4, pos + 4 + nalLen), 24),
+              matchedAiMarkers: hits,
+              isAiTrigger: isTrigger,
+              triggerReason:
+                hits.length > 0
+                  ? `SEI Type 6 memuat string watermark/encoder: ${hits.join(', ')}`
+                  : pType === 5
+                    ? `SEI unregistered user data (UUID: ${uuid16Hex || 'unknown'})`
+                    : `SEI NAL Type 6 (payload_type=${pType})`,
+            });
           }
         }
       } else {
         const nalType = (hdr0 >> 1) & 0x3f;
-        if ((nalType === 39 || nalType === 40) && pos + 6 < r.end) {
+        if ((nalType === 39 || nalType === 40) && (hdr0 & 0x80) === 0 && pos + 6 < r.end) {
           const pType = buf[pos + 6];
           binarySeiCount++;
           if (nalType === 39) binaryType39++;
           if (nalType === 40) binaryType40++;
           payloadTypes.add(pType);
           const slice = buf.subarray(pos + 6, Math.min(pos + 4 + nalLen, pos + 512));
-          for (const hit of extractAsciiKeywords(slice)) {
+          const hits = extractAsciiKeywords(slice);
+          for (const hit of hits) {
             asciiTraces.add(hit);
+          }
+          if (isolatedSeiUnits.length < 30) {
+            const uuid16Hex =
+              pType === 5 && pos + 24 <= r.end && nalLen >= 20
+                ? Array.from(buf.subarray(pos + 8, pos + 24))
+                    .map((b) => b.toString(16).padStart(2, '0'))
+                    .join('')
+                : undefined;
+            const ascii = sanitizeAsciiPreview(slice, 120);
+            isolatedSeiUnits.push({
+              index: isolatedSeiUnits.length + 1,
+              source: 'mdat_nal',
+              nalUnitType: nalType,
+              payloadType: pType,
+              payloadTypeLabel: getSeiPayloadLabel(pType),
+              byteOffsetHex: `0x${pos.toString(16).toUpperCase()}`,
+              sizeBytes: nalLen,
+              uuid16Hex,
+              decodedAscii: ascii || '(binary HEVC SEI payload)',
+              rawHexPreview: bytesToHexPreview(buf.subarray(pos + 4, pos + 4 + nalLen), 24),
+              matchedAiMarkers: hits,
+              isAiTrigger: pType === 5 || pType === 4 || hits.length > 0,
+              triggerReason:
+                hits.length > 0
+                  ? `HEVC SEI Type ${nalType} memuat marker: ${hits.join(', ')}`
+                  : `HEVC SEI NAL Type ${nalType} (payload_type=${pType})`,
+            });
           }
         }
       }
@@ -606,6 +897,8 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
     binaryPayloadTypes: Array.from(payloadTypes),
     asciiTraces: Array.from(asciiTraces),
     containerAsciiHits: Array.from(containerAsciiHits),
+    isolatedMetadataBlocks,
+    isolatedSeiUnits,
   };
 }
 
@@ -902,7 +1195,7 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
   try {
     const { stdout } = await execFileAsync(
       ffprobeBin,
-      ['-v', 'error', '-show_format', '-show_streams', '-of', 'json', filePath],
+      ['-v', 'error', '-show_format', '-show_streams', '-show_chapters', '-of', 'json', filePath],
       { env: EXEC_ENV, timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
     );
     parsedProbe = JSON.parse(stdout || '{}');
@@ -917,6 +1210,43 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
   const rawAudio = streams.find((s) => s.codec_type === 'audio') || null;
 
   const codecName = String(rawVideo?.codec_name || 'h264');
+
+  // Run ffprobe frame-level side_data inspection to catch embedded SEI / ITU-T T.35 / unregistered user data
+  let ffprobeFramesSideData: Array<{ frameIndex: number; ptsTime: string; sideData: any }> = [];
+  const ffprobeCommandStr = `ffprobe -v error -show_format -show_streams -show_frames -select_streams v:0 -read_intervals %+#45 -of json`;
+  try {
+    const { stdout: frameProbeOut } = await execFileAsync(
+      ffprobeBin,
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_frames',
+        '-read_intervals',
+        '%+#45',
+        '-of',
+        'json',
+        filePath,
+      ],
+      { env: EXEC_ENV, timeout: 15000, maxBuffer: 15 * 1024 * 1024 }
+    );
+    const frameJson = JSON.parse(frameProbeOut || '{}');
+    const frames: any[] = Array.isArray(frameJson.frames) ? frameJson.frames : [];
+    frames.forEach((fr, idx) => {
+      if (Array.isArray(fr.side_data_list)) {
+        for (const sd of fr.side_data_list) {
+          ffprobeFramesSideData.push({
+            frameIndex: idx,
+            ptsTime: String(fr.pkt_pts_time || fr.best_effort_timestamp_time || '0'),
+            sideData: sd,
+          });
+        }
+      }
+    });
+  } catch {
+    ffprobeFramesSideData = [];
+  }
 
   const [traceRes, fileBuf] = await Promise.all([
     runTraceHeadersStream(ffmpegBin, filePath, codecName),
@@ -964,33 +1294,175 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
   const type40Count = Math.max(traceRes.type40Count, bmff.binaryType40);
   const totalSeiUnits = Math.max(traceRes.seiCount, bmff.binarySeiCount, type6Count + type39Count + type40Count);
 
+  // Merge ffprobe side_data SEI entries + trace_headers fallback if mdat scan found fewer
+  const isolatedSeiUnits: IsolatedSeiUnit[] = [...bmff.isolatedSeiUnits];
+  for (const item of ffprobeFramesSideData) {
+    const sdType = String(item.sideData?.side_data_type || 'Unknown Side Data');
+    const isSeiSd = /sei|unregistered|t\.35|user_data/i.test(sdType);
+    if (isSeiSd && isolatedSeiUnits.length < 36) {
+      const jsonDump = JSON.stringify(item.sideData);
+      const matches = FLAGGED_KEYWORDS.filter((kw) => jsonDump.toLowerCase().includes(kw));
+      isolatedSeiUnits.unshift({
+        index: 0,
+        source: 'ffprobe_side_data',
+        nalUnitType: codecName.includes('hevc') ? 39 : 6,
+        payloadType: sdType.toLowerCase().includes('unregistered') ? 5 : 4,
+        payloadTypeLabel: `${sdType} (Frame #${item.frameIndex} @${item.ptsTime}s)`,
+        sizeBytes: jsonDump.length,
+        decodedAscii: jsonDump.slice(0, 140),
+        rawHexPreview: '-',
+        matchedAiMarkers: matches,
+        isAiTrigger: true,
+        triggerReason: `ffprobe frame side_data mendeteksi ${sdType}`,
+      });
+    }
+  }
+  if (isolatedSeiUnits.length === 0 && traceRes.seiCount > 0) {
+    traceRes.traceSamples.forEach((sample, idx) => {
+      isolatedSeiUnits.push({
+        index: idx + 1,
+        source: 'trace_headers',
+        nalUnitType: codecName.includes('hevc') ? 39 : 6,
+        payloadType: traceRes.payloadTypes[0] ?? 5,
+        payloadTypeLabel: getSeiPayloadLabel(traceRes.payloadTypes[0] ?? 5),
+        sizeBytes: 0,
+        decodedAscii: traceRes.traceAsciiStrings[idx] || sample,
+        rawHexPreview: '-',
+        matchedAiMarkers: traceRes.traceAsciiStrings.slice(0, 3),
+        isAiTrigger: true,
+        triggerReason: 'Terdeteksi oleh ffmpeg -bsf:v trace_headers',
+      });
+    });
+  }
+  isolatedSeiUnits.forEach((u, idx) => {
+    u.index = idx + 1;
+  });
+
+  // Add ffprobe non-AV data/timecode streams & flagged format/stream tags to isolatedMetadataBlocks
+  const isolatedMetadataBlocks: IsolatedMetadataBlock[] = [...bmff.isolatedMetadataBlocks];
+  const dataStreams = streams.filter((s) => s.codec_type !== 'video' && s.codec_type !== 'audio');
+  for (const ds of dataStreams) {
+    isolatedMetadataBlocks.push({
+      id: `stream_${ds.index}_${ds.codec_tag_string || ds.codec_type}`,
+      category: 'DATA_STREAM',
+      boxOrStreamName: `Stream #${ds.index} (${ds.codec_type}/${ds.codec_tag_string || ds.codec_name || 'data'})`,
+      path: `ffprobe/streams[${ds.index}]`,
+      offsetHex: `stream:${ds.index}`,
+      sizeBytes: 0,
+      asciiPreview: JSON.stringify(ds.tags || {}).slice(0, 140),
+      matchedKeywords: [String(ds.codec_tag_string || ds.codec_type || 'data')],
+      isAiTrigger: true,
+      triggerReason: `Track data/timecode tambahan (${ds.codec_tag_string || ds.codec_type}) terdeteksi oleh ffprobe`,
+    });
+  }
+  for (const vt of vendorTags) {
+    if (vt.flagged) {
+      isolatedMetadataBlocks.push({
+        id: `tag_${vt.source}_${vt.key}`,
+        category: 'FFPROBE_TAG',
+        boxOrStreamName: `${vt.source}.${vt.key}`,
+        path: `ffprobe/${vt.source}/tags/${vt.key}`,
+        offsetHex: 'header',
+        sizeBytes: vt.value.length,
+        asciiPreview: `${vt.key}=${vt.value}`,
+        matchedKeywords: FLAGGED_KEYWORDS.filter((kw) => `${vt.key} ${vt.value}`.toLowerCase().includes(kw)),
+        isAiTrigger: true,
+        triggerReason: `Tag metadata ffprobe terflagging AI/Encoder: ${vt.key}="${vt.value}"`,
+      });
+    }
+  }
+
   const flaggedReasons: string[] = [];
+  const aiTriggerChecklist: FfprobeDiagnosticReport['aiTriggerChecklist'] = [];
+
   if (totalSeiUnits > 0) {
-    flaggedReasons.push(
-      `SEI NAL Units terdeteksi (${totalSeiUnits} unit${combinedPayloadTypes.length ? `, payload_type=${combinedPayloadTypes.join(',')}` : ''})`
-    );
+    const msg = `SEI NAL Units terdeteksi (${totalSeiUnits} unit${combinedPayloadTypes.length ? `, payload_type=${combinedPayloadTypes.join(',')}` : ''})`;
+    flaggedReasons.push(msg);
+    aiTriggerChecklist.push({
+      id: 'trig_sei',
+      layer: 'SEI_NAL',
+      severity: 'critical',
+      title: `${totalSeiUnits} SEI NAL Unit (${type6Count > 0 ? 'H.264 Type 6' : 'HEVC Type 39/40'})`,
+      detail: `Payload types: [${combinedPayloadTypes.join(', ') || 'unregistered'}]${combinedAsciiTraces.length ? ` • Jejak: ${combinedAsciiTraces.slice(0, 3).join(', ')}` : ''}`,
+    });
   }
   if (bmff.uuidClaims.length > 0) {
-    flaggedReasons.push(`${bmff.uuidClaims.length} box UUID claim terdeteksi`);
+    const msg = `${bmff.uuidClaims.length} box UUID claim terdeteksi`;
+    flaggedReasons.push(msg);
+    aiTriggerChecklist.push({
+      id: 'trig_uuid',
+      layer: 'UUID_BOX',
+      severity: 'critical',
+      title: `${bmff.uuidClaims.length} UUID Claim Box Tertinggal`,
+      detail: bmff.uuidClaims.map((u) => `uuid @0x${u.offset.toString(16)} (${u.uuidHex.slice(0, 16)}...)`).slice(0, 3).join('; '),
+    });
   }
   if (bmff.jumbfManifests.length > 0) {
-    flaggedReasons.push(`${bmff.jumbfManifests.length} manifes C2PA / JUMBF terdeteksi`);
+    const msg = `${bmff.jumbfManifests.length} manifes C2PA / JUMBF terdeteksi`;
+    flaggedReasons.push(msg);
+    aiTriggerChecklist.push({
+      id: 'trig_c2pa',
+      layer: 'C2PA_JUMBF',
+      severity: 'critical',
+      title: `${bmff.jumbfManifests.length} Manifes C2PA / JUMBF Content Credentials`,
+      detail: bmff.jumbfManifests.map((j) => `${j.boxType} @0x${j.offset.toString(16)} (${j.size}B)`).slice(0, 3).join('; '),
+    });
   }
   const flaggedVendorEntries = vendorTags.filter((t) => t.flagged);
   if (flaggedVendorEntries.length > 0) {
-    flaggedReasons.push(
-      `Tag vendor/encoder mencurigakan (${flaggedVendorEntries.map((t) => `${t.key}=${t.value}`).slice(0, 3).join('; ')})`
-    );
+    const msg = `Tag vendor/encoder mencurigakan (${flaggedVendorEntries.map((t) => `${t.key}=${t.value}`).slice(0, 3).join('; ')})`;
+    flaggedReasons.push(msg);
+    aiTriggerChecklist.push({
+      id: 'trig_vendor',
+      layer: 'VENDOR_TAG',
+      severity: 'critical',
+      title: 'Signature Encoder / Vendor AI pada Format/Stream Tags',
+      detail: flaggedVendorEntries.map((t) => `${t.source}.${t.key}=${t.value}`).slice(0, 4).join(' | '),
+    });
   }
   if (combinedAsciiTraces.length > 0) {
     flaggedReasons.push(`Jejak ASCII di bitstream/container: ${combinedAsciiTraces.join(', ')}`);
   }
   for (const vf of avForensics.visual.visualAiFlags) {
     flaggedReasons.push(`[Visual AI] ${vf}`);
+    aiTriggerChecklist.push({
+      id: `trig_vis_${aiTriggerChecklist.length}`,
+      layer: 'CONTAINER_MUXER',
+      severity: 'warning',
+      title: 'Anomali Forensik Visual / Muxer MP4',
+      detail: vf,
+    });
   }
   for (const af of avForensics.audio.audioAiFlags) {
     flaggedReasons.push(`[Audio AI] ${af}`);
+    aiTriggerChecklist.push({
+      id: `trig_aud_${aiTriggerChecklist.length}`,
+      layer: 'CONTAINER_MUXER',
+      severity: 'warning',
+      title: 'Anomali Forensik Audio / Vocoder AI',
+      detail: af,
+    });
   }
+
+  // Build readable raw ffprobe diagnostic summary text
+  const rawSummaryLines: string[] = [
+    `$ ${ffprobeCommandStr}`,
+    `[FORMAT] name=${fmt.format_name || 'mp4'} | brand=${fmtTags.major_brand || '-'} (minor=${fmtTags.minor_version || '-'}, compat=${fmtTags.compatible_brands || '-'}) | streams=${fmt.nb_streams || streams.length} | duration=${Number(fmt.duration || 0).toFixed(3)}s`,
+    `[FORMAT.TAGS] ${Object.entries(fmtTags).map(([k, v]) => `${k}="${v}"`).join(', ') || '(none)'}`,
+    ...streams.map(
+      (s) =>
+        `[STREAM #${s.index}] type=${s.codec_type} codec=${s.codec_name} handler="${s.tags?.handler_name || '-'}" fps=${s.r_frame_rate || '-'} b_frames=${s.has_b_frames ?? '-'} start=${s.start_time ?? '0'} tags=${JSON.stringify(s.tags || {})}`
+    ),
+    `[FRAME SIDE_DATA] count=${ffprobeFramesSideData.length}${ffprobeFramesSideData.length > 0 ? ' -> ' + ffprobeFramesSideData.slice(0, 3).map((x) => `${x.sideData?.side_data_type}@${x.ptsTime}s`).join(', ') : ' (none)'}`,
+    `[BITSTREAM SEI] total=${totalSeiUnits} (H264_T6=${type6Count}, HEVC_T39=${type39Count}, HEVC_T40=${type40Count}) payload_types=[${combinedPayloadTypes.join(',') || 'none'}]`,
+    ...isolatedSeiUnits.slice(0, 6).map(
+      (u) => `  - SEI #${u.index} [${u.source}] nal=${u.nalUnitType} pt=${u.payloadType} size=${u.sizeBytes}B uuid=${u.uuid16Hex || '-'} ascii="${u.decodedAscii}"`
+    ),
+    `[C2PA/UUID/META BOXES] total=${isolatedMetadataBlocks.length} (UUID=${bmff.uuidClaims.length}, JUMBF=${bmff.jumbfManifests.length}, DATA_STREAMS=${dataStreams.length})`,
+    ...isolatedMetadataBlocks.slice(0, 8).map(
+      (b) => `  - [${b.category}] ${b.boxOrStreamName} @${b.offsetHex} (${b.sizeBytes}B) -> ${b.triggerReason}`
+    ),
+  ];
 
   let totalRiskScore = avForensics.aiRiskScore;
   if (totalSeiUnits > 0) totalRiskScore += 30;
@@ -1065,6 +1537,15 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
     vendorTags,
     boxTreeSummary: bmff.boxTreeSummary,
     audioVisualForensics: avForensics,
+    ffprobeDiagnostic: {
+      commandExecuted: ffprobeCommandStr,
+      rawFfprobeSummaryText: rawSummaryLines.join('\n'),
+      packetSideDataCount: ffprobeFramesSideData.length,
+      dataStreamsCount: dataStreams.length,
+      isolatedSeiUnits,
+      isolatedMetadataBlocks,
+      aiTriggerChecklist,
+    },
     cleanliness: {
       isZeroSei,
       isZeroUuid,
