@@ -8,14 +8,35 @@ import {
   loadProjectsFromIndexedDB,
   mergeIndexedDBImagesIntoProjects,
   clearLegacyAdminStorageKeys,
+  appendDeployLog,
+  auditProjectStorage,
+  saveProjectsToIndexedDBWithStatus,
   AUTO_SAVE_INTERVAL_SECONDS,
   nowTimeId,
 } from '@/utils/storyboardStorage';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
-import { SceneCard } from '@/components/SceneCard';
+import { SortableSceneCard } from '@/components/SortableSceneCard';
 import { PasswordGate, AUTH_STORAGE_KEY } from '@/components/PasswordGate';
 import { DirectLinkExtractorBar } from '@/components/DirectLinkExtractorBar';
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  DragStartEvent,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 
 interface ConfirmDialogState {
   isOpen: boolean;
@@ -70,6 +91,7 @@ import {
   StoryboardViewMode,
   HookVariant,
   AutoDetectResult,
+  StorageDeployAction,
 } from '@/types';
 import { copyToClipboard, generateId, postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
 import { formatShortCaption, generateRichFallback } from '@/lib/gemini-ugc';
@@ -91,6 +113,8 @@ import {
   Image as ImageIcon,
   X,
   Loader2,
+  GripVertical,
+  Clock,
 } from 'lucide-react';
 
 // Initial project matching UGC Before & After format with 6 rich scenes
@@ -257,12 +281,31 @@ export default function HomePage() {
 
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [enhancingSceneId, setEnhancingSceneId] = useState<string | null>(null);
+  const [activeDragSceneId, setActiveDragSceneId] = useState<string | null>(null);
+
+  const sceneSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 150,
+        tolerance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // Local Storage & 10-Second Auto-Save State
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error' | 'pending'>('saved');
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
   const [autoSaveCountdown, setAutoSaveCountdown] = useState<number>(AUTO_SAVE_INTERVAL_SECONDS);
+  const [deployLogsVersion, setDeployLogsVersion] = useState(0);
 
   const projectsRef = useRef(projects);
   const currentProjectIdRef = useRef(currentProjectId);
@@ -313,6 +356,22 @@ export default function HomePage() {
     void loadProjectsFromIndexedDB().then((idb) => {
       if (cancelled || !idb.projects || idb.projects.length === 0) return;
       if (initialProjects && initialProjects.length > 0) {
+        const localIds = new Set(initialProjects.map((p) => p.id));
+        const idbOrphans = idb.projects.filter((p) => !localIds.has(p.id));
+        if (idbOrphans.length > 0) {
+          appendDeployLog({
+            action: 'hydrate',
+            status: 'warning',
+            localCount: initialProjects.length,
+            idbCount: idb.projects.length,
+            memoryCount: initialProjects.length,
+            ghostCount: idbOrphans.length,
+            duplicateCount: 0,
+            message: `Saat startup ditemukan ${idbOrphans.length} project tersangkut di IndexedDB yang tidak ada di LocalStorage.`,
+            details: idbOrphans.map((o) => `Orphan IDB: "${o.title}" (${o.id})`),
+          });
+          setDeployLogsVersion((v) => v + 1);
+        }
         setProjects((prev) => mergeIndexedDBImagesIntoProjects(prev, idb.projects!));
       } else {
         setProjects(idb.projects);
@@ -322,6 +381,17 @@ export default function HomePage() {
           setCurrentProjectId(idb.projects[0].id);
         }
         setLastSavedTime(nowTimeId());
+        appendDeployLog({
+          action: 'hydrate',
+          status: 'warning',
+          localCount: 0,
+          idbCount: idb.projects.length,
+          memoryCount: idb.projects.length,
+          ghostCount: 0,
+          duplicateCount: 0,
+          message: `LocalStorage kosong; memulihkan ${idb.projects.length} project dari cadangan IndexedDB.`,
+        });
+        setDeployLogsVersion((v) => v + 1);
       }
     });
 
@@ -335,7 +405,10 @@ export default function HomePage() {
     (
       showFeedbackToast = false,
       overrideProjects?: StoryboardProject[],
-      overrideProjectId?: string
+      overrideProjectId?: string,
+      logAction?: StorageDeployAction,
+      logMessage?: string,
+      logDetails?: string[]
     ) => {
       const list = overrideProjects ?? projectsRef.current;
       const activeId = overrideProjectId ?? currentProjectIdRef.current;
@@ -360,6 +433,52 @@ export default function HomePage() {
         if (showFeedbackToast) {
           showToast(res.error || 'Gagal menyimpan ke Local Storage.');
         }
+      }
+
+      const shouldRecordLog =
+        Boolean(logAction) || showFeedbackToast || !res.success || Boolean(res.trimmedLargeImages);
+
+      if (shouldRecordLog) {
+        const effectiveAction: StorageDeployAction = logAction || 'save';
+        void auditProjectStorage(list, activeId).then((audit) => {
+          const status = !res.success
+            ? 'error'
+            : res.trimmedLargeImages || audit.totalGhostCount > 0 || audit.totalDuplicateCount > 0
+            ? 'warning'
+            : 'success';
+
+          const details: string[] = [...(logDetails || [])];
+          if (res.error) details.push(res.error);
+          if (res.droppedCount && res.droppedCount > 0) {
+            details.push(`${res.droppedCount} project lama terpotong dari LocalStorage karena batas quota.`);
+          }
+          if (audit.totalGhostCount > 0) {
+            details.push(`Audit mendeteksi ${audit.totalGhostCount} sisa data ghost.`);
+          }
+          if (audit.totalDuplicateCount > 0) {
+            details.push(`Audit mendeteksi ${audit.totalDuplicateCount} project ganda.`);
+          }
+
+          appendDeployLog({
+            action: effectiveAction,
+            status,
+            tier: res.tier,
+            localCount: res.savedCount,
+            idbCount: audit.indexedDB.available ? audit.indexedDB.projectCount : null,
+            memoryCount: list.length,
+            ghostCount: audit.totalGhostCount,
+            duplicateCount: audit.totalDuplicateCount,
+            message:
+              logMessage ||
+              (res.success
+                ? res.trimmedLargeImages
+                  ? `Naskah disimpan (${res.tier || 'terkompresi'}), gambar penuh tetap di IndexedDB.`
+                  : `Berhasil menyimpan ${list.length} naskah ke storage.`
+                : res.error || 'Gagal menyimpan naskah ke LocalStorage.'),
+            details: details.length > 0 ? details : undefined,
+          });
+          setDeployLogsVersion((v) => v + 1);
+        });
       }
     },
     [showToast]
@@ -662,21 +781,58 @@ export default function HomePage() {
     showToast(`Adegan ${scene.order} berhasil diduplikasi!`);
   };
 
-  // Move scene
+  // Move scene (button step)
   const handleMoveScene = (index: number, direction: 'up' | 'down') => {
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= currentProject.scenes.length) return;
 
     updateCurrentProject((p) => {
-      const newScenes = [...p.scenes];
-      const temp = newScenes[index];
-      newScenes[index] = newScenes[targetIndex];
-      newScenes[targetIndex] = temp;
+      const newScenes = arrayMove(p.scenes, index, targetIndex);
       return {
         ...p,
         scenes: newScenes.map((s, idx) => ({ ...s, order: idx + 1 })),
       };
     });
+  };
+
+  // Drag-and-drop reorder scenes via dnd-kit
+  const handleReorderScenes = (activeId: string, overId: string) => {
+    if (!activeId || !overId || activeId === overId) return;
+    const oldIndex = currentProject.scenes.findIndex((s) => s.id === activeId);
+    const newIndex = currentProject.scenes.findIndex((s) => s.id === overId);
+    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
+
+    updateCurrentProject((p) => {
+      const oIdx = p.scenes.findIndex((s) => s.id === activeId);
+      const nIdx = p.scenes.findIndex((s) => s.id === overId);
+      if (oIdx === -1 || nIdx === -1 || oIdx === nIdx) return p;
+      const reordered = arrayMove(p.scenes, oIdx, nIdx).map((s, idx) => ({
+        ...s,
+        order: idx + 1,
+      }));
+      return {
+        ...p,
+        scenes: reordered,
+      };
+    });
+
+    showToast(`Urutan adegan diperbarui: Adegan ${oldIndex + 1} → Adegan ${newIndex + 1}`);
+  };
+
+  const handleSceneDragStart = (event: DragStartEvent) => {
+    setActiveDragSceneId(String(event.active.id));
+  };
+
+  const handleSceneDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveDragSceneId(null);
+    if (over && active.id !== over.id) {
+      handleReorderScenes(String(active.id), String(over.id));
+    }
+  };
+
+  const handleSceneDragCancel = () => {
+    setActiveDragSceneId(null);
   };
 
   // Add new scene
@@ -976,7 +1132,13 @@ export default function HomePage() {
       setProjects(nextList);
       setCurrentProjectId(newProj.id);
       setIsAIGeneratorOpen(false);
-      performLocalSave(false, nextList, newProj.id);
+      performLocalSave(
+        false,
+        nextList,
+        newProj.id,
+        'create',
+        `Storyboard AI "${newProj.title}" dibuat & dideploy ke storage.`
+      );
       showToast('🎉 Storyboard AI berhasil dibuat & disimpan di Local Storage!');
     } catch (e) {
       console.error('Generate storyboard error:', e);
@@ -1203,7 +1365,13 @@ export default function HomePage() {
     setProjects(nextList);
     setCurrentProjectId(newProj.id);
     setIsProjectsModalOpen(false);
-    performLocalSave(false, nextList, newProj.id);
+    performLocalSave(
+      false,
+      nextList,
+      newProj.id,
+      'create',
+      `Naskah baru "${newProj.title}" (${newProj.id}) dibuat & disimpan.`
+    );
     showToast('Naskah baru dibuat & tersimpan!');
   };
 
@@ -1218,7 +1386,14 @@ export default function HomePage() {
     const nextList = [duplicated, ...projectsRef.current];
     setProjects(nextList);
     setCurrentProjectId(duplicated.id);
-    performLocalSave(false, nextList, duplicated.id);
+    performLocalSave(
+      false,
+      nextList,
+      duplicated.id,
+      'duplicate',
+      `Naskah "${proj.title}" diduplikasi menjadi "${duplicated.title}".`,
+      [`ID Baru: ${duplicated.id}`]
+    );
     showToast(`Project "${proj.title}" berhasil diduplikasi!`);
   };
 
@@ -1248,7 +1423,14 @@ export default function HomePage() {
         if (nextActiveId !== currentProjectId) {
           setCurrentProjectId(nextActiveId);
         }
-        performLocalSave(false, filtered, nextActiveId);
+        performLocalSave(
+          false,
+          filtered,
+          nextActiveId,
+          'delete',
+          `Naskah "${targetProj?.title || projId}" dihapus dari storage.`,
+          [`ID Dihapus: ${projId}`]
+        );
         setConfirmDialog(null);
         showToast('Project naskah berhasil dihapus');
       },
@@ -1268,6 +1450,7 @@ export default function HomePage() {
       confirmLabel: 'Ya, Bersihkan Semua',
       tone: 'danger',
       onConfirm: () => {
+        const prevCount = projectsRef.current.length;
         const freshDefault: StoryboardProject = {
           ...INITIAL_BEFORE_AFTER_PROJECT,
           id: generateId(),
@@ -1277,7 +1460,13 @@ export default function HomePage() {
         const nextList = [freshDefault];
         setProjects(nextList);
         setCurrentProjectId(freshDefault.id);
-        performLocalSave(false, nextList, freshDefault.id);
+        performLocalSave(
+          false,
+          nextList,
+          freshDefault.id,
+          'clear_all',
+          `Reset semua naskah (${prevCount} project dibersihkan, disisakan 1 default baru).`
+        );
         setConfirmDialog(null);
         setIsProjectsModalOpen(false);
         showToast('🧹 Semua naskah dibersihkan! Tersisa 1 naskah default di Local Storage.');
@@ -1303,14 +1492,48 @@ export default function HomePage() {
       confirmLabel: 'Ya, Sisakan Aktif',
       tone: 'warning',
       onConfirm: () => {
+        const removedCount = Math.max(0, projectsRef.current.length - 1);
         const nextList = [currentProject];
         setProjects(nextList);
         setCurrentProjectId(currentProject.id);
-        performLocalSave(false, nextList, currentProject.id);
+        performLocalSave(
+          false,
+          nextList,
+          currentProject.id,
+          'clear_others',
+          `Membersihkan ${removedCount} naskah lain & mempertahankan "${currentProject.title}".`
+        );
         setConfirmDialog(null);
         showToast('🧹 Naskah lain dibersihkan! Hanya naskah aktif yang disimpan.');
       },
     });
+  };
+
+  const handleReplaceCleanedProjects = async (
+    cleanedProjects: StoryboardProject[],
+    nextActiveId: string,
+    removedCount: number,
+    details: string[]
+  ) => {
+    setProjects(cleanedProjects);
+    setCurrentProjectId(nextActiveId);
+    saveProjectsToLocalStorage(cleanedProjects, nextActiveId);
+    const idbRes = await saveProjectsToIndexedDBWithStatus(cleanedProjects, nextActiveId);
+    const auditAfter = await auditProjectStorage(cleanedProjects, nextActiveId);
+
+    appendDeployLog({
+      action: 'deduplicate',
+      status: idbRes.success && auditAfter.totalGhostCount === 0 ? 'success' : 'warning',
+      localCount: auditAfter.localStorage.projectCount,
+      idbCount: auditAfter.indexedDB.available ? auditAfter.indexedDB.projectCount : null,
+      memoryCount: cleanedProjects.length,
+      ghostCount: auditAfter.totalGhostCount,
+      duplicateCount: auditAfter.totalDuplicateCount,
+      message: `Deduplikasi selesai: ${removedCount} project ganda dihapus, tersisa ${cleanedProjects.length} naskah unik.`,
+      details: idbRes.success ? details : [...details, `IndexedDB warning: ${idbRes.error}`],
+    });
+    setDeployLogsVersion((v) => v + 1);
+    showToast(`🧹 ${removedCount} project ganda berhasil dibersihkan!`);
   };
 
   // If not authenticated or not mounted yet, show PasswordGate
@@ -1656,38 +1879,101 @@ export default function HomePage() {
                   )}
                 </div>
 
-                {/* List of Scene Cards */}
-                <div className="space-y-4">
-                  {currentProject.scenes.map((scene, index) => (
-                    <div key={scene.id} id={`scene-card-${scene.id}`}>
-                      <SceneCard
-                        scene={scene}
-                        index={index}
-                        totalScenes={currentProject.scenes.length}
-                        productName={currentProject.productName}
-                        referenceImages={
-                          currentProject.referenceImages && currentProject.referenceImages.length > 0
-                            ? currentProject.referenceImages
-                            : currentProject.referenceImage
-                            ? [currentProject.referenceImage]
-                            : []
-                        }
-                        onUpdate={handleUpdateScene}
-                        onDelete={() => handleDeleteScene(scene.id)}
-                        onDuplicate={() => handleDuplicateScene(scene)}
-                        onMoveUp={() => handleMoveScene(index, 'up')}
-                        onMoveDown={() => handleMoveScene(index, 'down')}
-                        onEnhanceAI={handleEnhanceScene}
-                        isEnhancing={enhancingSceneId === scene.id}
-                        onOpenHooksModal={() => setIsHooksModalOpen(true)}
-                        hookVariants={index === 0 ? currentProject.hookVariants : undefined}
-                        activeHookIndex={activeHookIndex}
-                        onSelectHookVariant={handleSelectHookVariant}
-                        onAddHookVariant={handleAddHookVariant}
-                      />
+                {/* Scene Reorder Hint Bar */}
+                {currentProject.scenes.length > 1 && (
+                  <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                    <span className="flex items-center gap-1.5">
+                      <GripVertical className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                      <span>Seret ikon pegangan di pojok kiri atas kartu untuk mengatur ulang urutan adegan</span>
+                    </span>
+                    <span className="font-mono tabular-nums text-slate-500 hidden sm:inline">
+                      {currentProject.scenes.length} adegan
+                    </span>
+                  </div>
+                )}
+
+                {/* List of Sortable Scene Cards (dnd-kit) */}
+                <DndContext
+                  id="scene-cards-dnd-context"
+                  sensors={sceneSensors}
+                  collisionDetection={closestCenter}
+                  onDragStart={handleSceneDragStart}
+                  onDragEnd={handleSceneDragEnd}
+                  onDragCancel={handleSceneDragCancel}
+                >
+                  <SortableContext
+                    items={currentProject.scenes.map((s) => s.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="space-y-4">
+                      {currentProject.scenes.map((scene, index) => (
+                        <SortableSceneCard
+                          key={scene.id}
+                          scene={scene}
+                          index={index}
+                          totalScenes={currentProject.scenes.length}
+                          productName={currentProject.productName}
+                          referenceImages={
+                            currentProject.referenceImages && currentProject.referenceImages.length > 0
+                              ? currentProject.referenceImages
+                              : currentProject.referenceImage
+                              ? [currentProject.referenceImage]
+                              : []
+                          }
+                          onUpdate={handleUpdateScene}
+                          onDelete={() => handleDeleteScene(scene.id)}
+                          onDuplicate={() => handleDuplicateScene(scene)}
+                          onMoveUp={() => handleMoveScene(index, 'up')}
+                          onMoveDown={() => handleMoveScene(index, 'down')}
+                          onEnhanceAI={handleEnhanceScene}
+                          isEnhancing={enhancingSceneId === scene.id}
+                          onOpenHooksModal={() => setIsHooksModalOpen(true)}
+                          hookVariants={index === 0 ? currentProject.hookVariants : undefined}
+                          activeHookIndex={activeHookIndex}
+                          onSelectHookVariant={handleSelectHookVariant}
+                          onAddHookVariant={handleAddHookVariant}
+                        />
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </SortableContext>
+
+                  <DragOverlay adjustScale={false}>
+                    {activeDragSceneId ? (() => {
+                      const dragIdx = currentProject.scenes.findIndex((s) => s.id === activeDragSceneId);
+                      const dragScene = dragIdx >= 0 ? currentProject.scenes[dragIdx] : null;
+                      if (!dragScene) return null;
+                      return (
+                        <div className="bg-[#131a2d] border-2 border-purple-500 rounded-2xl p-4 shadow-2xl shadow-purple-950/70 cursor-grabbing space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <GripVertical className="w-4 h-4 text-purple-300 shrink-0" />
+                              <span className="bg-gradient-to-r from-purple-700 to-indigo-700 text-white text-xs font-black px-2.5 py-0.5 rounded-lg uppercase tracking-wider tabular-nums shrink-0">
+                                ADEGAN {dragIdx + 1}
+                              </span>
+                              {dragScene.cameraAngle && (
+                                <span className="text-xs font-semibold text-purple-200 truncate">
+                                  {dragScene.cameraAngle}
+                                </span>
+                              )}
+                            </div>
+                            <span className="flex items-center gap-1 font-mono font-bold text-xs text-emerald-400 tabular-nums shrink-0">
+                              <Clock className="w-3 h-3" />
+                              <span>{dragScene.duration}s</span>
+                            </span>
+                          </div>
+                          {dragScene.popupText && (
+                            <div className="text-xs font-bold text-sky-300 truncate">
+                              {dragScene.popupText}
+                            </div>
+                          )}
+                          <p className="text-xs text-slate-300 line-clamp-2">
+                            {dragScene.visualAction || dragScene.dialogVO || 'Memindahkan posisi adegan...'}
+                          </p>
+                        </div>
+                      );
+                    })() : null}
+                  </DragOverlay>
+                </DndContext>
 
                 {/* Bottom Add Scene Action Bar */}
                 <div className="flex items-center justify-center pt-2">
@@ -1709,6 +1995,7 @@ export default function HomePage() {
                 title={currentProject.title}
                 categoryName={activeCategory.name}
                 caption={currentProject.caption}
+                onReorderScenes={handleReorderScenes}
               />
             )}
 
@@ -1797,6 +2084,8 @@ export default function HomePage() {
           onDeleteProject={handleDeleteProject}
           onClearAllProjects={handleClearAllProjects}
           onClearOtherProjects={handleClearOtherProjects}
+          onReplaceProjects={handleReplaceCleanedProjects}
+          deployLogsVersion={deployLogsVersion}
         />
       )}
 

@@ -33,6 +33,19 @@ export interface VendorTagEntry {
 export interface VisualAiForensics {
   fps: number;
   frameRateStr: string;
+  width: number;
+  height: number;
+  colorPrimaries: string;
+  colorTransfer: string;
+  colorSpace: string;
+  hasColorMatrixMismatch: boolean;
+  isSub1080pDiffusionRes: boolean;
+  nearDuplicateFrameCount: number;
+  nearDuplicateFrameRatio: number;
+  hasPulldownDuplicates: boolean;
+  moovFreeBoxCount: number;
+  moovFreeBoxBytes: number;
+  hasMoovFreeTombstone: boolean;
   hasBFrames: boolean;
   isAiFramerate: boolean;
   isZeroBFrames: boolean;
@@ -42,6 +55,7 @@ export interface VisualAiForensics {
   refsCount: number;
   hasZeroCreationTime: boolean;
   hasFfmpegMuxerBrand: boolean;
+  hasSpoofedMdtaBox: boolean;
   visualAiFlags: string[];
   visualClean: boolean;
 }
@@ -513,6 +527,10 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
   const isolatedMetadataBlocks: IsolatedMetadataBlock[] = [];
   const isolatedSeiUnits: IsolatedSeiUnit[] = [];
   let hasZeroCreationTime = false;
+  let hasMdtaHandler = false;
+  let ftypMajorBrand = '';
+  let moovFreeBoxCount = 0;
+  let moovFreeBoxBytes = 0;
 
   const walk = (start: number, end: number, parentPath: string, depth: number) => {
     if (depth > 8) return;
@@ -541,7 +559,28 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
       const currentPath = parentPath ? `${parentPath}/${type}` : type;
       const offsetHex = `0x${offset.toString(16).toUpperCase()}`;
 
-      if (type === 'mvhd' && offset + hdr + 12 <= offset + size) {
+      if (type === 'ftyp' && depth === 0 && offset + hdr + 4 <= offset + size) {
+        ftypMajorBrand = dec.decode(buf.subarray(offset + hdr, offset + hdr + 4));
+      } else if (type === 'hdlr' && offset + hdr + 12 <= offset + size) {
+        const hdlrSub = dec.decode(buf.subarray(offset + hdr + 8, offset + hdr + 12));
+        if (hdlrSub === 'mdta' && parentPath.includes('udta/meta')) {
+          hasMdtaHandler = true;
+          if (isolatedMetadataBlocks.length < 40) {
+            isolatedMetadataBlocks.push({
+              id: `box_${offsetHex}_mdta_hdlr`,
+              category: 'UDTA_META',
+              boxOrStreamName: 'hdlr(mdta)',
+              path: currentPath,
+              offsetHex,
+              sizeBytes: size,
+              asciiPreview: `mdta inside ${parentPath} (brand=${ftypMajorBrand || 'mp4'})`,
+              matchedKeywords: ['mdta', 'use_metadata_tags'],
+              isAiTrigger: true,
+              triggerReason: 'Handler mdta di dalam udta/meta merupakan signature FFmpeg +use_metadata_tags spoofing',
+            });
+          }
+        }
+      } else if (type === 'mvhd' && offset + hdr + 12 <= offset + size) {
         const ver = buf[offset + hdr];
         if (ver === 0 && offset + hdr + 8 <= offset + size) {
           if (view.getUint32(offset + hdr + 4, false) === 0) {
@@ -653,6 +692,11 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
           if (nextOffset < offset + size) {
             walk(nextOffset, offset + size, currentPath, depth + 1);
           }
+        }
+      } else if (type === 'free' || type === 'skip') {
+        if (parentPath === 'moov' || parentPath.startsWith('moov/')) {
+          moovFreeBoxCount++;
+          moovFreeBoxBytes += size;
         }
       } else if (ISO_CONTAINER_BOXES.has(type)) {
         const nextOffset = type === 'meta' ? offset + hdr + 4 : offset + hdr;
@@ -885,11 +929,16 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
     }
   }
 
+  const hasSpoofedMdtaBox = hasMdtaHandler && ftypMajorBrand !== 'qt  ';
+
   return {
     boxTreeSummary,
     uuidClaims,
     jumbfManifests,
     hasZeroCreationTime,
+    hasSpoofedMdtaBox,
+    moovFreeBoxCount,
+    moovFreeBoxBytes,
     binarySeiCount,
     binaryType6,
     binaryType39,
@@ -920,10 +969,18 @@ async function analyzeAudioVisualForensics(
   rawVideo: any,
   rawAudio: any,
   fmtTags: Record<string, string>,
-  hasZeroCreationTime: boolean
+  hasZeroCreationTime: boolean,
+  hasSpoofedMdtaBox: boolean,
+  moovFreeBoxCount: number,
+  moovFreeBoxBytes: number
 ): Promise<AudioVisualForensicsReport> {
   const frameRateStr = String(rawVideo?.r_frame_rate || rawVideo?.avg_frame_rate || '0');
   const fps = Number(parseFrameRateString(frameRateStr).toFixed(3));
+  const width = Number(rawVideo?.width || 0);
+  const height = Number(rawVideo?.height || 0);
+  const colorPrimaries = String(rawVideo?.color_primaries || '');
+  const colorTransfer = String(rawVideo?.color_transfer || '');
+  const colorSpace = String(rawVideo?.color_space || '');
   const hasBFramesCount = Number(rawVideo?.has_b_frames ?? 0);
   const hasBFrames = hasBFramesCount > 0;
   const startTimeSec = Number(Number(rawVideo?.start_time || 0).toFixed(4));
@@ -932,13 +989,27 @@ async function analyzeAudioVisualForensics(
   const minorVer = String(fmtTags?.minor_version || '');
   const hasFfmpegMuxerBrand = compatBrands.includes('iso2') && minorVer === '512';
 
+  const hasColorMatrixMismatch = Boolean(
+    colorTransfer === 'iec61966-2-1' ||
+      (colorPrimaries === 'bt709' &&
+        ((colorTransfer && colorTransfer !== 'bt709' && colorTransfer !== 'unknown') ||
+          (colorSpace && colorSpace !== 'bt709' && colorSpace !== 'unknown'))) ||
+      (colorSpace === 'smpte170m' && colorPrimaries === 'bt709')
+  );
+  const shortSide = Math.min(width, height);
+  const isSub1080pDiffusionRes = width > 0 && height > 0 && shortSide < 1080 && shortSide <= 768;
+  const hasMoovFreeTombstone = moovFreeBoxBytes >= 16 || moovFreeBoxCount > 1;
+
   const hasAudio = Boolean(rawAudio);
   const sampleRateHz = Number(rawAudio?.sample_rate || 0);
   const channels = Number(rawAudio?.channels || 0);
 
-  // Measure normalized luma/chroma entropy (sample first 14s) + audio silence/spectral cutoff/stereo field
+  // Measure normalized luma/chroma entropy (14s @ 4fps) + consecutive frame delta (6s @ native fps) for pulldown duplicates
   let lumaEntropyAvg = 0;
   let chromaUEntropyAvg = 0;
+  let nearDuplicateFrameCount = 0;
+  let nearDuplicateFrameRatio = 0;
+  let totalDeltaFrames = 0;
   let digitalSilenceCount = 0;
   let digitalSilenceSec = 0;
   let overallRmsDb = -60;
@@ -958,14 +1029,20 @@ async function analyzeAudioVisualForensics(
         '14',
         '-i',
         filePath,
-        '-vf',
-        'fps=4,entropy,metadata=mode=print:file=-',
-        '-an',
+        '-filter_complex',
+        '[0:v]split=2[v1][v2];[v1]fps=4,entropy,metadata=mode=print:file=-[ent];[v2]trim=duration=6,tblend=all_mode=difference,signalstats,metadata=mode=print:file=-[dif]',
+        '-map',
+        '[ent]',
+        '-f',
+        'null',
+        '-',
+        '-map',
+        '[dif]',
         '-f',
         'null',
         '-',
       ],
-      { env: EXEC_ENV, timeout: 15000, maxBuffer: 8 * 1024 * 1024 }
+      { env: EXEC_ENV, timeout: 18000, maxBuffer: 12 * 1024 * 1024 }
     ).catch((e) => ({ stdout: e?.stdout || '', stderr: e?.stderr || '' }));
 
     const combinedV = `${String(vOut || '')}\n${String(vErr || '')}`;
@@ -975,13 +1052,23 @@ async function analyzeAudioVisualForensics(
     const uMatches = Array.from(combinedV.matchAll(/lavfi\.entropy\.normalized_entropy\.normal\.U=([\d.]+)/g)).map(
       (m) => Number(m[1])
     );
+    const difMatches = Array.from(combinedV.matchAll(/lavfi\.signalstats\.YAVG=([\d.]+)/g)).map((m) =>
+      Number(m[1])
+    );
     if (yMatches.length > 0) {
       lumaEntropyAvg = Number((yMatches.reduce((a, b) => a + b, 0) / yMatches.length).toFixed(4));
     }
     if (uMatches.length > 0) {
       chromaUEntropyAvg = Number((uMatches.reduce((a, b) => a + b, 0) / uMatches.length).toFixed(4));
     }
+    if (difMatches.length > 0) {
+      totalDeltaFrames = difMatches.length;
+      nearDuplicateFrameCount = difMatches.filter((v) => v < 0.5).length;
+      nearDuplicateFrameRatio = Number((nearDuplicateFrameCount / totalDeltaFrames).toFixed(4));
+    }
   } catch {}
+
+  const hasPulldownDuplicates = totalDeltaFrames >= 30 && nearDuplicateFrameRatio >= 0.10;
 
   if (hasAudio) {
     try {
@@ -1089,6 +1176,18 @@ async function analyzeAudioVisualForensics(
   if (isZeroBFrames) {
     visualAiFlags.push('Zero B-Frames (GOP Sintetik non-kamera)');
   }
+  if (hasPulldownDuplicates) {
+    visualAiFlags.push(`Anomali Cadence Pulldown / Duplikat Frame Periodik (${nearDuplicateFrameCount}/${totalDeltaFrames} = ${(nearDuplicateFrameRatio * 100).toFixed(1)}%)`);
+  }
+  if (hasColorMatrixMismatch) {
+    visualAiFlags.push(`Color Space/Transfer Tidak Sinkron (${colorPrimaries || 'unset'}/${colorTransfer || 'unset'}/${colorSpace || 'unset'} • Non-Kamera)`);
+  }
+  if (isSub1080pDiffusionRes) {
+    visualAiFlags.push(`Resolusi Sub-1080p Khas Output Diffusion AI (${width}x${height})`);
+  }
+  if (hasMoovFreeTombstone) {
+    visualAiFlags.push(`Tombstone Free Atom di dalam moov (${moovFreeBoxCount} box, ${moovFreeBoxBytes}B • Ciri Stripping Manual)`);
+  }
   if (lumaEntropyAvg > 0 && lumaEntropyAvg < 0.72) {
     visualAiFlags.push(`Tekstur piksel terdeteksi terlalu halus/sintetik (Entropy Y=${lumaEntropyAvg})`);
   }
@@ -1097,6 +1196,9 @@ async function analyzeAudioVisualForensics(
   }
   if (hasFfmpegMuxerBrand) {
     visualAiFlags.push(`Signature Muxer FFmpeg pada Header Brand (${compatBrands} • minor=${minorVer})`);
+  }
+  if (hasSpoofedMdtaBox) {
+    visualAiFlags.push('Struktur udta/meta/mdta Anomali (Signature FFmpeg Spoofing di MP4)');
   }
   if (startTimeSec > 0.04) {
     visualAiFlags.push(`PTS/ELST Start-Time Drift (${startTimeSec}s • Artefak Remux)`);
@@ -1127,9 +1229,14 @@ async function analyzeAudioVisualForensics(
   let riskScore = 0;
   if (isAiFramerate) riskScore += 28;
   if (isZeroBFrames) riskScore += 18;
+  if (hasPulldownDuplicates) riskScore += 18;
+  if (hasColorMatrixMismatch) riskScore += 14;
+  if (isSub1080pDiffusionRes) riskScore += 10;
+  if (hasMoovFreeTombstone) riskScore += 14;
   if (lumaEntropyAvg > 0 && lumaEntropyAvg < 0.72) riskScore += 14;
   if (hasZeroCreationTime) riskScore += 16;
   if (hasFfmpegMuxerBrand) riskScore += 15;
+  if (hasSpoofedMdtaBox) riskScore += 14;
   if (startTimeSec > 0.04) riskScore += 10;
   if (hasAudio && (channels === 1 || stereoSideGapDb >= 27.5)) riskScore += 16;
   if (hasAudio && digitalSilenceCount > 0) riskScore += 20;
@@ -1146,6 +1253,19 @@ async function analyzeAudioVisualForensics(
     visual: {
       fps,
       frameRateStr,
+      width,
+      height,
+      colorPrimaries,
+      colorTransfer,
+      colorSpace,
+      hasColorMatrixMismatch,
+      isSub1080pDiffusionRes,
+      nearDuplicateFrameCount,
+      nearDuplicateFrameRatio,
+      hasPulldownDuplicates,
+      moovFreeBoxCount,
+      moovFreeBoxBytes,
+      hasMoovFreeTombstone,
       hasBFrames,
       isAiFramerate,
       isZeroBFrames,
@@ -1155,6 +1275,7 @@ async function analyzeAudioVisualForensics(
       refsCount,
       hasZeroCreationTime,
       hasFfmpegMuxerBrand,
+      hasSpoofedMdtaBox,
       visualAiFlags,
       visualClean,
     },
@@ -1260,7 +1381,10 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
     rawVideo,
     rawAudio,
     fmtTags,
-    bmff.hasZeroCreationTime
+    bmff.hasZeroCreationTime,
+    bmff.hasSpoofedMdtaBox,
+    bmff.moovFreeBoxCount,
+    bmff.moovFreeBoxBytes
   );
 
   const vendorTags: VendorTagEntry[] = [];

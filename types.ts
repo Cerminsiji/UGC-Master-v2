@@ -168,3 +168,93 @@ export interface RateCardConfig {
 }
 
 export type StoryboardViewMode = 'cards' | 'table' | 'rate_card' | 'meta_cleaner';
+
+export type StorageDeployAction =
+  | 'save'
+  | 'hydrate'
+  | 'create'
+  | 'duplicate'
+  | 'delete'
+  | 'clear_all'
+  | 'clear_others'
+  | 'cleanup_ghosts'
+  | 'deduplicate'
+  | 'sync_repair';
+
+export type StorageDeployStatus = 'success' | 'warning' | 'error';
+
+export interface StorageDeployLogEntry {
+  id: string;
+  timestamp: string;
+  action: StorageDeployAction;
+  status: StorageDeployStatus;
+  tier?: string;
+  localCount: number;
+  idbCount: number | null;
+  memoryCount: number;
+  ghostCount: number;
+  duplicateCount: number;
+  message: string;
+  details?: string[];
+}
+
+export type GhostDataType =
+  | 'legacy_key'
+  | 'idb_orphan'
+  | 'ls_orphan'
+  | 'memory_orphan'
+  | 'dangling_active_pointer'
+  | 'broken_payload';
+
+export interface GhostDataItem {
+  id: string;
+  type: GhostDataType;
+  layer: 'localStorage' | 'indexedDB' | 'memory';
+  keyOrProjectId: string;
+  title: string;
+  reason: string;
+  sizeBytes?: number;
+}
+
+export interface DuplicateProjectMember {
+  id: string;
+  title: string;
+  productName?: string;
+  updatedAt?: string;
+  createdAt?: string;
+  sceneCount: number;
+  source: 'memory' | 'localStorage' | 'indexedDB';
+}
+
+export interface DuplicateProjectGroup {
+  signature: string;
+  reason: 'duplicate_id' | 'identical_title_product' | 'copy_clone';
+  label: string;
+  keepProjectId: string;
+  duplicateProjects: DuplicateProjectMember[];
+}
+
+export interface StorageLayerSnapshot {
+  available: boolean;
+  projectCount: number;
+  activeProjectId: string | null;
+  bytesUsed: number;
+  updatedAt?: string | null;
+  projectIds: string[];
+  error?: string;
+}
+
+export interface StorageAuditReport {
+  auditedAt: string;
+  health: 'healthy' | 'warning' | 'critical';
+  memory: StorageLayerSnapshot;
+  localStorage: StorageLayerSnapshot;
+  indexedDB: StorageLayerSnapshot;
+  legacyKeys: string[];
+  ghostItems: GhostDataItem[];
+  duplicateGroups: DuplicateProjectGroup[];
+  totalGhostCount: number;
+  totalDuplicateCount: number;
+  isSynced: boolean;
+}
+

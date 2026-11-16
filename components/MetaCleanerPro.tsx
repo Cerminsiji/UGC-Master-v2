@@ -360,9 +360,7 @@ function neutralizeContainerBoxesInPlace(bytes: Uint8Array): void {
           payload.includes('SHOPEE') ||
           payload.includes('s264') ||
           payload.includes('garena') ||
-          payload.includes('live-tech') ||
-          payload.includes('mdirappl') ||
-          payload.includes('appl')
+          payload.includes('live-tech')
         ) {
           bytes[offset + 4] = 0x66;
           bytes[offset + 5] = 0x72;
@@ -751,6 +749,7 @@ export const MetaCleanerPro: React.FC = () => {
   const [previewUrlBefore, setPreviewUrlBefore] = useState<string | null>(null);
   const [previewUrlAfter, setPreviewUrlAfter] = useState<string | null>(null);
   const [cameraProfile, setCameraProfile] = useState<'samsung' | 'apple' | 'xiaomi' | 'neutral'>('samsung');
+  const [upscale1080p, setUpscale1080p] = useState<boolean>(true);
 
   const [fileStatus, setFileStatus] = useState<{ text: string; color: 'amber' | 'emerald' | 'rose' }>({
     text: 'Menunggu Berkas',
@@ -798,13 +797,13 @@ export const MetaCleanerPro: React.FC = () => {
     {
       id: 'init-1',
       time: '--:--:--',
-      text: "[MetaCleaner v20.0 4-Layer Audio-Visual Anti-AI + FFprobe Forensics] Ready: Zero-Ghost 29.97fps + Rubberband Formant/Pitch + Stereo Pink Air + Authentic MP4 Timestamp/Brand.",
+      text: "[MetaCleaner v22.0 Sub-Pixel Perspective + Zero-mdta Forensics] Ready: Perspective Micro-Drift 29.97fps + 1080p BT.709 + 1/f Room Air (-49dB) + Native 2-Ref GOP.",
       color: 'indigo',
     },
     {
       id: 'init-2',
       time: '--:--:--',
-      text: 'Membersihkan 4 lapisan sidik jari AI tanpa ghosting & tanpa hiss: Metadata/Timestamp MP4, Zero-SEI Type 6, Optik CMOS Bebas-Ghost, & Anti-TTS Stereo Akustik.',
+      text: 'Membersihkan 4 lapisan sidik jari AI: Zero-mdta/Zero-Free MP4, Zero-SEI Type 6, Sub-Pixel CMOS Micro-Drift + Motion-Interp 1080p, & 1/f Room Floor + aexciter.',
       color: 'slate',
     },
   ]);
@@ -897,9 +896,11 @@ export const MetaCleanerPro: React.FC = () => {
             uuidClean: probe.cleanliness.isZeroUuid,
             encoder: !probe.cleanliness.isZeroAiVendor
               ? `TERDETEKSI (${probe.cleanliness.flaggedReasons.find((r) => r.includes('vendor') || r.includes('ASCII')) || 'Vendor/Handler Tag'})`
-              : target === 'after'
-                ? `${prev.encoder}`
-                : `BERSIH (${probe.videoStream?.handlerName || 'Standard Handler'})`,
+              : probe.format.tags?.make || probe.format.tags?.model
+                ? `BERSIH • OEM: ${[probe.format.tags?.make, probe.format.tags?.model].filter(Boolean).join(' ')} (${probe.videoStream?.handlerName || 'Handler'})`
+                : target === 'after'
+                  ? `${prev.encoder}`
+                  : `BERSIH (${probe.videoStream?.handlerName || 'Standard Handler'})`,
             encoderClean: probe.cleanliness.isZeroAiVendor,
             sei: seiTotal > 0
               ? `TERDETEKSI (${seiTotal} unit${asciiHint ? ` • ${asciiHint}` : ''})`
@@ -1128,8 +1129,16 @@ export const MetaCleanerPro: React.FC = () => {
       setPreviewUrlAfter(URL.createObjectURL(cleanBlob));
 
       const inspectedAfter = await inspectVideoBuffer(candidateUint8, true, cameraProfile);
-      setAfterState(inspectedAfter);
-      setProgressText('SELESAI 100%');
+      setAfterState({
+        ...inspectedAfter,
+        badgeText: inspectedAfter.badgeClean ? 'MEMVERIFIKASI FFPROBE...' : inspectedAfter.badgeText,
+        badgeClean: inspectedAfter.badgeClean ? null : false,
+        riskText: inspectedAfter.riskClean
+          ? 'Memverifikasi Audio-Visual & Container via FFprobe...'
+          : inspectedAfter.riskText,
+        riskClean: inspectedAfter.riskClean ? null : false,
+      });
+      setProgressText('VERIFIKASI FFPROBE...');
 
       appendLog(
         `✓ [${isPythonEngine ? 'CLOUD PYTHON ALL-IN-ONE' : 'CLOUD NODE ALL-IN-ONE'}] Video selesai diproses dalam 1 pipeline terpadu (${(candidateUint8.byteLength / (1024 * 1024)).toFixed(2)} MB).`,
@@ -1144,11 +1153,12 @@ export const MetaCleanerPro: React.FC = () => {
               : cameraProfile === 'xiaomi'
                 ? 'Xiaomi 14 Ultra (HyperOS / Leica)'
                 : 'Netral / Bitexact Clean'
-        }.`,
+        } • Resolusi: ${upscale1080p && cameraProfile !== 'neutral' ? '1080p Full-HD BT.709' : 'Resolusi Asli BT.709'}.`,
         'indigo'
       );
 
       await runExternalProbe(cleanBlob, outputFileName, 'after');
+      setProgressText('SELESAI 100%');
     };
 
     const syncProgressSnapshot = (pData: CleanerProgressState) => {
@@ -1260,6 +1270,7 @@ export const MetaCleanerPro: React.FC = () => {
         formData.append('deepMetaPurge', 'true');
         formData.append('forceKeyframeInsertion', 'false');
         formData.append('cameraProfile', cameraProfile);
+        formData.append('upscale1080p', upscale1080p ? 'true' : 'false');
         formData.append('asyncMode', 'true');
 
         return await fetch(`/api/meta-cleaner${window.location.search || ''}`, {
@@ -1538,23 +1549,23 @@ export const MetaCleanerPro: React.FC = () => {
           <div>
             <h2 className="font-bold text-base sm:text-lg leading-tight text-white flex items-center gap-2 flex-wrap">
               <span>MetaCleaner Pro</span>
-              <span className="text-xs bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-mono font-bold px-2.5 py-0.5 rounded-full">
-                v20.0 Zero-Ghost Audio-Visual + FFprobe
+              <span className="text-xs font-mono text-indigo-300 tabular-nums">
+                · v22.0 Sub-Pixel Perspective 1080p + Zero-mdta
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Anti-AI 4 Lapisan Tanpa Ghosting &amp; Hiss: Zero-SEI (<code>filter_units</code>), 29.97fps B-Frames (<code>refs=2</code>), Rubberband Formant + Stereo Pink Air, &amp; MP4 Camera Timestamp
+              Anti-AI 4 Lapisan: Sub-Pixel Perspective Micro-Drift 29.97fps, 1080p BT.709 + CMOS Breathing, 1/f Room Floor (-49dB) &amp; <code>aexciter</code>, + Zero-mdta/Zero-SEI Native 2-Ref MP4
             </p>
           </div>
         </div>
         <div className="flex items-center space-x-2">
           <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono font-bold rounded-full flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            All-in-One Anti-AI + Anti-Glitch Ready
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>Anti-AI + Zero-Pulldown Ready</span>
           </span>
           <span className="hidden sm:flex px-2.5 py-1 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold rounded-full items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>CFR + Deep Scrub + Zero-SEI</span>
+            <span>1080p BT.709 + Zero-SEI</span>
           </span>
         </div>
       </div>
@@ -1624,20 +1635,20 @@ export const MetaCleanerPro: React.FC = () => {
                 <div className="space-y-1.5 text-[10px] font-mono">
                   <div className="flex items-center gap-2 text-cyan-300 bg-cyan-950/25 border border-cyan-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-                    <span>1. Safe Mode Temporal CFR • Anti-Glitch (Bypass Keyframe-Only)</span>
+                    <span>1. Sub-Pixel Perspective Micro-Drift 29.97fps + 1080p BT.709 • 0% Pulldown</span>
                   </div>
                   <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/25 border border-emerald-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-                    <span>2. Deep 5-Layer Anti-SynthID • Optik CMOS &amp; Audio Rubberband</span>
+                    <span>2. 1/f Indoor Room Floor (-49dB) + Speech Harmonics (aexciter)</span>
                   </div>
                   <div className="flex items-center gap-2 text-indigo-300 bg-indigo-950/25 border border-indigo-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
-                    <span>3. Lossless Zero-SEI &amp; Purge C2PA/UUID • Chained 1-Command Faststart</span>
+                    <span>3. Zero-SEI + Zero-Free + Zero-mdta (Native Handler &amp; 2-Ref GOP)</span>
                   </div>
                 </div>
               </div>
 
-              <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
+              <div className="pt-2 border-t border-slate-800/80 space-y-2">
                 <div className="flex justify-between items-center gap-2">
                   <span className="text-slate-300 font-bold flex items-center gap-1 text-[11px]">
                     <span>Hardware Camera Profile:</span>
@@ -1653,8 +1664,37 @@ export const MetaCleanerPro: React.FC = () => {
                     <option value="neutral">Netral / Bitexact Clean (Standar)</option>
                   </select>
                 </div>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-300 font-bold text-[11px]">
+                    Target Resolusi Kamera:
+                  </span>
+                  <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setUpscale1080p(true)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer whitespace-nowrap ${
+                        upscale1080p
+                          ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      1080p Full-HD
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUpscale1080p(false)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer whitespace-nowrap ${
+                        !upscale1080p
+                          ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/40'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Resolusi Asli
+                    </button>
+                  </div>
+                </div>
                 <p className="text-[10px] text-slate-400 leading-snug">
-                  Menyisipkan profil kamera HP asli serta menetralkan tag Lavf/bot agar lolos verifikasi Shopee Video &amp; TikTok.
+                  Menstandarkan handler kamera native (<code>VideoHandle</code> / <code>Core Media Video</code>) tanpa menyisipkan box <code>mdta</code> sintetik, menstandarkan 1080p BT.709, &amp; mengompaksi atom <code>free</code>.
                 </p>
               </div>
             </div>
@@ -1809,8 +1849,8 @@ export const MetaCleanerPro: React.FC = () => {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col space-y-3">
             <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
               <h3 className="text-xs font-extrabold text-rose-400 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-                1. Indikator SEBELUM (Input File)
+                <ShieldAlert className="w-4 h-4 shrink-0" />
+                <span>1. Indikator SEBELUM (Input File)</span>
               </h3>
               <span
                 className={
@@ -1907,8 +1947,8 @@ export const MetaCleanerPro: React.FC = () => {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col space-y-3">
             <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
               <h3 className="text-xs font-extrabold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                2. Indikator SESUDAH (Hasil Sanitasi &amp; Remux)
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span>2. Indikator SESUDAH (Hasil Sanitasi &amp; Remux)</span>
               </h3>
               <span
                 className={
@@ -2297,11 +2337,12 @@ export const MetaCleanerPro: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">MP4 Timestamp &amp; Start PTS:</span>
+                        <span className="text-slate-400">MP4 Header / mdta / Start PTS:</span>
                         <span
                           className={
                             col.probe.audioVisualForensics.visual.hasZeroCreationTime ||
                             col.probe.audioVisualForensics.visual.hasFfmpegMuxerBrand ||
+                            col.probe.audioVisualForensics.visual.hasSpoofedMdtaBox ||
                             (col.probe.audioVisualForensics.visual.startTimeSec ?? 0) > 0.04
                               ? 'text-rose-400 font-bold'
                               : 'text-emerald-400 font-bold'
@@ -2309,13 +2350,56 @@ export const MetaCleanerPro: React.FC = () => {
                         >
                           {col.probe.audioVisualForensics.visual.hasZeroCreationTime ? '1904/0' : 'Valid UTC'} •{' '}
                           {col.probe.audioVisualForensics.visual.hasFfmpegMuxerBrand ? 'iso2/512!' : 'Clean Brand'} •{' '}
+                          {col.probe.audioVisualForensics.visual.hasSpoofedMdtaBox ? 'mdta!' : 'Zero-mdta'} •{' '}
                           {(col.probe.audioVisualForensics.visual.startTimeSec ?? 0).toFixed(3)}s
                         </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-slate-400">Entropy Tekstur Luma (Y):</span>
-                        <span className={col.probe.audioVisualForensics.visual.lumaEntropyAvg > 0 && col.probe.audioVisualForensics.visual.lumaEntropyAvg < 0.72 ? 'text-amber-300 font-bold' : 'text-slate-200'}>
+                        <span className={`tabular-nums ${col.probe.audioVisualForensics.visual.lumaEntropyAvg > 0 && col.probe.audioVisualForensics.visual.lumaEntropyAvg < 0.72 ? 'text-amber-300 font-bold' : 'text-slate-200'}`}>
                           {col.probe.audioVisualForensics.visual.lumaEntropyAvg || '-'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Resolusi &amp; Color Matrix:</span>
+                        <span
+                          className={`tabular-nums font-bold ${
+                            col.probe.audioVisualForensics.visual.isSub1080pDiffusionRes ||
+                            col.probe.audioVisualForensics.visual.hasColorMatrixMismatch
+                              ? 'text-rose-400'
+                              : 'text-emerald-400'
+                          }`}
+                        >
+                          {col.probe.audioVisualForensics.visual.width || col.probe.videoStream?.width || 0}x
+                          {col.probe.audioVisualForensics.visual.height || col.probe.videoStream?.height || 0} •{' '}
+                          {col.probe.audioVisualForensics.visual.colorPrimaries || 'unset'}/
+                          {col.probe.audioVisualForensics.visual.colorTransfer || 'unset'}/
+                          {col.probe.audioVisualForensics.visual.colorSpace || 'unset'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Cadence &amp; Duplikat Frame:</span>
+                        <span
+                          className={`tabular-nums font-bold ${
+                            col.probe.audioVisualForensics.visual.hasPulldownDuplicates
+                              ? 'text-rose-400'
+                              : 'text-emerald-400'
+                          }`}
+                        >
+                          {((col.probe.audioVisualForensics.visual.nearDuplicateFrameRatio ?? 0) * 100).toFixed(1)}%{' '}
+                          {col.probe.audioVisualForensics.visual.hasPulldownDuplicates ? '(Pulldown Duplikat!)' : '(Bebas Pulldown)'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Tombstone Free Atom (moov):</span>
+                        <span
+                          className={`tabular-nums font-bold ${
+                            col.probe.audioVisualForensics.visual.hasMoovFreeTombstone
+                              ? 'text-rose-400'
+                              : 'text-emerald-400'
+                          }`}
+                        >
+                          {col.probe.audioVisualForensics.visual.moovFreeBoxCount ?? 0} box ({col.probe.audioVisualForensics.visual.moovFreeBoxBytes ?? 0}B)
                         </span>
                       </div>
                       {col.probe.audioVisualForensics.visual.visualAiFlags.map((vf, idx) => (
@@ -2797,7 +2881,7 @@ export const MetaCleanerPro: React.FC = () => {
                 <span>Pembersihan 4 Lapisan Tanpa Glitch</span>
               </div>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                MetaCleaner v19 memproses video-audio penuh lalu menulis ulang paket dengan <code className="text-emerald-300">-bsf:v filter_units=remove_types=6</code> (0% SEI, 100% sinkron <code>stsz</code>), konversi <strong>24fps -&gt; 29.97fps mulus + B-Frames (bf=2)</strong> agar bebas stutter, serta dekorrelasi sensor CMOS + mikronoise kamera asli.
+                MetaCleaner v22 menulis ulang paket dengan <code className="text-emerald-300">-bsf:v filter_units=remove_types=6</code> (0% SEI, 0% atom <code>free</code>, 0% <code>udta/meta/mdta</code> spoofing), <strong>sub-pixel perspective micro-drift</strong> per-frame + CMOS auto-exposure breathing pada <strong>29.97fps 1080p BT.709</strong>, &amp; GOP 2-ref kamera native.
               </p>
             </div>
 
@@ -2807,7 +2891,7 @@ export const MetaCleanerPro: React.FC = () => {
                 <span>Penetralan Audio TTS &amp; Vocoder AI</span>
               </div>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Detektor platform modern memindai <strong>jeda hening digital (&lt;-55dB)</strong> dan <strong>spektrum terpotong &gt;16kHz</strong> khas AI voice/vocoder. MetaCleaner v19 menyuntikkan ambient room-air alami, disperasi fase akustik, &amp; memaksa AAC <code className="text-indigo-300">-cutoff 20200</code> agar audio lolos sebagai rekaman mikrofon kamera asli.
+                Detektor platform modern memindai <strong>jeda hening digital (&lt;-55dB)</strong>, <strong>hiss &gt;12kHz sintetik (&gt;-40dB)</strong>, <strong>pseudo-stereo TTS</strong>, dan <strong>cliff spektrum &gt;17kHz</strong>. MetaCleaner v22 menyuntikkan 1/f pink indoor room floor (-49dB), harmonik suara <code>aexciter</code>, &amp; AAC 256kbps <code className="text-indigo-300">-cutoff 20500</code>.
               </p>
             </div>
           </div>

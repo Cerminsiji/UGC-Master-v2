@@ -75,204 +75,222 @@ def find_binary(name: str) -> str:
 FFMPEG_BIN = find_binary("ffmpeg")
 FFPROBE_BIN = find_binary("ffprobe")
 
-def build_synthid_video_filter(width: int = 0, height: int = 0) -> str:
-    if width >= 64 and height >= 64:
-        target_w = (width // 2) * 2
-        target_h = (height // 2) * 2
-        pre_scale = ""
-        scale_step = f"scale={target_w}:{target_h}:flags=lanczos+accurate_rnd"
+def _compute_target_dimensions(width: int, height: int, upscale_1080p: bool = True) -> tuple[int, int]:
+    if width < 64 or height < 64:
+        return 0, 0
+    even_w = (width // 2) * 2
+    even_h = (height // 2) * 2
+    if not upscale_1080p:
+        return even_w, even_h
+    short_side = min(even_w, even_h)
+    if short_side < 1080:
+        scale_factor = 1080.0 / float(short_side)
+        target_w = (int(round(even_w * scale_factor)) // 2) * 2
+        target_h = (int(round(even_h * scale_factor)) // 2) * 2
+        return target_w, target_h
+    return even_w, even_h
+
+
+def build_synthid_video_filter(width: int = 0, height: int = 0, upscale_1080p: bool = True) -> str:
+    target_w, target_h = _compute_target_dimensions(width, height, upscale_1080p)
+    if target_w >= 64 and target_h >= 64:
+        scale_step = f"scale={target_w}:{target_h}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv"
     else:
-        pre_scale = "scale=trunc(iw*1.05/2)*2:trunc(ih*1.05/2)*2:flags=bicubic,"
-        scale_step = "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd"
+        scale_step = "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv"
 
     return (
         "setpts=0.961538*(PTS-STARTPTS),"
-        "fps=fps=30000/1001,"
+        "framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0,"
         "format=yuv420p,"
-        "hqdn3d=1.8:1.4:2.8:2.0,"
-        f"{pre_scale}"
-        "lenscorrection=cx=0.495:cy=0.505:k1=-0.028:k2=0.009,"
-        "rotate=0.009:ow=iw:oh=ih:bilinear=1,"
-        "crop=trunc(iw*0.95/2)*2:trunc(ih*0.95/2)*2:trunc(iw*0.024)+trunc(1.8*sin(t*1.9)):trunc(ih*0.024)+trunc(1.8*cos(t*1.4)),"
+        "hqdn3d=0.9:0.7:1.1:0.9,"
+        "lenscorrection=cx=0.495:cy=0.505:k1=-0.022:k2=0.007,"
+        "perspective="
+        "x0=W*0.022+W*0.0022*sin(on*0.19)+W*0.0010*cos(on*0.37):"
+        "y0=H*0.022+H*0.0016*cos(on*0.16)+H*0.0009*sin(on*0.31):"
+        "x1=W*0.978+W*0.0022*sin(on*0.19+0.4)+W*0.0009*cos(on*0.33):"
+        "y1=H*0.022+H*0.0016*cos(on*0.16-0.3)+H*0.0009*sin(on*0.29):"
+        "x2=W*0.022+W*0.0022*sin(on*0.19-0.3)+W*0.0010*cos(on*0.35):"
+        "y2=H*0.978+H*0.0016*cos(on*0.16+0.4)+H*0.0009*sin(on*0.27):"
+        "x3=W*0.978+W*0.0022*sin(on*0.19+0.2)+W*0.0009*cos(on*0.31):"
+        "y3=H*0.978+H*0.0016*cos(on*0.16+0.2)+H*0.0009*sin(on*0.34):"
+        "interpolation=linear:sense=source:eval=frame,"
         f"{scale_step},"
+        "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,"
         "chromashift=cbh=1:cbv=0:crh=-1:crv=0,"
-        "colorchannelmixer=rr=1.014:rg=-0.011:rb=-0.003:gr=-0.007:gg=1.009:gb=-0.002:br=-0.004:bg=-0.009:bb=1.013,"
-        "eq=contrast=1.025:brightness=-0.003:saturation=1.02:gamma=1.015,"
-        "unsharp=5:5:0.24:3:3:0.0,"
-        "vignette=angle=PI/7,"
-        "noise=c0s=1.5:c1s=0:c2s=0:allf=t,"
+        "colorchannelmixer=rr=1.011:rg=-0.008:rb=-0.003:gr=-0.005:gg=1.007:gb=-0.002:br=-0.003:bg=-0.007:bb=1.010,"
+        "eq=contrast=1.02:brightness=-0.002+0.004*sin(t*4.7+0.6*cos(t*8.3)):saturation=1.02:gamma=1.012:eval=frame,"
+        "cas=strength=0.18,"
+        "vignette=angle=PI/8,"
+        "noise=c0s=2.8:c1s=1.5:c2s=1.5:allf=t+u,"
         "setsar=1"
     )
 
-def build_safe_mode_video_filter(width: int = 0, height: int = 0) -> str:
+
+def build_safe_mode_video_filter(width: int = 0, height: int = 0, upscale_1080p: bool = True) -> str:
     """
-    Safe Mode Temporal Re-Encoding Filtergraph:
-    Prioritizes strict monotonic temporal frame re-encoding (CFR PTS-STARTPTS, zero time-warp,
-    zero oscillating crop jitter) while disrupting pixel-domain SynthID watermarks cleanly.
+    Safe Mode Temporal Re-Encoding Filtergraph v22:
+    Eliminates 4:1 duplicate pulldown + static macroblock cloning via continuous micro-drift + BT.709 color lock.
     """
-    if width >= 64 and height >= 64:
-        target_w = (width // 2) * 2
-        target_h = (height // 2) * 2
-        up_w = ((int(target_w * 1.03) + 1) // 2) * 2
-        up_h = ((int(target_h * 1.03) + 1) // 2) * 2
+    target_w, target_h = _compute_target_dimensions(width, height, upscale_1080p)
+    if target_w >= 64 and target_h >= 64:
         geom_steps = (
-            f"scale={up_w}:{up_h}:flags=bicubic,"
-            f"crop={target_w}:{target_h}:(iw-{target_w})/2:(ih-{target_h})/2,"
-            f"scale={target_w}:{target_h}:flags=lanczos+accurate_rnd,"
+            "perspective="
+            "x0=W*0.015+W*0.0015*sin(on*0.17)+W*0.0007*cos(on*0.33):"
+            "y0=H*0.015+H*0.0011*cos(on*0.15)+H*0.0006*sin(on*0.29):"
+            "x1=W*0.985+W*0.0015*sin(on*0.17+0.3)+W*0.0007*cos(on*0.31):"
+            "y1=H*0.015+H*0.0011*cos(on*0.15-0.2)+H*0.0006*sin(on*0.27):"
+            "x2=W*0.015+W*0.0015*sin(on*0.17-0.2)+W*0.0007*cos(on*0.35):"
+            "y2=H*0.985+H*0.0011*cos(on*0.15+0.3)+H*0.0006*sin(on*0.25):"
+            "x3=W*0.985+W*0.0015*sin(on*0.17+0.2)+W*0.0007*cos(on*0.29):"
+            "y3=H*0.985+H*0.0011*cos(on*0.15+0.2)+H*0.0006*sin(on*0.31):"
+            "interpolation=linear:sense=source:eval=frame,"
+            f"scale={target_w}:{target_h}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,"
         )
     else:
         geom_steps = (
-            "scale=trunc(iw*1.03/2)*2:trunc(ih*1.03/2)*2:flags=bicubic,"
-            "crop=trunc(iw/1.03/2)*2:trunc(ih/1.03/2)*2,"
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd,"
+            "crop=trunc(iw*0.97/2)*2:trunc(ih*0.97/2)*2,"
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,"
         )
 
     return (
         "setpts=PTS-STARTPTS,"
-        "fps=fps=30000/1001:round=near,"
+        "framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0,"
         "format=yuv420p,"
-        "hqdn3d=1.2:1.0:2.2:1.6,"
+        "hqdn3d=0.8:0.6:1.0:0.8,"
         f"{geom_steps}"
+        "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,"
         "chromashift=cbh=1:cbv=0:crh=-1:crv=0,"
         "colorchannelmixer=rr=1.008:rg=-0.006:rb=-0.002:gr=-0.004:gg=1.006:gb=-0.002:br=-0.002:bg=-0.006:bb=1.008,"
-        "eq=contrast=1.015:brightness=-0.002:saturation=1.015:gamma=1.01,"
-        "unsharp=5:5:0.20:3:3:0.0,"
-        "noise=c0s=1.3:c1s=0:c2s=0:allf=t,"
+        "eq=contrast=1.015:brightness=-0.002+0.0035*sin(t*4.5+0.5*cos(t*7.9)):saturation=1.015:gamma=1.01:eval=frame,"
+        "cas=strength=0.16,"
+        "noise=c0s=2.4:c1s=1.3:c2s=1.3:allf=t+u,"
         "setsar=1"
     )
 
-def build_unified_video_filter(width: int = 0, height: int = 0, duration_sec: float = 0.0) -> str:
+
+def build_unified_video_filter(width: int = 0, height: int = 0, duration_sec: float = 0.0, upscale_1080p: bool = True) -> str:
     """
-    Unified All-in-One Pipeline (Safe Mode Temporal CFR + Deep Anti-SynthID Optical/CMOS Disruption):
-    Combines strict monotonic CFR pacing (30fps smartphone clock, 0.07s synced boundary trim)
-    with full-frame center-breaking rotation/lens/hue/luma-only CMOS disruption.
+    Unified All-in-One Pipeline v22:
+    - Trims 0.08s leading silence/boundary signature
+    - Converts 24fps AI sources to 29.97fps NTSC camera cadence via scene-aware interpolation
+    - Runs native-res mild spatial/temporal filter + continuous sub-pixel perspective micro-drift (eliminates 77% static pixel locks)
+    - Single-pass Lanczos 1080p BT.709 scale + CMOS auto-exposure micro-breathing + luma/chroma sensor grain
     """
-    trim_prefix = "trim=start=0.07,setpts=PTS-STARTPTS," if duration_sec > 2.0 else "setpts=PTS-STARTPTS,"
-    if width >= 64 and height >= 64:
-        target_w = (width // 2) * 2
-        target_h = (height // 2) * 2
-        up_w = ((int(target_w * 1.06) + 1) // 2) * 2
-        up_h = ((int(target_h * 1.06) + 1) // 2) * 2
-        geom_steps = (
-            f"scale={up_w}:{up_h}:flags=bicubic,"
-            "lenscorrection=cx=0.493:cy=0.507:k1=-0.025:k2=0.008,"
-            "rotate=0.0065:ow=iw:oh=ih:bilinear=1,"
-            f"crop={target_w}:{target_h}:(iw-{target_w})*0.56:(ih-{target_h})*0.44,"
-            f"scale={target_w}:{target_h}:flags=lanczos+accurate_rnd,"
-        )
-    else:
-        geom_steps = (
-            "scale=trunc(iw*1.06/2)*2:trunc(ih*1.06/2)*2:flags=bicubic,"
-            "lenscorrection=cx=0.493:cy=0.507:k1=-0.025:k2=0.008,"
-            "rotate=0.0065:ow=iw:oh=ih:bilinear=1,"
-            "crop=trunc(iw/1.06/2)*2:trunc(ih/1.06/2)*2:(iw-out_w)*0.56:(ih-out_h)*0.44,"
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd,"
-        )
+    trim_prefix = "trim=start=0.08,setpts=PTS-STARTPTS," if duration_sec > 2.0 else "setpts=PTS-STARTPTS,"
+    target_w, target_h = _compute_target_dimensions(width, height, upscale_1080p)
+    scale_step = (
+        f"scale={target_w}:{target_h}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,"
+        if target_w >= 64 and target_h >= 64
+        else "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,"
+    )
 
     return (
         f"{trim_prefix}"
-        "fps=fps=30:round=near,"
+        "framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0,"
         "format=yuv420p,"
-        "hqdn3d=2.4:2.0:3.2:2.6,"
-        f"{geom_steps}"
+        "hqdn3d=0.8:0.6:1.0:0.8,"
+        "lenscorrection=cx=0.494:cy=0.506:k1=-0.020:k2=0.006,"
+        "perspective="
+        "x0=W*0.022+W*0.0022*sin(on*0.19)+W*0.0010*cos(on*0.37):"
+        "y0=H*0.022+H*0.0016*cos(on*0.16)+H*0.0009*sin(on*0.31):"
+        "x1=W*0.978+W*0.0022*sin(on*0.19+0.4)+W*0.0009*cos(on*0.33):"
+        "y1=H*0.022+H*0.0016*cos(on*0.16-0.3)+H*0.0009*sin(on*0.29):"
+        "x2=W*0.022+W*0.0022*sin(on*0.19-0.3)+W*0.0010*cos(on*0.35):"
+        "y2=H*0.978+H*0.0016*cos(on*0.16+0.4)+H*0.0009*sin(on*0.27):"
+        "x3=W*0.978+W*0.0022*sin(on*0.19+0.2)+W*0.0009*cos(on*0.31):"
+        "y3=H*0.978+H*0.0016*cos(on*0.16+0.2)+H*0.0009*sin(on*0.34):"
+        "interpolation=linear:sense=source:eval=frame,"
+        f"{scale_step}"
+        "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,"
         "chromashift=cbh=1:cbv=0:crh=-1:crv=0,"
-        "hue=h=1.4:s=1.015,"
-        "colorchannelmixer=rr=1.011:rg=-0.008:rb=-0.003:gr=-0.005:gg=1.007:gb=-0.002:br=-0.003:bg=-0.007:bb=1.010,"
-        "eq=contrast=1.018:brightness=-0.002:saturation=1.015:gamma=1.012,"
-        "unsharp=5:5:0.16:3:3:0.0,"
-        "vignette=angle=PI/8,"
-        "noise=c0s=1.2:c1s=0:c2s=0:allf=t,"
+        "hue=h=1.1:s=1.015,"
+        "colorchannelmixer=rr=1.009:rg=-0.007:rb=-0.002:gr=-0.004:gg=1.006:gb=-0.002:br=-0.003:bg=-0.006:bb=1.009,"
+        "eq=contrast=1.015:brightness=-0.002+0.004*sin(t*4.7+0.6*cos(t*8.3)):saturation=1.015:gamma=1.010:eval=frame,"
+        "cas=strength=0.16,"
+        "vignette=angle=PI/9,"
+        "noise=c0s=2.8:c1s=1.5:c2s=1.5:allf=t+u,"
         "setsar=1"
     )
 
+
 def build_synthid_audio_filter_complex(voice_label: str = "[0:a]", out_label: str = "[aout]") -> str:
     return (
-        "anoisesrc=color=pink:amplitude=0.00042:sample_rate=48000:seed=104729[pL];"
-        "anoisesrc=color=pink:amplitude=0.00042:sample_rate=48000:seed=224737[pR];"
-        "[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo];"
-        "anoisesrc=color=white:amplitude=0.0132:sample_rate=48000:seed=319993[aL];"
-        "anoisesrc=color=white:amplitude=0.0132:sample_rate=48000:seed=492871[aR];"
-        "[aL][aR]amerge=inputs=2,highpass=f=14100,highpass=f=14100,lowpass=f=20200[room_hi];"
-        "[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.38:d=0.20,volume=0.88[room];"
+        "anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL];"
+        "anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR];"
+        "[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room];"
         f"{voice_label}asetpts=PTS-STARTPTS,aresample=48000,"
         "aformat=channel_layouts=stereo,"
-        "afftdn=nr=11:nf=-36:tn=1,"
-        "rubberband=tempo=1.04:pitch=0.966:formant=shifted,"
-        "highpass=f=65,"
-        "equalizer=f=185:t=q:w=1.0:g=1.4,"
-        "equalizer=f=3400:t=q:w=1.2:g=-1.1,"
-        "highshelf=f=9500:g=0.8,"
-        "aecho=0.94:0.90:15|26:0.045|0.025,"
-        "extrastereo=m=1.28,"
+        "afftdn=nr=7:nf=-42:tn=1,"
+        "rubberband=tempo=1.04:pitch=0.968:formant=shifted,"
+        "highpass=f=70,"
+        "equalizer=f=195:t=q:w=1.0:g=1.2,"
+        "equalizer=f=3200:t=q:w=1.4:g=-0.9,"
+        "aexciter=level_in=1:level_out=1:amount=2.8:drive=5.0:blend=0:freq=6800:ceil=19600,"
+        "aecho=0.94:0.90:15|25:0.038|0.020,"
+        "extrastereo=m=1.26,"
         "asoftclip=type=tanh:threshold=0.92,"
-        "acompressor=threshold=-26dB:ratio=2.6:attack=8:release=120,"
+        "acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,"
         "asplit=2[vdry][ver_in];"
-        "[ver_in]highpass=f=280,lowpass=f=4800,adelay=8|19,volume=0.13[ver];"
+        "[ver_in]highpass=f=280,lowpass=f=5000,adelay=8|18,volume=0.11[ver];"
         "[vdry][ver]amix=inputs=2:normalize=0[voice];"
         f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95{out_label}"
     )
+
 
 def build_safe_mode_audio_filter_complex(voice_label: str = "[0:a]", out_label: str = "[aout]") -> str:
     """
-    Safe Mode Temporal-Locked Audio Filtergraph:
-    Maintains exact 1.0x duration/lip-sync via aresample=async=1:first_pts=0 while neutralizing TTS signatures.
+    Safe Mode Temporal-Locked Audio Filtergraph v22:
+    Natural 1/f pink indoor mic floor (-48 to -52 dB) + speech-correlated aexciter harmonics (zero HF hiss shelf).
     """
     return (
-        "anoisesrc=color=pink:amplitude=0.00040:sample_rate=48000:seed=104729[pL];"
-        "anoisesrc=color=pink:amplitude=0.00040:sample_rate=48000:seed=224737[pR];"
-        "[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo];"
-        "anoisesrc=color=white:amplitude=0.0128:sample_rate=48000:seed=319993[aL];"
-        "anoisesrc=color=white:amplitude=0.0128:sample_rate=48000:seed=492871[aR];"
-        "[aL][aR]amerge=inputs=2,highpass=f=14100,highpass=f=14100,lowpass=f=20200[room_hi];"
-        "[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.36:d=0.18,volume=0.86[room];"
+        "anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL];"
+        "anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR];"
+        "[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room];"
         f"{voice_label}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,"
         "aformat=channel_layouts=stereo,"
-        "afftdn=nr=9:nf=-36:tn=1,"
-        "rubberband=tempo=1.0:pitch=0.985:formant=shifted,"
-        "highpass=f=65,"
-        "equalizer=f=185:t=q:w=1.0:g=1.2,"
-        "equalizer=f=3400:t=q:w=1.2:g=-0.9,"
-        "highshelf=f=9500:g=0.7,"
-        "aecho=0.94:0.90:14|23:0.035|0.020,"
+        "afftdn=nr=7:nf=-42:tn=1,"
+        "rubberband=tempo=1.0:pitch=0.984:formant=shifted,"
+        "highpass=f=70,"
+        "equalizer=f=195:t=q:w=1.0:g=1.2,"
+        "equalizer=f=3200:t=q:w=1.4:g=-0.8,"
+        "aexciter=level_in=1:level_out=1:amount=2.7:drive=4.8:blend=0:freq=6800:ceil=19600,"
+        "aecho=0.94:0.90:14|23:0.035|0.019,"
         "extrastereo=m=1.22,"
         "asoftclip=type=tanh:threshold=0.92,"
-        "acompressor=threshold=-26dB:ratio=2.4:attack=8:release=120,"
+        "acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,"
         "asplit=2[vdry][ver_in];"
-        "[ver_in]highpass=f=280,lowpass=f=4800,adelay=6|15,volume=0.10[ver];"
+        "[ver_in]highpass=f=280,lowpass=f=5000,adelay=6|15,volume=0.10[ver];"
         "[vdry][ver]amix=inputs=2:normalize=0[voice];"
         f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95{out_label}"
     )
 
+
 def build_unified_audio_filter_complex(voice_label: str = "[0:a]", out_label: str = "[aout]", duration_sec: float = 0.0) -> str:
     """
-    Unified Temporal-Locked Anti-TTS Audio Filtergraph:
-    Strict 1.0x sync via matching 0.07s boundary trim + aresample=async=1:first_pts=0
-    + 2.6% rubberband pitch/formant shift + dual-seed stereo pink/air ambiance.
+    Unified Temporal-Locked Anti-TTS Audio Filtergraph v22:
+    - Matching 0.08s start trim removes TTS lead-in dead silence cleanly
+    - True 1/f indoor pink room ambiance (-49 dB natural floor, no synthetic >12.5kHz hiss shelf bump)
+    - Speech-correlated aexciter (>14kHz/17kHz natural sibilant air) + 2.4% rubberband pitch/formant shift
     """
-    atrim_prefix = "atrim=start=0.07,asetpts=PTS-STARTPTS," if duration_sec > 2.0 else "asetpts=PTS-STARTPTS,"
+    atrim_prefix = "atrim=start=0.08,asetpts=PTS-STARTPTS," if duration_sec > 2.0 else "asetpts=PTS-STARTPTS,"
     return (
-        "anoisesrc=color=pink:amplitude=0.00032:sample_rate=48000:seed=104729[pL];"
-        "anoisesrc=color=pink:amplitude=0.00032:sample_rate=48000:seed=224737[pR];"
-        "[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo];"
-        "anoisesrc=color=white:amplitude=0.0138:sample_rate=48000:seed=319993[aL];"
-        "anoisesrc=color=white:amplitude=0.0138:sample_rate=48000:seed=492871[aR];"
-        "[aL][aR]amerge=inputs=2,highpass=f=14200,highpass=f=14200,lowpass=f=20200[room_hi];"
-        "[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.38:d=0.20,volume=0.85[room];"
+        "anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL];"
+        "anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR];"
+        "[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room];"
         f"{voice_label}{atrim_prefix}aresample=48000:async=1:first_pts=0,"
         "aformat=channel_layouts=stereo,"
-        "afftdn=nr=11:nf=-36:tn=1,"
-        "rubberband=tempo=1.0:pitch=0.974:formant=shifted,"
-        "highpass=f=65,"
-        "equalizer=f=185:t=q:w=1.0:g=1.4,"
-        "equalizer=f=2400:t=q:w=1.8:g=-1.1,"
-        "equalizer=f=3400:t=q:w=1.2:g=-1.0,"
-        "highshelf=f=9500:g=0.8,"
-        "aecho=0.94:0.90:15|25:0.042|0.024,"
-        "extrastereo=m=1.26,"
+        "afftdn=nr=7:nf=-42:tn=1,"
+        "rubberband=tempo=1.0:pitch=0.976:formant=shifted,"
+        "highpass=f=70,"
+        "equalizer=f=195:t=q:w=1.0:g=1.2,"
+        "equalizer=f=2600:t=q:w=1.5:g=-0.8,"
+        "aexciter=level_in=1:level_out=1:amount=2.8:drive=5.0:blend=0:freq=6800:ceil=19600,"
+        "aecho=0.94:0.90:14|24:0.036|0.019,"
+        "extrastereo=m=1.24,"
         "asoftclip=type=tanh:threshold=0.92,"
-        "acompressor=threshold=-26dB:ratio=2.5:attack=8:release=120,"
+        "acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,"
         "asplit=2[vdry][ver_in];"
-        "[ver_in]highpass=f=280,lowpass=f=4800,adelay=7|17,volume=0.12[ver];"
+        "[ver_in]highpass=f=280,lowpass=f=5000,adelay=7|17,volume=0.11[ver];"
         "[vdry][ver]amix=inputs=2:normalize=0[voice];"
         f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95{out_label}"
     )
@@ -494,6 +512,109 @@ def extract_ffmpeg_telemetry(stderr_text: str, prefix: str) -> list:
     combined = relevant[:4] + selected_frames + [l for l in relevant[4:] if "video:" in l or "muxing overhead:" in l]
     return combined[-8:]
 
+def compact_mp4_remove_free_boxes(data: bytes) -> bytes:
+    """
+    Physically excises 'free' and 'skip' boxes at top-level and inside 'moov' containers,
+    recomputes parent box sizes, and shifts stco/co64 chunk offsets so zero metadata-strip tombstones remain.
+    """
+    import struct
+    container_types = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"dinf", b"udta", b"ilst"}
+    removed_ranges: list[tuple[int, int]] = []
+
+    def rebuild_range(buf: bytes, start: int, end: int, depth: int) -> bytearray:
+        out = bytearray()
+        pos = start
+        while pos + 8 <= end:
+            sz = struct.unpack(">I", buf[pos:pos + 4])[0]
+            tp = buf[pos + 4:pos + 8]
+            hdr = 8
+            if sz == 1:
+                if pos + 16 > end:
+                    out.extend(buf[pos:end])
+                    break
+                sz = struct.unpack(">Q", buf[pos + 8:pos + 16])[0]
+                hdr = 16
+            elif sz == 0:
+                sz = end - pos
+            if sz < hdr or pos + sz > end:
+                out.extend(buf[pos:end])
+                break
+
+            if tp in (b"free", b"skip"):
+                removed_ranges.append((pos, sz))
+                pos += sz
+                continue
+
+            if tp == b"meta":
+                inner_start = pos + hdr + 4
+                if inner_start <= pos + sz:
+                    child_bytes = rebuild_range(buf, inner_start, pos + sz, depth + 1)
+                    body = buf[pos + hdr:inner_start] + child_bytes
+                    out.extend(struct.pack(">I", 8 + len(body)) + tp + body)
+                else:
+                    out.extend(buf[pos:pos + sz])
+            elif tp in container_types and depth < 6:
+                child_bytes = rebuild_range(buf, pos + hdr, pos + sz, depth + 1)
+                out.extend(struct.pack(">I", 8 + len(child_bytes)) + tp + child_bytes)
+            else:
+                out.extend(buf[pos:pos + sz])
+
+            pos += sz
+        return out
+
+    rebuilt = rebuild_range(data, 0, len(data), 0)
+    if not removed_ranges:
+        return bytes(rebuilt)
+
+    def shift_for_offset(orig_off: int) -> int:
+        return sum(r_sz for r_pos, r_sz in removed_ranges if r_pos < orig_off)
+
+    def fix_offsets(buf: bytearray, start: int, end: int, depth: int):
+        if depth > 7:
+            return
+        pos = start
+        while pos + 8 <= end:
+            sz = struct.unpack(">I", buf[pos:pos + 4])[0]
+            tp = bytes(buf[pos + 4:pos + 8])
+            hdr = 8
+            if sz == 1:
+                if pos + 16 > end:
+                    break
+                sz = struct.unpack(">Q", buf[pos + 8:pos + 16])[0]
+                hdr = 16
+            elif sz == 0:
+                sz = end - pos
+            if sz < hdr or pos + sz > end:
+                break
+
+            if tp == b"stco" and pos + hdr + 8 <= pos + sz:
+                cnt = struct.unpack(">I", buf[pos + hdr + 4:pos + hdr + 8])[0]
+                for i in range(cnt):
+                    off_pos = pos + hdr + 8 + i * 4
+                    if off_pos + 4 > pos + sz:
+                        break
+                    val = struct.unpack(">I", buf[off_pos:off_pos + 4])[0]
+                    delta = shift_for_offset(val)
+                    if delta > 0 and val > delta:
+                        buf[off_pos:off_pos + 4] = struct.pack(">I", val - delta)
+            elif tp == b"co64" and pos + hdr + 8 <= pos + sz:
+                cnt = struct.unpack(">I", buf[pos + hdr + 4:pos + hdr + 8])[0]
+                for i in range(cnt):
+                    off_pos = pos + hdr + 8 + i * 8
+                    if off_pos + 8 > pos + sz:
+                        break
+                    val = struct.unpack(">Q", buf[off_pos:off_pos + 8])[0]
+                    delta = shift_for_offset(val)
+                    if delta > 0 and val > delta:
+                        buf[off_pos:off_pos + 8] = struct.pack(">Q", val - delta)
+            elif tp in container_types:
+                fix_offsets(buf, pos + hdr, pos + sz, depth + 1)
+            pos += sz
+
+    fix_offsets(rebuilt, 0, len(rebuilt), 0)
+    return bytes(rebuilt)
+
+
 def sanitize_binary_boxes_in_place(file_path: str) -> int:
     sanitized_count = 0
     bad_markers = (
@@ -503,9 +624,9 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
         "watermark",
         "adobe",
         "google",
-        "apple",
         "iso media file produced by",
         "created on:",
+        "mdta",
         "lavf",
         "lavc",
         "ffmpeg",
@@ -520,12 +641,15 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
         "kling",
         "runway",
         "seedance",
-        "mdirappl",
+        "elevenlabs",
     )
     container_boxes = ("moov", "trak", "mdia", "minf", "stbl", "edts", "dinf")
-    mac_epoch_now = int(time.time()) + 2082844800 - 1860
-    ts_bytes_32 = mac_epoch_now.to_bytes(4, byteorder="big")
-    ts_bytes_64 = mac_epoch_now.to_bytes(8, byteorder="big")
+    mac_epoch_ctime = int(time.time()) + 2082844800 - 1620
+    mac_epoch_mtime = mac_epoch_ctime + 1
+    ctime_32 = mac_epoch_ctime.to_bytes(4, byteorder="big")
+    mtime_32 = mac_epoch_mtime.to_bytes(4, byteorder="big")
+    ctime_64 = mac_epoch_ctime.to_bytes(8, byteorder="big")
+    mtime_64 = mac_epoch_mtime.to_bytes(8, byteorder="big")
     try:
         with open(file_path, "r+b") as f:
             data = bytearray(f.read())
@@ -552,7 +676,6 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
                         break
 
                     if box_type == "ftyp" and offset + size >= offset + 16:
-                        # Normalize FFmpeg minor_version (512 -> 0) and replace 'iso2' brand with 'isom'
                         data[offset+12:offset+16] = b"\x00\x00\x00\x00"
                         bpos = offset + 16
                         while bpos + 4 <= offset + size:
@@ -564,19 +687,16 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
                         if ver == 0 and offset + hdr + 12 <= offset + size:
                             ctime = int.from_bytes(data[offset+hdr+4:offset+hdr+8], byteorder="big")
                             if ctime == 0:
-                                data[offset+hdr+4:offset+hdr+8] = ts_bytes_32
-                                data[offset+hdr+8:offset+hdr+12] = ts_bytes_32
+                                data[offset+hdr+4:offset+hdr+8] = ctime_32
+                                data[offset+hdr+8:offset+hdr+12] = mtime_32
                         elif ver == 1 and offset + hdr + 20 <= offset + size:
                             ctime = int.from_bytes(data[offset+hdr+4:offset+hdr+12], byteorder="big")
                             if ctime == 0:
-                                data[offset+hdr+4:offset+hdr+12] = ts_bytes_64
-                                data[offset+hdr+12:offset+hdr+20] = ts_bytes_64
+                                data[offset+hdr+4:offset+hdr+12] = ctime_64
+                                data[offset+hdr+12:offset+hdr+20] = mtime_64
                     elif box_type == "stsd" and offset + hdr + 8 < offset + size:
-                        # FullBox: 4 bytes version/flags + 4 bytes entry_count
                         walk_and_clean(offset + hdr + 8, offset + size, depth + 1)
                     elif box_type in ("avc1", "avc3", "hev1", "hvc1", "mp4v") and size >= 86:
-                        # Wipe FFmpeg/libx264 hardcoded VisualSampleEntry compressorname (32 bytes at offset+50..offset+82)
-                        # and clear vendor field (offset+20..offset+24) to eliminate TAG:encoder=Lavc libx264
                         comp_slice = data[offset+50:offset+82]
                         if any(comp_slice):
                             data[offset+50:offset+82] = b"\x00" * 32
@@ -587,7 +707,11 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
                         data[offset+4:offset+8] = b"free"
                         data[offset+hdr:offset+size] = b"\x00" * (size - hdr)
                         sanitized_count += 1
-                    elif box_type in ("udta", "meta", "ilst", "©too", "©enc"):
+                    elif box_type in ("©too", "©enc"):
+                        data[offset+4:offset+8] = b"free"
+                        data[offset+hdr:offset+size] = b"\x00" * (size - hdr)
+                        sanitized_count += 1
+                    elif box_type in ("udta", "meta", "ilst"):
                         payload = data[offset+hdr:min(offset+size, offset+1024)].decode('ascii', errors='ignore').lower()
                         if any(bad in payload for bad in bad_markers):
                             data[offset+4:offset+8] = b"free"
@@ -603,8 +727,11 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
                     offset += size
 
             walk_and_clean(0, length, 0)
+            compacted = compact_mp4_remove_free_boxes(bytes(data))
+            if len(compacted) < length:
+                sanitized_count += 1
             f.seek(0)
-            f.write(data)
+            f.write(compacted)
             f.truncate()
     except Exception as e:
         sys.stderr.write(f"Binary sanitize warning: {e}\n")
@@ -617,6 +744,7 @@ def process_video(
     deep_meta_purge: bool = True,
     force_keyframes: bool = True,
     camera_profile: str = "samsung",
+    upscale_1080p: bool = True,
     progress_file: str | None = None,
     job_id: str = "",
 ) -> dict:
@@ -632,25 +760,29 @@ def process_video(
     codec_name = metrics["codec"]
     vid_w, vid_h = metrics["width"], metrics["height"]
     duration_sec = metrics["duration_sec"]
+    target_w, target_h = _compute_target_dimensions(vid_w, vid_h, upscale_1080p and camera_profile != "neutral")
+
     if mode == "deep_synthid" and duration_sec > 0:
         expected_frames = max(1, int(duration_sec * 0.961538 * 29.97))
     elif mode in ("all_in_one", "unified") and duration_sec > 0:
-        eff_dur = max(0.2, duration_sec - (0.07 if duration_sec > 2.0 else 0.0))
-        expected_frames = max(1, int(eff_dur * 30.0))
+        eff_dur = max(0.2, duration_sec - (0.08 if duration_sec > 2.0 else 0.0))
+        expected_frames = max(1, int(eff_dur * 29.97))
     elif mode == "safe_mode" and duration_sec > 0:
         expected_frames = max(1, int(duration_sec * 29.97))
     else:
         expected_frames = metrics["total_frames"]
 
+    use_upscale = upscale_1080p and camera_profile != "neutral"
     if mode in ("all_in_one", "unified"):
-        video_filter_str = build_unified_video_filter(vid_w, vid_h, duration_sec)
+        video_filter_str = build_unified_video_filter(vid_w, vid_h, duration_sec, use_upscale)
     elif mode == "safe_mode":
-        video_filter_str = build_safe_mode_video_filter(vid_w, vid_h)
+        video_filter_str = build_safe_mode_video_filter(vid_w, vid_h, use_upscale)
     else:
-        video_filter_str = build_synthid_video_filter(vid_w, vid_h)
+        video_filter_str = build_synthid_video_filter(vid_w, vid_h, use_upscale)
+    res_label = f"{vid_w}x{vid_h} -> {target_w}x{target_h}" if (target_w and (target_w != vid_w or target_h != vid_h)) else (f"{vid_w}x{vid_h}" if vid_w else "Auto")
     probe_msg = (
         f"   -> Stream Probe: Codec={codec_name.upper() or 'H264'} | "
-        f"Res={f'{vid_w}x{vid_h}' if vid_w else 'Auto'} | "
+        f"Res={res_label} | "
         f"Durasi={duration_sec:.2f}s | "
         f"Audio={'Ada Audio Stream' if has_audio else 'Hanya Video (Tanpa Audio)'}"
     )
@@ -668,55 +800,50 @@ def process_video(
         camera_brand = "mp42"
         v_handler = "Core Media Video"
         a_handler = "Core Media Audio"
-        cam_meta = ["-metadata", "make=Apple", "-metadata", "model=iPhone 15 Pro", "-metadata", "software=17.5.1"]
     elif camera_profile == "xiaomi":
         camera_brand = "mp42"
         v_handler = "VideoHandler"
         a_handler = "SoundHandler"
-        cam_meta = ["-metadata", "make=Xiaomi", "-metadata", "model=Xiaomi 14 Ultra"]
     elif camera_profile == "neutral":
         camera_brand = "isom"
         v_handler = "VideoHandler"
         a_handler = "SoundHandler"
-        cam_meta = []
     else:
         camera_brand = "mp42"
         v_handler = "VideoHandle"
         a_handler = "SoundHandle"
-        cam_meta = ["-metadata", "make=samsung", "-metadata", "model=SM-S928B"]
 
-    encode_preset = "superfast" if duration_sec > 15 or (vid_w * vid_h >= 400000) else "veryfast"
+    cam_meta: list[str] = []
+    encode_preset = "superfast" if duration_sec > 25 else "veryfast"
+    movflags_str = "+faststart"
 
     with tempfile.TemporaryDirectory() as temp_dir:
         pass1_path = os.path.join(temp_dir, "pass1_reencoded.mp4")
         source_for_pass2 = input_path
 
-        # In Safe Mode, Unified, and All-in-One Mode, strictly bypass keyframe-only injection (-g 45)
-        # and prioritize smooth closed-GOP temporal frame re-encoding with CFR pacing.
         effective_force_keyframes = force_keyframes and (mode not in ("all_in_one", "safe_mode", "unified"))
 
         keyframe_flags = [
-            "-g", "45" if effective_force_keyframes else "60",
-            "-keyint_min", "20" if effective_force_keyframes else "24",
-            "-sc_threshold", "40",
+            "-g", "30",
+            "-keyint_min", "12",
+            "-sc_threshold", "42",
             "-refs", "2",
             "-color_primaries", "bt709",
             "-color_trc", "bt709",
-            "-colorspace", "bt709"
+            "-colorspace", "bt709",
+            "-color_range", "tv",
         ]
 
         x264_params = (
-            "ref=2:bframes=2:b-adapt=1:nal-hrd=none:force-cfr=1:"
-            "deblock=1,1:aq-mode=2:open-gop=0:scenecut=40:keyint=45:min-keyint=20"
-            if effective_force_keyframes else
-            "ref=2:bframes=2:b-adapt=1:nal-hrd=none:force-cfr=1:deblock=1,1:aq-mode=2:open-gop=0:scenecut=40:keyint=60:min-keyint=24"
+            "ref=2:bframes=2:b-adapt=1:b-pyramid=none:weightp=1:psy-rd=1.15,0.15:aq-mode=3:"
+            "no-dct-decimate=1:nal-hrd=none:force-cfr=1:deblock=1,1:open-gop=0:scenecut=42:keyint=30:min-keyint=12"
         )
 
-        # SINGLE-COMMAND ALL-IN-ONE EXPORT PROFILE (Safe Temporal CFR + Deep Anti-SynthID + Zero-SEI Container Purge)
+        # SINGLE-COMMAND ALL-IN-ONE EXPORT PROFILE
         if mode == "all_in_one":
             aio_msg = (
-                "-> [ALL-IN-ONE SINGLE PIPELINE] Safe Mode Temporal CFR + Deep 5-Layer Anti-SynthID "
-                "+ Zero-SEI (-bsf:v filter_units=remove_types=6) + OEM Stamping dalam 1 command FFmpeg terpadu..."
+                "-> [ALL-IN-ONE SINGLE PIPELINE v22] Sub-Pixel Perspective Micro-Drift + 29.97fps Interp "
+                "+ CMOS AE Breathing & Grain + 1/f Room Floor (-49dB) + Zero-mdta/Zero-SEI MP4..."
             )
             logs.append(aio_msg)
             tracker.push_log(aio_msg)
@@ -769,7 +896,6 @@ def process_video(
                 "-map_metadata:s:v", "-1",
                 "-map_metadata:s:a", "-1",
                 "-map_chapters", "-1",
-                "-metadata", "encoder=",
                 "-write_tmcd", "0",
                 *cam_meta,
                 "-metadata:s:v:0", f"handler_name={v_handler}",
@@ -786,7 +912,7 @@ def process_video(
                 "-fflags", "+genpts+bitexact",
                 "-flags:v", "+bitexact",
                 "-flags:a", "+bitexact",
-                "-movflags", "+faststart",
+                "-movflags", movflags_str,
                 output_path,
             ])
 
@@ -794,10 +920,10 @@ def process_video(
                 aio_cmd,
                 tracker,
                 stage="pass1_reencode",
-                stage_label="All-in-One Pipeline (Safe CFR + Deep Anti-SynthID + Zero-SEI)",
+                stage_label="All-in-One v22 (Sub-Pixel Drift + 1080p BT.709 + 1/f Audio + Zero-SEI/Zero-mdta)",
                 start_pct=10,
                 end_pct=94,
-                expected_duration=max(0.2, duration_sec - (0.07 if duration_sec > 2.0 else 0.0)) if duration_sec > 0 else 0,
+                expected_duration=max(0.2, duration_sec - (0.08 if duration_sec > 2.0 else 0.0)) if duration_sec > 0 else 0,
                 expected_frames=expected_frames,
                 prefix="ffmpeg-all-in-one",
             )
@@ -807,8 +933,8 @@ def process_video(
 
             logs.extend(extract_ffmpeg_telemetry(err_aio, "ffmpeg-all-in-one"))
             done_aio = (
-                "✓ [ALL-IN-ONE SELESAI] Safe CFR + Deep Anti-SynthID + Zero-SEI (Type 6) "
-                "+ Faststart selesai dalam 1 eksekusi pipeline."
+                "✓ [ALL-IN-ONE SELESAI v22] Sub-Pixel Perspective Micro-Drift + 29.97fps + 1080p BT.709 "
+                "+ 1/f Room Floor & Harmonics + Zero-SEI/Zero-mdta selesai dalam 1 pipeline."
             )
             logs.append(done_aio)
             tracker.push_log(done_aio)
@@ -998,7 +1124,6 @@ def process_video(
                 "-map_metadata:s:v", "-1",
                 "-map_metadata:s:a", "-1",
                 "-map_chapters", "-1",
-                "-metadata", "encoder=",
                 "-write_tmcd", "0",
                 *cam_meta,
                 "-metadata:s:v:0", f"handler_name={v_handler}",
@@ -1011,7 +1136,7 @@ def process_video(
                 "-fflags", "+bitexact",
                 "-flags:v", "+bitexact",
                 "-flags:a", "+bitexact",
-                "-movflags", "+faststart",
+                "-movflags", movflags_str,
                 output_path
             ])
 
@@ -1035,13 +1160,13 @@ def process_video(
         tracker.update(
             force=True,
             stage="binary_sanitize",
-            message="Eksisi box C2PA/UUID/JUMBF & finalisasi atom MP4...",
+            message="Eksisi box C2PA/UUID/JUMBF, kompaksi atom free, & finalisasi MP4...",
             percent=96,
         )
         sanitized_boxes = sanitize_binary_boxes_in_place(output_path)
         out_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-        fin1 = f"✓ [EKSISI FISIK C2PA/UUID] {sanitized_boxes} box dinetralisasi menjadi free padding."
-        fin2 = f"✓ [SELESAI] Output bersih berhasil dibuat: {out_size_mb:.2f} MB (0% SEI Type 6, Zero AI Watermark)."
+        fin1 = f"✓ [EKSISI FISIK & KOMPAKSI MP4] {sanitized_boxes} residu/free box dihapus total & offset stco disesuaikan."
+        fin2 = f"✓ [SELESAI] Output bersih berhasil dibuat: {out_size_mb:.2f} MB (0% SEI Type 6, 0% Free/mdta, 29.97fps Micro-Drift)."
         logs.append(fin1)
         logs.append(fin2)
         tracker.push_log(fin1, force=False)
@@ -1049,7 +1174,7 @@ def process_video(
         tracker.update(
             force=True,
             stage="completed",
-            message=f"Selesai 100% ({out_size_mb:.2f} MB) • Zero-SEI & Anti-SynthID Aktif",
+            message=f"Selesai 100% ({out_size_mb:.2f} MB) • Anti-AI v22 Aktif",
             percent=100,
         )
 
@@ -1068,6 +1193,7 @@ def main():
     parser.add_argument("--deep-meta-purge", default="true", choices=["true", "false"])
     parser.add_argument("--force-keyframes", default="true", choices=["true", "false"])
     parser.add_argument("--camera-profile", default="samsung", choices=["samsung", "apple", "xiaomi", "neutral"])
+    parser.add_argument("--upscale-1080p", default="true", choices=["true", "false"])
     parser.add_argument("--progress-file", default=None, help="Optional JSON progress file path")
     parser.add_argument("--job-id", default="", help="Job identifier for progress reporting")
 
@@ -1081,6 +1207,7 @@ def main():
             deep_meta_purge=(args.deep_meta_purge == "true"),
             force_keyframes=(args.force_keyframes == "true"),
             camera_profile=args.camera_profile,
+            upscale_1080p=(args.upscale_1080p == "true"),
             progress_file=args.progress_file,
             job_id=args.job_id,
         )

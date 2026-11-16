@@ -235,6 +235,7 @@ async function runPythonCleaner(
   deepMetaPurge: boolean,
   forceKeyframeInsertion: boolean,
   cameraProfile: string,
+  upscale1080p: boolean,
   jobId: string,
   progressFilePath?: string
 ): Promise<{ success: boolean; output_path?: string; size_bytes?: number; logs: string[]; error?: string }> {
@@ -255,6 +256,8 @@ async function runPythonCleaner(
     forceKeyframeInsertion ? 'true' : 'false',
     '--camera-profile',
     cameraProfile,
+    '--upscale-1080p',
+    upscale1080p ? 'true' : 'false',
   ];
   if (progressFilePath) {
     args.push('--progress-file', progressFilePath, '--job-id', jobId);
@@ -322,134 +325,122 @@ async function runPythonCleaner(
   });
 }
 
+function computeTargetDimensions(width = 0, height = 0, upscale1080p = true): [number, number] {
+  if (width < 64 || height < 64) return [0, 0];
+  const evenW = Math.floor(width / 2) * 2;
+  const evenH = Math.floor(height / 2) * 2;
+  if (!upscale1080p) return [evenW, evenH];
+  const shortSide = Math.min(evenW, evenH);
+  if (shortSide < 1080) {
+    const scaleFactor = 1080 / shortSide;
+    const targetW = Math.floor(Math.round(evenW * scaleFactor) / 2) * 2;
+    const targetH = Math.floor(Math.round(evenH * scaleFactor) / 2) * 2;
+    return [targetW, targetH];
+  }
+  return [evenW, evenH];
+}
+
 /**
- * Multi-Domain Anti-SynthID Pixel Watermark Disruption Filtergraph:
- * - Temporal phase & cadence desynchronization (0.992x PTS shift + tmix + 29.97fps camera rate)
- * - 3D Spatiotemporal denoiser (hqdn3d) attenuating spread-spectrum watermark carriers
- * - Non-linear radial optical distortion (lenscorrection) + micro-rotation (rotate) + crop + Lanczos rescale
- * - Cross-plane chroma shift (chromashift) + hue/gamma remapping + camera sensor grain (noise)
+ * Multi-Domain Anti-SynthID Pixel Watermark Disruption Filtergraph v21:
+ * - Motion-interpolated 29.97fps NTSC camera cadence (eliminates 4:1 duplicate pulldown)
+ * - Native-resolution optical warp & handheld breathing -> single-pass Lanczos 1080p BT.709 scale
+ * - Cross-plane chroma shift, CAS sharpening, and luma/chroma CMOS sensor grain
  */
-function buildSynthIdVideoFilter(width = 0, height = 0): string {
-  const hasExplicitDims = width >= 64 && height >= 64;
-  const targetW = hasExplicitDims ? Math.floor(width / 2) * 2 : 0;
-  const targetH = hasExplicitDims ? Math.floor(height / 2) * 2 : 0;
-  const preScale = hasExplicitDims
-    ? []
-    : ['scale=trunc(iw*1.05/2)*2:trunc(ih*1.05/2)*2:flags=bicubic'];
-  const scaleStep = hasExplicitDims
-    ? `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd`
-    : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd';
+function buildSynthIdVideoFilter(width = 0, height = 0, upscale1080p = true): string {
+  const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
+  const scaleStep =
+    targetW >= 64 && targetH >= 64
+      ? `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
+      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
 
   return [
     'setpts=0.961538*(PTS-STARTPTS)',
-    'fps=fps=30000/1001',
+    'framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0',
     'format=yuv420p',
-    'hqdn3d=1.8:1.4:2.8:2.0',
-    ...preScale,
-    'lenscorrection=cx=0.495:cy=0.505:k1=-0.028:k2=0.009',
-    'rotate=0.009:ow=iw:oh=ih:bilinear=1',
-    'crop=trunc(iw*0.95/2)*2:trunc(ih*0.95/2)*2:trunc(iw*0.024)+trunc(1.8*sin(t*1.9)):trunc(ih*0.024)+trunc(1.8*cos(t*1.4))',
+    'hqdn3d=0.9:0.7:1.1:0.9',
+    'lenscorrection=cx=0.495:cy=0.505:k1=-0.022:k2=0.007',
+    'perspective=x0=W*0.022+W*0.0022*sin(on*0.19)+W*0.0010*cos(on*0.37):y0=H*0.022+H*0.0016*cos(on*0.16)+H*0.0009*sin(on*0.31):x1=W*0.978+W*0.0022*sin(on*0.19+0.4)+W*0.0009*cos(on*0.33):y1=H*0.022+H*0.0016*cos(on*0.16-0.3)+H*0.0009*sin(on*0.29):x2=W*0.022+W*0.0022*sin(on*0.19-0.3)+W*0.0010*cos(on*0.35):y2=H*0.978+H*0.0016*cos(on*0.16+0.4)+H*0.0009*sin(on*0.27):x3=W*0.978+W*0.0022*sin(on*0.19+0.2)+W*0.0009*cos(on*0.31):y3=H*0.978+H*0.0016*cos(on*0.16+0.2)+H*0.0009*sin(on*0.34):interpolation=linear:sense=source:eval=frame',
     scaleStep,
+    'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
     'chromashift=cbh=1:cbv=0:crh=-1:crv=0',
-    'colorchannelmixer=rr=1.014:rg=-0.011:rb=-0.003:gr=-0.007:gg=1.009:gb=-0.002:br=-0.004:bg=-0.009:bb=1.013',
-    'eq=contrast=1.025:brightness=-0.003:saturation=1.02:gamma=1.015',
-    'unsharp=5:5:0.24:3:3:0.0',
-    'vignette=angle=PI/7',
-    'noise=c0s=1.5:c1s=0:c2s=0:allf=t',
+    'colorchannelmixer=rr=1.011:rg=-0.008:rb=-0.003:gr=-0.005:gg=1.007:gb=-0.002:br=-0.003:bg=-0.007:bb=1.010',
+    'eq=contrast=1.02:brightness=-0.002+0.004*sin(t*4.7+0.6*cos(t*8.3)):saturation=1.02:gamma=1.012:eval=frame',
+    'cas=strength=0.18',
+    'vignette=angle=PI/8',
+    'noise=c0s=2.8:c1s=1.5:c2s=1.5:allf=t+u',
     'setsar=1',
   ].join(',');
 }
 
-function buildSafeModeVideoFilter(width = 0, height = 0): string {
-  const hasExplicitDims = width >= 64 && height >= 64;
-  const targetW = hasExplicitDims ? Math.floor(width / 2) * 2 : 0;
-  const targetH = hasExplicitDims ? Math.floor(height / 2) * 2 : 0;
-  const upW = hasExplicitDims ? Math.ceil((targetW * 1.03) / 2) * 2 : 0;
-  const upH = hasExplicitDims ? Math.ceil((targetH * 1.03) / 2) * 2 : 0;
-  const geomSteps = hasExplicitDims
-    ? [
-        `scale=${upW}:${upH}:flags=bicubic`,
-        `crop=${targetW}:${targetH}:(iw-${targetW})/2:(ih-${targetH})/2`,
-        `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd`,
-      ]
-    : [
-        'scale=trunc(iw*1.03/2)*2:trunc(ih*1.03/2)*2:flags=bicubic',
-        'crop=trunc(iw/1.03/2)*2:trunc(ih/1.03/2)*2',
-        'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd',
-      ];
+function buildSafeModeVideoFilter(width = 0, height = 0, upscale1080p = true): string {
+  const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
+  const geomSteps =
+    targetW >= 64 && targetH >= 64
+      ? [
+          'perspective=x0=W*0.015+W*0.0015*sin(on*0.17)+W*0.0007*cos(on*0.33):y0=H*0.015+H*0.0011*cos(on*0.15)+H*0.0006*sin(on*0.29):x1=W*0.985+W*0.0015*sin(on*0.17+0.3)+W*0.0007*cos(on*0.31):y1=H*0.015+H*0.0011*cos(on*0.15-0.2)+H*0.0006*sin(on*0.27):x2=W*0.015+W*0.0015*sin(on*0.17-0.2)+W*0.0007*cos(on*0.35):y2=H*0.985+H*0.0011*cos(on*0.15+0.3)+H*0.0006*sin(on*0.25):x3=W*0.985+W*0.0015*sin(on*0.17+0.2)+W*0.0007*cos(on*0.29):y3=H*0.985+H*0.0011*cos(on*0.15+0.2)+H*0.0006*sin(on*0.31):interpolation=linear:sense=source:eval=frame',
+          `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`,
+        ]
+      : [
+          'crop=trunc(iw*0.97/2)*2:trunc(ih*0.97/2)*2',
+          'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv',
+        ];
 
   return [
     'setpts=PTS-STARTPTS',
-    'fps=fps=30000/1001:round=near',
+    'framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0',
     'format=yuv420p',
-    'hqdn3d=1.2:1.0:2.2:1.6',
+    'hqdn3d=0.8:0.6:1.0:0.8',
     ...geomSteps,
+    'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
     'chromashift=cbh=1:cbv=0:crh=-1:crv=0',
     'colorchannelmixer=rr=1.008:rg=-0.006:rb=-0.002:gr=-0.004:gg=1.006:gb=-0.002:br=-0.002:bg=-0.006:bb=1.008',
-    'eq=contrast=1.015:brightness=-0.002:saturation=1.015:gamma=1.01',
-    'unsharp=5:5:0.20:3:3:0.0',
-    'noise=c0s=1.3:c1s=0:c2s=0:allf=t',
+    'eq=contrast=1.015:brightness=-0.002+0.0035*sin(t*4.5+0.5*cos(t*7.9)):saturation=1.015:gamma=1.01:eval=frame',
+    'cas=strength=0.16',
+    'noise=c0s=2.4:c1s=1.3:c2s=1.3:allf=t+u',
     'setsar=1',
   ].join(',');
 }
 
-function buildUnifiedVideoFilter(width = 0, height = 0, durationSec = 0): string {
-  const hasExplicitDims = width >= 64 && height >= 64;
-  const targetW = hasExplicitDims ? Math.floor(width / 2) * 2 : 0;
-  const targetH = hasExplicitDims ? Math.floor(height / 2) * 2 : 0;
-  const upW = hasExplicitDims ? Math.ceil((targetW * 1.06) / 2) * 2 : 0;
-  const upH = hasExplicitDims ? Math.ceil((targetH * 1.06) / 2) * 2 : 0;
-  const trimPrefix = durationSec > 2.0 ? 'trim=start=0.07,setpts=PTS-STARTPTS' : 'setpts=PTS-STARTPTS';
-  const geomSteps = hasExplicitDims
-    ? [
-        `scale=${upW}:${upH}:flags=bicubic`,
-        'lenscorrection=cx=0.493:cy=0.507:k1=-0.025:k2=0.008',
-        'rotate=0.0065:ow=iw:oh=ih:bilinear=1',
-        `crop=${targetW}:${targetH}:(iw-${targetW})*0.56:(ih-${targetH})*0.44`,
-        `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd`,
-      ]
-    : [
-        'scale=trunc(iw*1.06/2)*2:trunc(ih*1.06/2)*2:flags=bicubic',
-        'lenscorrection=cx=0.493:cy=0.507:k1=-0.025:k2=0.008',
-        'rotate=0.0065:ow=iw:oh=ih:bilinear=1',
-        'crop=trunc(iw/1.06/2)*2:trunc(ih/1.06/2)*2:(iw-out_w)*0.56:(ih-out_h)*0.44',
-        'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd',
-      ];
+function buildUnifiedVideoFilter(width = 0, height = 0, durationSec = 0, upscale1080p = true): string {
+  const trimPrefix = durationSec > 2.0 ? 'trim=start=0.08,setpts=PTS-STARTPTS' : 'setpts=PTS-STARTPTS';
+  const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
+  const scaleStep =
+    targetW >= 64 && targetH >= 64
+      ? `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
+      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
 
   return [
     trimPrefix,
-    'fps=fps=30:round=near',
+    'framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0',
     'format=yuv420p',
-    'hqdn3d=2.4:2.0:3.2:2.6',
-    ...geomSteps,
+    'hqdn3d=0.8:0.6:1.0:0.8',
+    'lenscorrection=cx=0.494:cy=0.506:k1=-0.020:k2=0.006',
+    'perspective=x0=W*0.022+W*0.0022*sin(on*0.19)+W*0.0010*cos(on*0.37):y0=H*0.022+H*0.0016*cos(on*0.16)+H*0.0009*sin(on*0.31):x1=W*0.978+W*0.0022*sin(on*0.19+0.4)+W*0.0009*cos(on*0.33):y1=H*0.022+H*0.0016*cos(on*0.16-0.3)+H*0.0009*sin(on*0.29):x2=W*0.022+W*0.0022*sin(on*0.19-0.3)+W*0.0010*cos(on*0.35):y2=H*0.978+H*0.0016*cos(on*0.16+0.4)+H*0.0009*sin(on*0.27):x3=W*0.978+W*0.0022*sin(on*0.19+0.2)+W*0.0009*cos(on*0.31):y3=H*0.978+H*0.0016*cos(on*0.16+0.2)+H*0.0009*sin(on*0.34):interpolation=linear:sense=source:eval=frame',
+    scaleStep,
+    'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
     'chromashift=cbh=1:cbv=0:crh=-1:crv=0',
-    'hue=h=1.4:s=1.015',
-    'colorchannelmixer=rr=1.011:rg=-0.008:rb=-0.003:gr=-0.005:gg=1.007:gb=-0.002:br=-0.003:bg=-0.007:bb=1.010',
-    'eq=contrast=1.018:brightness=-0.002:saturation=1.015:gamma=1.012',
-    'unsharp=5:5:0.16:3:3:0.0',
-    'vignette=angle=PI/8',
-    'noise=c0s=1.2:c1s=0:c2s=0:allf=t',
+    'hue=h=1.1:s=1.015',
+    'colorchannelmixer=rr=1.009:rg=-0.007:rb=-0.002:gr=-0.004:gg=1.006:gb=-0.002:br=-0.003:bg=-0.006:bb=1.009',
+    'eq=contrast=1.015:brightness=-0.002+0.004*sin(t*4.7+0.6*cos(t*8.3)):saturation=1.015:gamma=1.010:eval=frame',
+    'cas=strength=0.16',
+    'vignette=angle=PI/9',
+    'noise=c0s=2.8:c1s=1.5:c2s=1.5:allf=t+u',
     'setsar=1',
   ].join(',');
 }
 
 /**
- * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph:
- * - True dual-seed uncorrelated pink room ambiance (no static white hiss, healthy 0.38Hz breathing floor)
- * - Synced rubberband pitch/formant & 1.04x tempo matching video 0.961538x PTS shift
- * - Requires -cutoff 20200 during AAC encoding to prevent vocoder-style >16kHz spectral cliffs
+ * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph v22:
+ * - True 1/f indoor pink room ambiance (-49dB natural floor, zero synthetic >12.5kHz hiss shelf bump)
+ * - Speech-correlated aexciter (>14kHz/17kHz air) + 0.08s start trim matching video trim
  */
 function buildSynthIdAudioFilterComplex(voiceLabel = '[0:a]', outLabel = '[aout]'): string {
   return [
-    'anoisesrc=color=pink:amplitude=0.00042:sample_rate=48000:seed=104729[pL]',
-    'anoisesrc=color=pink:amplitude=0.00042:sample_rate=48000:seed=224737[pR]',
-    '[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo]',
-    'anoisesrc=color=white:amplitude=0.0132:sample_rate=48000:seed=319993[aL]',
-    'anoisesrc=color=white:amplitude=0.0132:sample_rate=48000:seed=492871[aR]',
-    '[aL][aR]amerge=inputs=2,highpass=f=14100,highpass=f=14100,lowpass=f=20200[room_hi]',
-    '[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.38:d=0.20,volume=0.88[room]',
-    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,afftdn=nr=11:nf=-36:tn=1,rubberband=tempo=1.04:pitch=0.966:formant=shifted,highpass=f=65,equalizer=f=185:t=q:w=1.0:g=1.4,equalizer=f=3400:t=q:w=1.2:g=-1.1,highshelf=f=9500:g=0.8,aecho=0.94:0.90:15|26:0.045|0.025,extrastereo=m=1.28,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-26dB:ratio=2.6:attack=8:release=120,asplit=2[vdry][ver_in]`,
-    '[ver_in]highpass=f=280,lowpass=f=4800,adelay=8|19,volume=0.13[ver]',
+    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL]',
+    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR]',
+    '[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room]',
+    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,afftdn=nr=7:nf=-42:tn=1,rubberband=tempo=1.04:pitch=0.968:formant=shifted,highpass=f=70,equalizer=f=195:t=q:w=1.0:g=1.2,equalizer=f=3200:t=q:w=1.4:g=-0.9,aexciter=level_in=1:level_out=1:amount=2.8:drive=5.0:blend=0:freq=6800:ceil=19600,aecho=0.94:0.90:15|25:0.038|0.020,extrastereo=m=1.26,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,asplit=2[vdry][ver_in]`,
+    '[ver_in]highpass=f=280,lowpass=f=5000,adelay=8|18,volume=0.11[ver]',
     '[vdry][ver]amix=inputs=2:normalize=0[voice]',
     `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95${outLabel}`,
   ].join(';');
@@ -457,32 +448,24 @@ function buildSynthIdAudioFilterComplex(voiceLabel = '[0:a]', outLabel = '[aout]
 
 function buildSafeModeAudioFilterComplex(voiceLabel = '[0:a]', outLabel = '[aout]'): string {
   return [
-    'anoisesrc=color=pink:amplitude=0.00040:sample_rate=48000:seed=104729[pL]',
-    'anoisesrc=color=pink:amplitude=0.00040:sample_rate=48000:seed=224737[pR]',
-    '[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo]',
-    'anoisesrc=color=white:amplitude=0.0128:sample_rate=48000:seed=319993[aL]',
-    'anoisesrc=color=white:amplitude=0.0128:sample_rate=48000:seed=492871[aR]',
-    '[aL][aR]amerge=inputs=2,highpass=f=14100,highpass=f=14100,lowpass=f=20200[room_hi]',
-    '[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.36:d=0.18,volume=0.86[room]',
-    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,afftdn=nr=9:nf=-36:tn=1,rubberband=tempo=1.0:pitch=0.985:formant=shifted,highpass=f=65,equalizer=f=185:t=q:w=1.0:g=1.2,equalizer=f=3400:t=q:w=1.2:g=-0.9,highshelf=f=9500:g=0.7,aecho=0.94:0.90:14|23:0.035|0.020,extrastereo=m=1.22,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-26dB:ratio=2.4:attack=8:release=120,asplit=2[vdry][ver_in]`,
-    '[ver_in]highpass=f=280,lowpass=f=4800,adelay=6|15,volume=0.10[ver]',
+    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL]',
+    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR]',
+    '[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room]',
+    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,afftdn=nr=7:nf=-42:tn=1,rubberband=tempo=1.0:pitch=0.984:formant=shifted,highpass=f=70,equalizer=f=195:t=q:w=1.0:g=1.2,equalizer=f=3200:t=q:w=1.4:g=-0.8,aexciter=level_in=1:level_out=1:amount=2.7:drive=4.8:blend=0:freq=6800:ceil=19600,aecho=0.94:0.90:14|23:0.035|0.019,extrastereo=m=1.22,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,asplit=2[vdry][ver_in]`,
+    '[ver_in]highpass=f=280,lowpass=f=5000,adelay=6|15,volume=0.10[ver]',
     '[vdry][ver]amix=inputs=2:normalize=0[voice]',
     `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95${outLabel}`,
   ].join(';');
 }
 
 function buildUnifiedAudioFilterComplex(voiceLabel = '[0:a]', outLabel = '[aout]', durationSec = 0): string {
-  const atrimPrefix = durationSec > 2.0 ? 'atrim=start=0.07,asetpts=PTS-STARTPTS,' : 'asetpts=PTS-STARTPTS,';
+  const atrimPrefix = durationSec > 2.0 ? 'atrim=start=0.08,asetpts=PTS-STARTPTS,' : 'asetpts=PTS-STARTPTS,';
   return [
-    'anoisesrc=color=pink:amplitude=0.00032:sample_rate=48000:seed=104729[pL]',
-    'anoisesrc=color=pink:amplitude=0.00032:sample_rate=48000:seed=224737[pR]',
-    '[pL][pR]amerge=inputs=2,highpass=f=160,lowpass=f=10000,equalizer=f=450:t=q:w=0.7:g=-5[room_lo]',
-    'anoisesrc=color=white:amplitude=0.0138:sample_rate=48000:seed=319993[aL]',
-    'anoisesrc=color=white:amplitude=0.0138:sample_rate=48000:seed=492871[aR]',
-    '[aL][aR]amerge=inputs=2,highpass=f=14200,highpass=f=14200,lowpass=f=20200[room_hi]',
-    '[room_lo][room_hi]amix=inputs=2:normalize=0,tremolo=f=0.38:d=0.20,volume=0.85[room]',
-    `${voiceLabel}${atrimPrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,afftdn=nr=11:nf=-36:tn=1,rubberband=tempo=1.0:pitch=0.974:formant=shifted,highpass=f=65,equalizer=f=185:t=q:w=1.0:g=1.4,equalizer=f=2400:t=q:w=1.8:g=-1.1,equalizer=f=3400:t=q:w=1.2:g=-1.0,highshelf=f=9500:g=0.8,aecho=0.94:0.90:15|25:0.042|0.024,extrastereo=m=1.26,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-26dB:ratio=2.5:attack=8:release=120,asplit=2[vdry][ver_in]`,
-    '[ver_in]highpass=f=280,lowpass=f=4800,adelay=7|17,volume=0.12[ver]',
+    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL]',
+    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR]',
+    '[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room]',
+    `${voiceLabel}${atrimPrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,afftdn=nr=7:nf=-42:tn=1,rubberband=tempo=1.0:pitch=0.976:formant=shifted,highpass=f=70,equalizer=f=195:t=q:w=1.0:g=1.2,equalizer=f=2600:t=q:w=1.5:g=-0.8,aexciter=level_in=1:level_out=1:amount=2.8:drive=5.0:blend=0:freq=6800:ceil=19600,aecho=0.94:0.90:14|24:0.036|0.019,extrastereo=m=1.24,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,asplit=2[vdry][ver_in]`,
+    '[ver_in]highpass=f=280,lowpass=f=5000,adelay=7|17,volume=0.11[ver]',
     '[vdry][ver]amix=inputs=2:normalize=0[voice]',
     `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95${outLabel}`,
   ].join(';');
@@ -511,8 +494,6 @@ const SERVER_FFMPEG_SEI_STRIP_FLAGS: string[] = [
   '-1',
   '-map_metadata:s:a',
   '-1',
-  '-metadata',
-  'encoder=',
   '-bsf:v',
   'filter_units=remove_types=6',
   '-write_tmcd',
@@ -559,8 +540,6 @@ const DEEP_META_PURGE_STREAM_COPY_FLAGS: string[] = [
   '-1',
   '-map_chapters',
   '-1',
-  '-metadata',
-  'encoder=',
   '-write_tmcd',
   '0',
   '-metadata:s:v:0',
@@ -579,10 +558,133 @@ const DEEP_META_PURGE_STREAM_COPY_FLAGS: string[] = [
   '+faststart',
 ];
 
+function compactMp4RemoveFreeBoxes(buf: Buffer): Buffer {
+  const containerTypes = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'edts', 'dinf', 'udta', 'ilst']);
+  const dec = new TextDecoder('ascii', { fatal: false });
+  const removedRanges: Array<{ pos: number; size: number }> = [];
+
+  const rebuildRange = (start: number, end: number, depth: number): Buffer => {
+    const chunks: Buffer[] = [];
+    let pos = start;
+    while (pos + 8 <= end) {
+      let sz = buf.readUInt32BE(pos);
+      const tp = dec.decode(buf.subarray(pos + 4, pos + 8));
+      let hdr = 8;
+      if (sz === 1) {
+        if (pos + 16 > end) {
+          chunks.push(buf.subarray(pos, end));
+          break;
+        }
+        sz = Number(buf.readBigUInt64BE(pos + 8));
+        hdr = 16;
+      } else if (sz === 0) {
+        sz = end - pos;
+      }
+      if (sz < hdr || pos + sz > end) {
+        chunks.push(buf.subarray(pos, end));
+        break;
+      }
+
+      if (tp === 'free' || tp === 'skip') {
+        removedRanges.push({ pos, size: sz });
+        pos += sz;
+        continue;
+      }
+
+      if (tp === 'meta') {
+        const innerStart = pos + hdr + 4;
+        if (innerStart <= pos + sz) {
+          const childBytes = rebuildRange(innerStart, pos + sz, depth + 1);
+          const body = Buffer.concat([buf.subarray(pos + hdr, innerStart), childBytes]);
+          const hdrBuf = Buffer.allocUnsafe(8);
+          hdrBuf.writeUInt32BE(8 + body.length, 0);
+          hdrBuf.write(tp, 4, 4, 'ascii');
+          chunks.push(hdrBuf, body);
+        } else {
+          chunks.push(buf.subarray(pos, pos + sz));
+        }
+      } else if (containerTypes.has(tp) && depth < 6) {
+        const childBytes = rebuildRange(pos + hdr, pos + sz, depth + 1);
+        const hdrBuf = Buffer.allocUnsafe(8);
+        hdrBuf.writeUInt32BE(8 + childBytes.length, 0);
+        hdrBuf.write(tp, 4, 4, 'ascii');
+        chunks.push(hdrBuf, childBytes);
+      } else {
+        chunks.push(buf.subarray(pos, pos + sz));
+      }
+
+      pos += sz;
+    }
+    return Buffer.concat(chunks);
+  };
+
+  const rebuilt = Buffer.from(rebuildRange(0, buf.length, 0));
+  if (removedRanges.length === 0) {
+    return rebuilt;
+  }
+
+  const shiftForOffset = (origOff: number): number => {
+    let delta = 0;
+    for (const r of removedRanges) {
+      if (r.pos < origOff) delta += r.size;
+    }
+    return delta;
+  };
+
+  const fixOffsets = (start: number, end: number, depth: number) => {
+    if (depth > 7) return;
+    let pos = start;
+    while (pos + 8 <= end) {
+      let sz = rebuilt.readUInt32BE(pos);
+      const tp = dec.decode(rebuilt.subarray(pos + 4, pos + 8));
+      let hdr = 8;
+      if (sz === 1) {
+        if (pos + 16 > end) break;
+        sz = Number(rebuilt.readBigUInt64BE(pos + 8));
+        hdr = 16;
+      } else if (sz === 0) {
+        sz = end - pos;
+      }
+      if (sz < hdr || pos + sz > end) break;
+
+      if (tp === 'stco' && pos + hdr + 8 <= pos + sz) {
+        const cnt = rebuilt.readUInt32BE(pos + hdr + 4);
+        for (let i = 0; i < cnt; i++) {
+          const offPos = pos + hdr + 8 + i * 4;
+          if (offPos + 4 > pos + sz) break;
+          const val = rebuilt.readUInt32BE(offPos);
+          const delta = shiftForOffset(val);
+          if (delta > 0 && val > delta) {
+            rebuilt.writeUInt32BE(val - delta, offPos);
+          }
+        }
+      } else if (tp === 'co64' && pos + hdr + 8 <= pos + sz) {
+        const cnt = rebuilt.readUInt32BE(pos + hdr + 4);
+        for (let i = 0; i < cnt; i++) {
+          const offPos = pos + hdr + 8 + i * 8;
+          if (offPos + 8 > pos + sz) break;
+          const val = Number(rebuilt.readBigUInt64BE(offPos));
+          const delta = shiftForOffset(val);
+          if (delta > 0 && val > delta) {
+            rebuilt.writeBigUInt64BE(BigInt(val - delta), offPos);
+          }
+        }
+      } else if (containerTypes.has(tp)) {
+        fixOffsets(pos + hdr, pos + sz, depth + 1);
+      }
+      pos += sz;
+    }
+  };
+
+  fixOffsets(0, rebuilt.length, 0);
+  return rebuilt;
+}
+
 function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const decoder = new TextDecoder('ascii', { fatal: false });
-  const macEpochNow = Math.floor(Date.now() / 1000) + 2082844800 - 1860;
+  const macEpochCtime = Math.floor(Date.now() / 1000) + 2082844800 - 1620;
+  const macEpochMtime = macEpochCtime + 1;
   const badMarkers = [
     'c2pa',
     'jumb',
@@ -591,6 +693,7 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
     'google',
     'iso media file produced by',
     'created on:',
+    'mdta',
     'veo',
     'sora',
     'kling',
@@ -613,7 +716,6 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
     'live-tech',
     'com.ai.generator',
     'ai-studio',
-    'mdirappl',
   ];
 
   // 1. Recursive box neutralization + ftyp/timestamp authenticity normalization + stsd compressorname wipe
@@ -653,17 +755,17 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
         if (ver === 0 && offset + hdr + 12 <= offset + size) {
           const ctime = view.getUint32(offset + hdr + 4, false);
           if (ctime === 0) {
-            view.setUint32(offset + hdr + 4, macEpochNow >>> 0, false);
-            view.setUint32(offset + hdr + 8, macEpochNow >>> 0, false);
+            view.setUint32(offset + hdr + 4, macEpochCtime >>> 0, false);
+            view.setUint32(offset + hdr + 8, macEpochMtime >>> 0, false);
           }
         } else if (ver === 1 && offset + hdr + 20 <= offset + size) {
           const cHi = view.getUint32(offset + hdr + 4, false);
           const cLo = view.getUint32(offset + hdr + 8, false);
           if (cHi === 0 && cLo === 0) {
             view.setUint32(offset + hdr + 4, 0, false);
-            view.setUint32(offset + hdr + 8, macEpochNow >>> 0, false);
+            view.setUint32(offset + hdr + 8, macEpochCtime >>> 0, false);
             view.setUint32(offset + hdr + 12, 0, false);
-            view.setUint32(offset + hdr + 16, macEpochNow >>> 0, false);
+            view.setUint32(offset + hdr + 16, macEpochMtime >>> 0, false);
           }
         }
       } else if (type === 'stsd' && offset + hdr + 8 < offset + size) {
@@ -678,7 +780,13 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
         buf[offset + 6] = 0x65; // 'e'
         buf[offset + 7] = 0x65; // 'e'
         buf.fill(0x00, offset + hdr, offset + size);
-      } else if (['udta', 'meta', 'ilst', '©too', '©enc'].includes(type)) {
+      } else if (type === '©too' || type === '©enc') {
+        buf[offset + 4] = 0x66;
+        buf[offset + 5] = 0x72;
+        buf[offset + 6] = 0x65;
+        buf[offset + 7] = 0x65;
+        buf.fill(0x00, offset + hdr, offset + size);
+      } else if (['udta', 'meta', 'ilst'].includes(type)) {
         const payload = decoder
           .decode(buf.subarray(offset + hdr, Math.min(offset + size, offset + 1024)))
           .toLowerCase();
@@ -702,7 +810,7 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
   };
 
   sanitizeRecursively(0, buf.length, 0);
-  return buf;
+  return compactMp4RemoveFreeBoxes(buf);
 }
 
 interface CleanerJobParams {
@@ -716,6 +824,7 @@ interface CleanerJobParams {
   cleanerMode: 'all_in_one' | 'unified' | 'deep_synthid' | 'safe_mode' | 'remux_only';
   deepMetaPurge: boolean;
   forceKeyframeInsertion: boolean;
+  upscale1080p: boolean;
   cameraProfileField: string;
   cameraBrand: string;
   videoHandlerName: string;
@@ -753,6 +862,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     cleanerMode,
     deepMetaPurge,
     forceKeyframeInsertion,
+    upscale1080p,
     cameraProfileField,
     cameraBrand,
     videoHandlerName,
@@ -773,6 +883,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         deepMetaPurge,
         forceKeyframeInsertion,
         cameraProfileField,
+        upscale1080p,
         activeJobId,
         progressFilePath
       );
@@ -889,11 +1000,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
     const keyframeInsertionFlags = [
       '-g',
-      effectiveForceKeyframes ? '45' : '60',
+      '30',
       '-keyint_min',
-      effectiveForceKeyframes ? '20' : '24',
+      '12',
       '-sc_threshold',
-      '40',
+      '42',
       '-refs',
       '2',
       '-color_primaries',
@@ -902,11 +1013,14 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       'bt709',
       '-colorspace',
       'bt709',
+      '-color_range',
+      'tv',
     ];
 
-    const x264ParamString = effectiveForceKeyframes
-      ? 'ref=2:bframes=2:b-adapt=1:nal-hrd=none:force-cfr=1:deblock=1,1:aq-mode=2:open-gop=0:scenecut=40:keyint=45:min-keyint=20'
-      : 'ref=2:bframes=2:b-adapt=1:nal-hrd=none:force-cfr=1:deblock=1,1:aq-mode=2:open-gop=0:scenecut=40:keyint=60:min-keyint=24';
+    const x264ParamString =
+      'ref=2:bframes=2:b-adapt=1:b-pyramid=none:weightp=1:psy-rd=1.15,0.15:aq-mode=3:no-dct-decimate=1:nal-hrd=none:force-cfr=1:deblock=1,1:open-gop=0:scenecut=42:keyint=30:min-keyint=12';
+
+    const movflagsStr = '+faststart';
 
     // STEP 1: All-in-One Single Pipeline OR Two-Pass Re-Encode (Unified / Safe Mode / Deep Anti-SynthID)
     if (isAllInOne || cleanerMode === 'unified' || cleanerMode === 'deep_synthid' || cleanerMode === 'safe_mode') {
@@ -930,17 +1044,18 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           vidH = Math.floor(Number(parts[1]) / 2) * 2;
         }
       } catch {}
+      const shouldUpscale = upscale1080p && cameraProfileField !== 'neutral';
       const dynamicSynthIdVideoFilter =
         isAllInOne || cleanerMode === 'unified'
-          ? buildUnifiedVideoFilter(vidW, vidH, probedDurationSec)
+          ? buildUnifiedVideoFilter(vidW, vidH, probedDurationSec, shouldUpscale)
           : isSafeMode
-            ? buildSafeModeVideoFilter(vidW, vidH)
-            : buildSynthIdVideoFilter(vidW, vidH);
-      const encodePreset = probedDurationSec > 15 || vidW * vidH >= 400000 ? 'superfast' : 'veryfast';
+            ? buildSafeModeVideoFilter(vidW, vidH, shouldUpscale)
+            : buildSynthIdVideoFilter(vidW, vidH, shouldUpscale);
+      const encodePreset = probedDurationSec > 25 ? 'superfast' : 'veryfast';
 
       if (isAllInOne) {
         serverLogs.push(
-          `[ALL-IN-ONE SINGLE PIPELINE] Menyatukan Safe Mode Temporal CFR + Deep 5-Layer Anti-SynthID + Zero-SEI (filter_units=remove_types=6) + Faststart OEM (${cameraProfileField.toUpperCase()}) dalam 1 command FFmpeg...`
+          `[ALL-IN-ONE SINGLE PIPELINE v22] Sub-Pixel Perspective Micro-Drift + 29.97fps + 1080p BT.709 + 1/f Room Floor (-49dB) + Zero-mdta/Zero-SEI (${cameraProfileField.toUpperCase()})...`
         );
 
         const langTag = cameraProfileField === 'neutral' ? 'und' : 'eng';
@@ -983,8 +1098,6 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-1',
           '-map_chapters',
           '-1',
-          '-metadata',
-          'encoder=',
           '-write_tmcd',
           '0',
           ...cameraMetadataArgs,
@@ -1030,7 +1143,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-flags:a',
           '+bitexact',
           '-movflags',
-          '+faststart',
+          movflagsStr,
           outputPath,
         ];
 
@@ -1055,7 +1168,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-flags:v',
           '+bitexact',
           '-movflags',
-          '+faststart',
+          movflagsStr,
           outputPath,
         ];
 
@@ -1226,8 +1339,6 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '48000',
           '-cutoff',
           '20500',
-          '-metadata',
-          'encoder=',
           ...cameraMetadataArgs,
           '-metadata:s:v:0',
           `handler_name=${videoHandlerName}`,
@@ -1426,12 +1537,13 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         ? DEEP_META_PURGE_STREAM_COPY_FLAGS
         : SERVER_FFMPEG_SEI_STRIP_FLAGS;
 
-      // Substitute dynamically determined BSF argument and camera hardware OEM profile
+      // Substitute dynamically determined BSF argument, camera OEM profile, and movflags
       const activeStripFlags = baseStripFlags.map((flag, idx) => {
         if (baseStripFlags[idx - 1] === '-bsf:v') return dynamicBsfArg;
         if (baseStripFlags[idx - 1] === '-brand') return cameraBrand;
         if (baseStripFlags[idx - 1] === '-metadata:s:v:0') return `handler_name=${videoHandlerName}`;
         if (baseStripFlags[idx - 1] === '-metadata:s:a:0') return `handler_name=${audioHandlerName}`;
+        if (baseStripFlags[idx - 1] === '-movflags') return movflagsStr;
         return flag;
       });
 
@@ -1641,12 +1753,13 @@ export async function POST(req: NextRequest) {
     let cleanerMode: 'all_in_one' | 'unified' | 'deep_synthid' | 'safe_mode' | 'remux_only' = 'all_in_one';
     let deepMetaPurge = true;
     let forceKeyframeInsertion = true;
+    let upscale1080p = true;
     let asyncMode = false;
     let cameraProfileField = 'samsung';
     let cameraBrand = 'mp42';
     let videoHandlerName = 'VideoHandle';
     let audioHandlerName = 'SoundHandle';
-    let cameraMetadataArgs: string[] = ['-metadata', 'make=samsung', '-metadata', 'model=SM-S928B'];
+    const cameraMetadataArgs: string[] = [];
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
@@ -1654,6 +1767,7 @@ export async function POST(req: NextRequest) {
       const modeField = formData.get('mode');
       const purgeField = formData.get('deepMetaPurge');
       const forceKeyframeField = formData.get('forceKeyframeInsertion');
+      const upscaleField = formData.get('upscale1080p');
       asyncMode = formData.get('asyncMode') === 'true';
       const formJobId = sanitizeJobId(formData.get('jobId') as string | null);
       if (formJobId) {
@@ -1677,6 +1791,9 @@ export async function POST(req: NextRequest) {
       if (forceKeyframeField === 'false') {
         forceKeyframeInsertion = false;
       }
+      if (upscaleField === 'false') {
+        upscale1080p = false;
+      }
       if (!file) {
         return NextResponse.json(
           { error: 'Berkas video tidak ditemukan dalam permintaan.' },
@@ -1696,29 +1813,18 @@ export async function POST(req: NextRequest) {
         cameraBrand = 'mp42';
         videoHandlerName = 'Core Media Video';
         audioHandlerName = 'Core Media Audio';
-        cameraMetadataArgs = [
-          '-metadata',
-          'make=Apple',
-          '-metadata',
-          'model=iPhone 15 Pro',
-          '-metadata',
-          'software=17.5.1',
-        ];
       } else if (cameraProfileField === 'xiaomi') {
         cameraBrand = 'mp42';
         videoHandlerName = 'VideoHandler';
         audioHandlerName = 'SoundHandler';
-        cameraMetadataArgs = ['-metadata', 'make=Xiaomi', '-metadata', 'model=Xiaomi 14 Ultra'];
       } else if (cameraProfileField === 'neutral') {
         cameraBrand = 'isom';
         videoHandlerName = 'VideoHandler';
         audioHandlerName = 'SoundHandler';
-        cameraMetadataArgs = [];
       } else {
         cameraBrand = 'mp42';
         videoHandlerName = 'VideoHandle';
         audioHandlerName = 'SoundHandle';
-        cameraMetadataArgs = ['-metadata', 'make=samsung', '-metadata', 'model=SM-S928B'];
       }
     } else {
       const arrayBuffer = await req.arrayBuffer();
@@ -1763,6 +1869,7 @@ export async function POST(req: NextRequest) {
       cleanerMode,
       deepMetaPurge,
       forceKeyframeInsertion,
+      upscale1080p,
       cameraProfileField,
       cameraBrand,
       videoHandlerName,

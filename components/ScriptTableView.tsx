@@ -1,16 +1,30 @@
+'use client';
+
 import React, { useState } from 'react';
 import {
   FileSpreadsheet,
   Copy,
   Printer,
   Check,
-  Eye,
-  Type,
-  Mic,
-  Music2,
-  Clock,
-  Video
+  GripVertical,
 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { Scene } from '../types';
 import { copyToClipboard, formatDuration } from '../utils/helpers';
 
@@ -19,15 +33,135 @@ interface ScriptTableViewProps {
   title: string;
   categoryName: string;
   caption?: string;
+  onReorderScenes?: (activeId: string, overId: string) => void;
 }
+
+interface SortableTableRowProps {
+  scene: Scene;
+  index: number;
+  canReorder: boolean;
+}
+
+const SortableTableRow: React.FC<SortableTableRowProps> = ({ scene, index, canReorder }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: scene.id,
+    disabled: !canReorder,
+  });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+  };
+
+  const wordCount = (scene.dialogVO || '').trim().split(/\s+/).filter(Boolean).length;
+
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={`transition-colors ${
+        isDragging ? 'bg-purple-950/40 opacity-80 relative z-20' : 'hover:bg-[#121827]'
+      }`}
+    >
+      <td className="p-3 font-bold text-purple-400 align-top tabular-nums">
+        <div className="flex items-center gap-1.5">
+          {canReorder && (
+            <button
+              ref={setActivatorNodeRef}
+              type="button"
+              {...attributes}
+              {...listeners}
+              aria-label={`Seret baris Adegan ${index + 1}`}
+              title="Seret untuk mengubah urutan adegan"
+              className="touch-none p-1 rounded bg-[#141b2b] hover:bg-[#1e2840] border border-[#222e47] text-slate-400 hover:text-purple-300 cursor-grab active:cursor-grabbing"
+            >
+              <GripVertical className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <span>{index + 1}</span>
+        </div>
+      </td>
+
+      <td className="p-3 align-top">
+        <span className="font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40 whitespace-nowrap tabular-nums">
+          {scene.duration}s
+        </span>
+      </td>
+
+      <td className="p-3 align-top space-y-1">
+        {scene.cameraAngle && (
+          <span className="inline-block text-[10px] font-bold text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-800/40 mr-1.5">
+            {scene.cameraAngle}
+          </span>
+        )}
+        <p className="text-slate-200 leading-relaxed">{scene.visualAction || '-'}</p>
+      </td>
+
+      <td className="p-3 align-top">
+        {scene.popupText ? (
+          <span className="inline-block font-bold text-sky-300 bg-sky-950/50 border border-sky-800/40 px-2 py-1 rounded-lg">
+            {scene.popupText}
+          </span>
+        ) : (
+          <span className="text-slate-500 italic">-</span>
+        )}
+      </td>
+
+      <td className="p-3 align-top space-y-1">
+        <p className="text-slate-100 font-medium leading-relaxed">
+          &ldquo;{scene.dialogVO || '-'}&rdquo;
+        </p>
+        {wordCount > 0 && (
+          <span className="inline-block text-[10px] text-slate-400 tabular-nums">
+            {wordCount} kata ({Math.round((wordCount / (scene.duration || 1)) * 60)} WPM)
+          </span>
+        )}
+      </td>
+
+      <td className="p-3 align-top">
+        {scene.soundEffect ? (
+          <span className="text-amber-300 italic">{scene.soundEffect}</span>
+        ) : (
+          <span className="text-slate-500">-</span>
+        )}
+      </td>
+
+      <td className="p-3 align-top text-slate-400">{scene.notesMood || '-'}</td>
+    </tr>
+  );
+};
 
 export const ScriptTableView: React.FC<ScriptTableViewProps> = ({
   scenes,
   title,
   categoryName,
   caption,
+  onReorderScenes,
 }) => {
   const [copied, setCopied] = useState(false);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const canReorder = Boolean(onReorderScenes && scenes.length > 1);
+
+  const handleTableDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id && onReorderScenes) {
+      onReorderScenes(String(active.id), String(over.id));
+    }
+  };
 
   const totalDuration = scenes.reduce((sum, sc) => sum + (Number(sc.duration) || 0), 0);
 
@@ -101,89 +235,43 @@ export const ScriptTableView: React.FC<ScriptTableViewProps> = ({
       </div>
 
       {/* Script Table */}
-      <div className="overflow-x-auto rounded-xl border border-[#1c273e] bg-[#0c101a]">
-        <table className="w-full text-left text-xs border-collapse">
-          <thead>
-            <tr className="bg-[#121927] text-slate-300 border-b border-[#1c273e]">
-              <th className="p-3 font-bold uppercase tracking-wider text-[10px] w-14">#</th>
-              <th className="p-3 font-bold uppercase tracking-wider text-[10px] w-20">Durasi</th>
-              <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[200px]">Angle & Aksi Visual</th>
-              <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[160px]">Teks Pop-up Layar</th>
-              <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[220px]">Voice Over / Dialog</th>
-              <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[140px]">SFX (Sound)</th>
-              <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[150px]">Catatan / Mood</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#182133]">
-            {scenes.map((scene, index) => {
-              const wordCount = (scene.dialogVO || '').trim().split(/\s+/).filter(Boolean).length;
-
-              return (
-                <tr
-                  key={scene.id}
-                  className="hover:bg-[#121827] transition-colors"
-                >
-                  <td className="p-3 font-bold text-purple-400 align-top">
-                    {index + 1}
-                  </td>
-
-                  <td className="p-3 align-top">
-                    <span className="font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40 whitespace-nowrap">
-                      {scene.duration}s
-                    </span>
-                  </td>
-
-                  <td className="p-3 align-top space-y-1">
-                    {scene.cameraAngle && (
-                      <span className="inline-block text-[10px] font-bold text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-800/40 mr-1.5">
-                        {scene.cameraAngle}
-                      </span>
-                    )}
-                    <p className="text-slate-200 leading-relaxed">
-                      {scene.visualAction || '-'}
-                    </p>
-                  </td>
-
-                  <td className="p-3 align-top">
-                    {scene.popupText ? (
-                      <span className="inline-block font-bold text-sky-300 bg-sky-950/50 border border-sky-800/40 px-2 py-1 rounded-lg">
-                        {scene.popupText}
-                      </span>
-                    ) : (
-                      <span className="text-slate-500 italic">-</span>
-                    )}
-                  </td>
-
-                  <td className="p-3 align-top space-y-1">
-                    <p className="text-slate-100 font-medium leading-relaxed">
-                      &ldquo;{scene.dialogVO || '-'}&rdquo;
-                    </p>
-                    {wordCount > 0 && (
-                      <span className="inline-block text-[10px] text-slate-400">
-                        {wordCount} kata ({Math.round((wordCount / (scene.duration || 1)) * 60)} WPM)
-                      </span>
-                    )}
-                  </td>
-
-                  <td className="p-3 align-top">
-                    {scene.soundEffect ? (
-                      <span className="text-amber-300 italic">
-                        {scene.soundEffect}
-                      </span>
-                    ) : (
-                      <span className="text-slate-500">-</span>
-                    )}
-                  </td>
-
-                  <td className="p-3 align-top text-slate-400">
-                    {scene.notesMood || '-'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <DndContext
+        id="scene-table-dnd-context"
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleTableDragEnd}
+      >
+        <div className="overflow-x-auto rounded-xl border border-[#1c273e] bg-[#0c101a]">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-[#121927] text-slate-300 border-b border-[#1c273e]">
+                <th className="p-3 font-bold uppercase tracking-wider text-[10px] w-20">#</th>
+                <th className="p-3 font-bold uppercase tracking-wider text-[10px] w-20">Durasi</th>
+                <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[200px]">Angle & Aksi Visual</th>
+                <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[160px]">Teks Pop-up Layar</th>
+                <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[220px]">Voice Over / Dialog</th>
+                <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[140px]">SFX (Sound)</th>
+                <th className="p-3 font-bold uppercase tracking-wider text-[10px] min-w-[150px]">Catatan / Mood</th>
+              </tr>
+            </thead>
+            <SortableContext
+              items={scenes.map((s) => s.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <tbody className="divide-y divide-[#182133]">
+                {scenes.map((scene, index) => (
+                  <SortableTableRow
+                    key={scene.id}
+                    scene={scene}
+                    index={index}
+                    canReorder={canReorder}
+                  />
+                ))}
+              </tbody>
+            </SortableContext>
+          </table>
+        </div>
+      </DndContext>
 
       {caption && (
         <div className="p-3.5 bg-[#121927] border border-[#1e2a42] rounded-xl text-xs space-y-1">

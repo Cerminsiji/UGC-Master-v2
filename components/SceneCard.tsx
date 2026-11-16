@@ -20,8 +20,11 @@ import {
   AlertCircle,
   Layers,
   Image as ImageIcon,
-  Wand2
+  Wand2,
+  GripVertical
 } from 'lucide-react';
+import type { DraggableAttributes } from '@dnd-kit/core';
+import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 import { Scene, HookVariant } from '../types';
 import { copyToClipboard } from '../utils/helpers';
 import {
@@ -32,7 +35,7 @@ import {
   MOOD_PRESETS,
 } from '../data/categories';
 
-interface SceneCardProps {
+export interface SceneCardProps {
   scene: Scene;
   index: number;
   totalScenes: number;
@@ -50,6 +53,10 @@ interface SceneCardProps {
   activeHookIndex?: number;
   onSelectHookVariant?: (variantIndex: number) => void;
   onAddHookVariant?: () => void;
+  dragHandleRef?: (element: HTMLElement | null) => void;
+  dragHandleAttributes?: DraggableAttributes;
+  dragHandleListeners?: SyntheticListenerMap;
+  isDragging?: boolean;
 }
 
 export const SceneCard: React.FC<SceneCardProps> = ({
@@ -70,6 +77,10 @@ export const SceneCard: React.FC<SceneCardProps> = ({
   activeHookIndex = 0,
   onSelectHookVariant,
   onAddHookVariant,
+  dragHandleRef,
+  dragHandleAttributes,
+  dragHandleListeners,
+  isDragging = false,
 }) => {
   const [showAngleMenu, setShowAngleMenu] = useState(false);
   const [showSfxMenu, setShowSfxMenu] = useState(false);
@@ -99,18 +110,43 @@ export const SceneCard: React.FC<SceneCardProps> = ({
 
   return (
     <div
-      id={`scene-card-${scene.id}`}
       className={`bg-[#0f1422] border rounded-2xl p-4 sm:p-5 transition-all shadow-xl relative ${
-        index === 0
-          ? 'border-purple-600/60 shadow-purple-950/20'
-          : 'border-[#1e293f] hover:border-[#2b3a58]'
+        isDragging
+          ? 'opacity-35 border-dashed border-purple-400/80 ring-2 ring-purple-500/50'
+          : index === 0
+            ? 'border-purple-600/60 shadow-purple-950/20'
+            : 'border-[#1e293f] hover:border-[#2b3a58]'
       }`}
     >
-      {/* Card Header: Scene Number Badge, Scene Type, Timing Stepper, and Actions */}
+      {/* Card Header: Drag Handle, Scene Number Badge, Scene Type, Timing Stepper, and Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 mb-4 border-b border-[#1c273e]">
         <div className="flex items-center flex-wrap gap-2">
+          {/* Drag-and-Drop Handle */}
+          {dragHandleRef && (
+            <button
+              ref={dragHandleRef}
+              type="button"
+              {...dragHandleAttributes}
+              {...dragHandleListeners}
+              disabled={totalScenes <= 1}
+              aria-label={`Seret untuk mengurutkan ulang Adegan ${index + 1}`}
+              title={
+                totalScenes <= 1
+                  ? 'Minimal 2 adegan untuk mengurutkan ulang'
+                  : 'Seret untuk mengubah urutan adegan'
+              }
+              className={`touch-none p-2 rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${
+                totalScenes <= 1
+                  ? 'bg-[#111726] border-[#1c263b] text-slate-600 cursor-not-allowed'
+                  : 'bg-[#141b2b] hover:bg-[#1e2840] border-[#222e47] hover:border-purple-500/50 text-slate-400 hover:text-purple-300 cursor-grab active:cursor-grabbing'
+              }`}
+            >
+              <GripVertical className="w-4 h-4" />
+            </button>
+          )}
+
           {/* Adegan Badge */}
-          <span className="bg-gradient-to-r from-purple-800 to-indigo-800 text-purple-200 border border-purple-500/50 text-xs font-black px-3 py-1 rounded-lg uppercase tracking-wider shadow-sm">
+          <span className="bg-gradient-to-r from-purple-800 to-indigo-800 text-purple-200 border border-purple-500/50 text-xs font-black px-3 py-1 rounded-lg uppercase tracking-wider shadow-sm tabular-nums">
             ADEGAN {index + 1}
           </span>
 

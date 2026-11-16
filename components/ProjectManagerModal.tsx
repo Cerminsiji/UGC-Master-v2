@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   X,
   Plus,
@@ -6,26 +6,36 @@ import {
   Trash2,
   Copy,
   Clock,
-  CheckCircle2,
   FileVideo,
   Sparkles,
   ExternalLink,
   Tag,
   User,
   Volume2,
-  Share2,
-  FileText,
   Layers,
   ArrowRight,
   Check,
   Smartphone,
-  Info,
   Search,
   Eraser,
+  Activity,
+  AlertTriangle,
 } from 'lucide-react';
-import { StoryboardProject } from '../types';
+import {
+  StoryboardProject,
+  StorageAuditReport,
+  StorageDeployLogEntry,
+} from '../types';
 import { formatDuration, copyToClipboard } from '../utils/helpers';
 import { UGC_CATEGORIES } from '../data/categories';
+import {
+  auditProjectStorage,
+  buildDeduplicatedProjects,
+  cleanupGhostStorageData,
+  clearDeployLogs,
+  getDeployLogs,
+} from '../utils/storyboardStorage';
+import { ProjectDeployLogPanel } from './ProjectDeployLogPanel';
 
 interface ProjectManagerModalProps {
   isOpen: boolean;
@@ -38,6 +48,14 @@ interface ProjectManagerModalProps {
   onDeleteProject: (projectId: string) => void;
   onClearAllProjects?: () => void;
   onClearOtherProjects?: () => void;
+  onReplaceProjects?: (
+    cleanedProjects: StoryboardProject[],
+    nextActiveId: string,
+    removedCount: number,
+    details: string[]
+  ) => void;
+  initialView?: 'projects' | 'deploy_logs';
+  deployLogsVersion?: number;
 }
 
 export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
@@ -51,13 +69,23 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
   onDeleteProject,
   onClearAllProjects,
   onClearOtherProjects,
+  onReplaceProjects,
+  initialView = 'projects',
+  deployLogsVersion = 0,
 }) => {
+  const [modalView, setModalView] = useState<'projects' | 'deploy_logs'>(initialView);
   const [selectedId, setSelectedId] = useState<string>(currentProjectId || (projects[0]?.id || ''));
   const [activeTab, setActiveTab] = useState<'all' | 'deskripsi' | 'usp' | 'caption' | 'adegan'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedCaption, setCopiedCaption] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+
+  const [auditReport, setAuditReport] = useState<StorageAuditReport | null>(null);
+  const [deployLogs, setDeployLogs] = useState<StorageDeployLogEntry[]>([]);
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [isCleaningGhosts, setIsCleaningGhosts] = useState(false);
+  const [isDeduplicating, setIsDeduplicating] = useState(false);
 
   // Sync selected project during render when currentProjectId changes
   const [prevCurrentProjectId, setPrevCurrentProjectId] = useState(currentProjectId);
@@ -70,7 +98,86 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
     }
   }
 
+  const runLiveAudit = useCallback(async () => {
+    setIsAuditing(true);
+    try {
+      const report = await auditProjectStorage(projects, currentProjectId);
+      setAuditReport(report);
+      setDeployLogs(getDeployLogs());
+    } finally {
+      setIsAuditing(false);
+    }
+  }, [projects, currentProjectId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    void runLiveAudit();
+  }, [isOpen, deployLogsVersion, runLiveAudit]);
+
+  const duplicateIdSet = useMemo(() => {
+    const ids = new Set<string>();
+    if (!auditReport) return ids;
+    for (const group of auditReport.duplicateGroups) {
+      for (const member of group.duplicateProjects) {
+        if (member.id !== group.keepProjectId || group.reason === 'duplicate_id') {
+          ids.add(member.id);
+        }
+      }
+    }
+    return ids;
+  }, [auditReport]);
+
+  const handleCleanupGhosts = async () => {
+    setIsCleaningGhosts(true);
+    try {
+      const result = await cleanupGhostStorageData(projects, currentProjectId);
+      setAuditReport(result.audit);
+      setDeployLogs(getDeployLogs());
+    } finally {
+      setIsCleaningGhosts(false);
+    }
+  };
+
+  const handleDeduplicateProjects = async () => {
+    setIsDeduplicating(true);
+    try {
+      const { cleaned, removedProjects } = buildDeduplicatedProjects(projects, currentProjectId, {
+        removeCopyClones: true,
+      });
+      if (removedProjects.length === 0) {
+        await runLiveAudit();
+        return;
+      }
+      const nextActiveId = cleaned.some((p) => p.id === currentProjectId)
+        ? currentProjectId
+        : cleaned[0]?.id || '';
+      const details = removedProjects.map(
+        (rp) => `Dihapus: "${rp.title}" (${rp.id})`
+      );
+      if (onReplaceProjects) {
+        onReplaceProjects(cleaned, nextActiveId, removedProjects.length, details);
+      }
+      // Run fresh audit after parent updates or immediately
+      const report = await auditProjectStorage(cleaned, nextActiveId);
+      setAuditReport(report);
+      setDeployLogs(getDeployLogs());
+      if (nextActiveId) {
+        setSelectedId(nextActiveId);
+      }
+    } finally {
+      setIsDeduplicating(false);
+    }
+  };
+
+  const handleClearLogs = () => {
+    clearDeployLogs();
+    setDeployLogs([]);
+  };
+
   if (!isOpen) return null;
+
+  const totalStorageIssues =
+    (auditReport?.totalGhostCount || 0) + (auditReport?.totalDuplicateCount || 0);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredProjects = normalizedQuery
@@ -203,7 +310,90 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
           </div>
         </div>
 
-        {/* Modal Main Content: 2-Column Split */}
+        {/* Top-Level Modal Mode Switcher: Project Inspector vs Deploy Log & Storage Audit */}
+        <div className="px-4 md:px-5 py-2.5 border-b border-[#182136] bg-[#0a0e19] flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-1 p-1 bg-[#070a12] border border-[#1a2337] rounded-xl">
+            <button
+              type="button"
+              onClick={() => setModalView('projects')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                modalView === 'projects'
+                  ? 'bg-purple-600 text-white'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>Daftar &amp; Detail Naskah ({projects.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setModalView('deploy_logs');
+                void runLiveAudit();
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                modalView === 'deploy_logs'
+                  ? 'bg-purple-600 text-white'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Log Deploy &amp; Audit Storage</span>
+              {totalStorageIssues > 0 && (
+                <span className="ml-1 font-mono tabular-nums text-[11px] font-bold text-amber-300">
+                  ({totalStorageIssues} Masalah)
+                </span>
+              )}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] font-mono tabular-nums text-slate-400">
+            {totalStorageIssues > 0 ? (
+              <button
+                type="button"
+                onClick={() => setModalView('deploy_logs')}
+                className="flex items-center gap-1.5 text-amber-300 hover:text-amber-200 font-semibold cursor-pointer"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  Terdeteksi {auditReport?.totalGhostCount || 0} ghost ·{' '}
+                  {auditReport?.totalDuplicateCount || 0} ganda
+                </span>
+              </button>
+            ) : auditReport ? (
+              <span className="text-emerald-400">
+                Storage sinkron ({auditReport.memory.projectCount} Memory ·{' '}
+                {auditReport.localStorage.projectCount} LS ·{' '}
+                {auditReport.indexedDB.projectCount} IDB)
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Modal Main Content: Deploy Log & Audit OR 2-Column Project Split */}
+        {modalView === 'deploy_logs' ? (
+          <ProjectDeployLogPanel
+            projects={projects}
+            currentProjectId={currentProjectId}
+            audit={auditReport}
+            logs={deployLogs}
+            isAuditing={isAuditing}
+            isCleaningGhosts={isCleaningGhosts}
+            isDeduplicating={isDeduplicating}
+            onRunAudit={runLiveAudit}
+            onCleanupGhosts={handleCleanupGhosts}
+            onDeduplicateProjects={handleDeduplicateProjects}
+            onDeleteProjectById={onDeleteProject}
+            onSelectProjectById={(id) => {
+              if (projects.some((p) => p.id === id)) {
+                setSelectedId(id);
+                setModalView('projects');
+              }
+            }}
+            onClearLogs={handleClearLogs}
+          />
+        ) : (
         <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
           
           {/* LEFT COLUMN: Scrollable Project List */}
@@ -277,11 +467,18 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                         <h4 className="text-xs font-bold text-white group-hover:text-purple-300 transition-colors line-clamp-1">
                           {proj.title}
                         </h4>
-                        {isCurrentActive && (
-                          <span className="text-[9px] bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.2 rounded font-bold shrink-0">
-                            Aktif di Editor
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {duplicateIdSet.has(proj.id) && (
+                            <span className="text-[10px] text-rose-300 font-semibold">
+                              Ganda
+                            </span>
+                          )}
+                          {isCurrentActive && (
+                            <span className="text-[9px] bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.2 rounded font-bold shrink-0">
+                              Aktif di Editor
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mb-2">
@@ -738,6 +935,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
           ) : null}
 
         </div>
+        )}
 
       </div>
     </div>
