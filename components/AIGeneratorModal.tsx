@@ -35,6 +35,7 @@ import {
   CAMERA_ANGLE_STYLES,
   CAMERA_ANGLE_PRESETS,
   EXTENDED_PERSONAS,
+  VOICE_TONE_OPTIONS,
   CameraAngleStyleOption,
   ExtendedPersonaOption
 } from '../data/categories';
@@ -314,7 +315,14 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       if (detected.keySellingPoints) setKeySellingPoints(detected.keySellingPoints);
       if (detected.persona) setPersona(detected.persona);
       if (detected.personaExplanation) setDetectedPersonaExplanation(detected.personaExplanation);
-      if (detected.tone) setTone(detected.tone);
+      if (detected.tone) {
+        const toneMatch = VOICE_TONE_OPTIONS.find(
+          (v) =>
+            v.name.toLowerCase() === detected.tone?.toLowerCase() ||
+            v.name.toLowerCase().includes(detected.tone?.toLowerCase() || '')
+        );
+        setTone(toneMatch ? toneMatch.name : detected.tone);
+      }
       if (detected.cameraAngleStyle) {
         setCameraAngleStyle(detected.cameraAngleStyle);
         const styleMatch = CAMERA_ANGLE_STYLES.find((s) => s.name === detected.cameraAngleStyle);
@@ -879,7 +887,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                     <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
                       <span>Opsi Sudut Kamera Storyboard (Camera Angles)</span>
                       <span className="text-[10px] bg-sky-900/60 text-sky-300 px-1.5 py-0.5 rounded font-mono font-semibold">
-                        9 Gaya & 23 Sudut
+                        {CAMERA_ANGLE_STYLES.length} Gaya & {CAMERA_ANGLE_PRESETS.length} Sudut
                       </span>
                     </h3>
                     <p className="text-[11px] text-slate-400">
@@ -893,7 +901,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                 </span>
               </div>
 
-              {/* 9 Preset Gaya Kamera */}
+              {/* Preset Gaya Kamera */}
               <div>
                 {detectedCameraExplanation && (
                   <div className="mb-2.5 p-2.5 rounded-xl bg-sky-950/60 border border-sky-500/50 flex items-center gap-2 text-xs text-sky-200">
@@ -1219,6 +1227,9 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
               <div>
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
                   <span>Voice Tone (Gaya Bicara Kreator)</span>
+                  <span className="text-[10px] bg-purple-950 text-purple-300 border border-purple-700/50 px-1.5 py-0.5 rounded font-mono font-semibold">
+                    {VOICE_TONE_OPTIONS.length} Gaya Suara
+                  </span>
                 </label>
                 <select
                   value={tone}
@@ -1227,16 +1238,31 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                     highlightFields ? 'border-purple-400 bg-purple-950/30' : 'border-[#23304d] focus:border-purple-500'
                   }`}
                 >
-                  <option value="Santai, Mengalir & Natural (Teman Curhat)">Santai, Mengalir & Natural (Teman Curhat)</option>
-                  <option value="Excited, Hype & Ceria (Racun Belanja)">Excited, Hype & Ceria (Racun Belanja TikTok)</option>
-                  <option value="Storytelling & Emosional (Problem Solver)">Storytelling & Emosional (Problem Solver Nyata)</option>
-                  <option value="Edukatif, Informatif & Berwibawa (Dokter / Expert)">Edukatif, Informatif & Berwibawa (Dokter / Expert)</option>
-                  <option value="Soft-Spoken, Calming & Aesthetic (ASMR Vibe)">Soft-Spoken, Calming & Aesthetic (ASMR Vibe)</option>
-                  <option value="Lucu, Sarkas & Blunder (Komedi Viral)">Lucu, Sarkas & Blunder (Komedi Viral)</option>
-                  <option value="FOMO & Mendesak (Promo Kilat / Klik Keranjang)">FOMO & Mendesak (Promo Kilat / Klik Keranjang di Bawah)</option>
-                  <option value="Elegan, Mewah & Eksklusif (High-End Lifestyle)">Elegan, Mewah & Eksklusif (High-End Lifestyle)</option>
-                  <option value="To-The-Point & Solutif (Hard-Selling Langsung)">To-The-Point & Solutif (Hard-Selling Langsung)</option>
+                  {!VOICE_TONE_OPTIONS.some((tOpt) => tOpt.name === tone) && tone && (
+                    <option value={tone}>{tone}</option>
+                  )}
+                  {VOICE_TONE_OPTIONS.map((tOpt) => (
+                    <option key={tOpt.id} value={tOpt.name}>
+                      {tOpt.name} — [{tOpt.pacing}]
+                    </option>
+                  ))}
                 </select>
+                {(() => {
+                  const activeToneObj = VOICE_TONE_OPTIONS.find((tOpt) => tOpt.name === tone);
+                  if (!activeToneObj) return null;
+                  return (
+                    <div className="mt-1.5 p-2 rounded-lg bg-[#111726] border border-[#1f2b44] text-[10px] space-y-0.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-purple-300">{activeToneObj.badge}</span>
+                        <span className="text-slate-400 font-mono">{activeToneObj.pacing}</span>
+                      </div>
+                      <p className="text-slate-400 leading-snug">{activeToneObj.description}</p>
+                      <p className="text-amber-300/90 italic leading-snug">
+                        Contoh VO: &ldquo;{activeToneObj.sampleOpener}&rdquo;
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 

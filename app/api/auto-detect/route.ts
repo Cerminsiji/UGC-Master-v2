@@ -11,6 +11,11 @@ import {
   extractShareTextIntelligence,
   isLikelyShortcodeOrHash,
 } from '@/lib/link-extractor';
+import {
+  UGC_CATEGORIES,
+  CAMERA_ANGLE_STYLES,
+  VOICE_TONE_OPTIONS,
+} from '@/data/categories';
 
 async function handleAutoDetectRequest(body: any) {
   let { url = '', notes = '', input = '', referenceImages = [] } = body || {};
@@ -72,6 +77,14 @@ ${shareIntel.shareBrand ? `- Brand / Koleksi: "${shareIntel.shareBrand}"` : ''}
 ${shareIntel.sharePrice ? `- Harga Produk: Rp ${shareIntel.sharePrice}` : ''}`;
   }
 
+  const categoriesListText = UGC_CATEGORIES.map((c) => `- "${c.name}"`).join('\n');
+  const cameraStylesListText = CAMERA_ANGLE_STYLES.map(
+    (s, idx) => `${idx + 1}. "${s.name}" (${s.description})`
+  ).join('\n');
+  const voiceTonesListText = VOICE_TONE_OPTIONS.map(
+    (t, idx) => `${idx + 1}. "${t.name}" (${t.description})`
+  ).join('\n');
+
     const prompt = `Kamu adalah AI UGC Product & Link Analyzer profesional dengan tingkat akurasi tinggi untuk platform TikTok Shop, Tokopedia, Shopee Video, Instagram Reels, dan YouTube Shorts.
 Analisis input link produk dan/atau keterangan berikut, lalu lakukan ekstraksi data produk secara spesifik, akurat, dan mendalam:
 
@@ -85,19 +98,8 @@ ATURAN UTAMA:
 2. Jika ada nama brand resmi (misal: Sago, Somethinc, Skintific, Erigo, Aerostreet, Baseus, Wardah, Kahf), cantumkan brand di "brandName" dan nama produk lengkap di "productName".
 3. Bersihkan kata-kata sampah marketplace seperti "Jual", "Beli", "Termurah", "Original 100%", "Bebas Ongkir", "COD", "Ready Stock".
 
-Daftar 12 Kategori UGC yang WAJIB dipilih salah satu yang paling cocok:
-- "Affiliate"
-- "Unboxing"
-- "Tutorial"
-- "Review"
-- "Komedi / Sketsa"
-- "Daily Vlog"
-- "GRWM"
-- "Problem & Solution"
-- "Before & After"
-- "Life Hacks"
-- "ASMR / Satisfying"
-- "Haul"
+Daftar ${UGC_CATEGORIES.length} Kategori UGC yang WAJIB dipilih salah satu yang paling cocok:
+${categoriesListText}
 
 Daftar 24 Persona Talent Kreator yang WAJIB dipilih 1 yang paling otentik:
 1. "Wanita Muda / Gen Z" (Mahasiswi/remaja aktif, bahasa gaul santai, vibes FYP)
@@ -125,33 +127,27 @@ Daftar 24 Persona Talent Kreator yang WAJIB dipilih 1 yang paling otentik:
 23. "Kreator Faceless / Hanya Tangan (Tanpa Muka)" (100% tanpa wajah, fokus interaksi tangan dan produk)
 24. "Semua (Netral Universal)" (Gaya umum netral fleksibel)
 
-Daftar 10 Gaya Sudut Kamera Storyboard (Camera Angle Style) yang WAJIB dipilih 1 yang paling pas:
-1. "Dinamis & Multi-Angle (Viral Fast-Cut)" (Kombinasi cepat hook POV, close-up, OTS, selfie)
-2. "Hands-Only / Hanya Tangan (Faceless UGC)" (Kamera 100% menyorot tangan & produk, tanpa menampakkan muka)
-3. "POV & Handheld Dominan (Teman Curhat)" (First-person pemegang produk, hangat seperti ngobrol)
-4. "Macro & Extreme Close-up Detail (Tekstur & Formula)" (Tekstur, packaging mewah, butiran/tetesan, swatch)
-5. "Flat Lay & Top-Down (Unboxing Meja Estetik)" (Kamera atas meja rapi estetik, paket dibuka bertahap)
-6. "Front Camera / Selfie Talk (Vlog Santai)" (Kamera depan HP vertikal menatap penonton langsung)
-7. "Cinematic Commercial & 360° Orbit (Iklan Mewah)" (Gerakan tracking, putaran 360°, lighting premium)
-8. "Low-Angle & Dynamic Hero Shot (Keren & Berwibawa)" (Kamera bawah mendongak, produk terlihat gagah)
-9. "Mirror Reflection Shot & GRWM (Get Ready With Me)" (Pantulan cermin aesthetic memperlihatkan rutinitas)
-10. "Dutch Angle & Shock Dramatis (Hook Heboh)" (Sudut kamera miring sengaja untuk efek kehebohan visual)
+Daftar ${CAMERA_ANGLE_STYLES.length} Gaya Sinematik Kamera Storyboard (Camera Angle Style) yang WAJIB dipilih 1 yang paling pas:
+${cameraStylesListText}
+
+Daftar ${VOICE_TONE_OPTIONS.length} Pilihan Voice Tone (Gaya Bicara Kreator) yang WAJIB dipilih 1 yang paling tepat:
+${voiceTonesListText}
 
 Tugas Anda:
 1. productName: Nama produk yang bersih, spesifik, dan siap pakai (contoh: "Somethinc Niacinamide Barrier Serum", "Sago Slimming Green Coffee Diet", "Keychron K2 Wireless Keyboard").
 2. brandName: Brand atau nama merk resmi jika terdeteksi (contoh: "Somethinc", "Sago", "Skintific", "Erigo").
-3. category: Pilih 1 dari 12 kategori di atas yang paling tepat untuk mempromosikan produk ini.
+3. category: Pilih 1 persis dari ${UGC_CATEGORIES.length} kategori di atas yang paling tepat untuk mempromosikan produk ini.
 4. productDescription: Deskripsi produk yang menarik, menjelaskan manfaat utama dan cara kerjanya secara ringkas.
 5. targetAudience: Target audiens spesifik (misal: "Pria dan wanita 20-35 tahun yang ingin badan ideal tanpa lapar").
 6. keySellingPoints: Poin keunggulan utama (USP) yang persuasif dan memicu checkout di keranjang belanja / klik keranjang di bawah.
-7. tone: Nada bicara yang paling pas ("Santai, Relatable & Meyakinkan", "Hype, Heboh & Excited", "Edukatif, Tenang & Elegan", "Drama Komedi & Sketsa Lucu", atau "ASMR Bisik & Estetik").
+7. tone: Pilih 1 nama Voice Tone PERSIS dari daftar ${VOICE_TONE_OPTIONS.length} pilihan di atas yang paling cocok untuk produk & audiensnya.
 8. targetPlatform: Platform yang cocok ("TikTok Shop", "Tokopedia", "Shopee Video", "Instagram Reels", "YouTube Shorts").
 9. targetDuration: Rekomendasi durasi (integer: 15, 30, 45, atau 60 detik).
 10. detectedTags: Array 3-5 kata kunci relevan (misal: ["dietsehat", "kopidiet", "slimming", "racuntiktok"]).
 11. detectionSummary: Penjelasan ringkas ramah 1 kalimat tentang apa yang berhasil dideteksi dari link ini.
 12. persona: Pilih 1 persona talent yang paling ideal dari daftar 24 persona di atas.
 13. personaExplanation: 1 kalimat penjelasan singkat mengapa persona talent ini sangat cocok untuk membawakan produk tersebut.
-14. cameraAngleStyle: Pilih 1 gaya sudut kamera dari daftar 10 gaya di atas yang paling sesuai untuk visualisasi produk ini.
+14. cameraAngleStyle: Pilih 1 nama Gaya Sinematik Kamera PERSIS dari daftar ${CAMERA_ANGLE_STYLES.length} gaya di atas.
 15. cameraStyleExplanation: 1 kalimat penjelasan singkat mengapa gaya sudut kamera ini memaksimalkan visualisasi dan conversion rate produk.
 16. preferredCameraAngles: Array 3-5 sudut kamera spesifik yang disarankan (contoh: ["Extreme Close-up / Macro (Tekstur & Detail)", "POV / Handheld (First-Person)", "Over the Shoulder (OTS)", "Front Camera / Selfie Mode (Curhat Langsung)"]).`;
 

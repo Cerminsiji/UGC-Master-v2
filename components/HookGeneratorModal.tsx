@@ -22,11 +22,23 @@ interface HookGeneratorModalProps {
   productDescription?: string;
   keySellingPoints?: string;
   persona?: string;
+  tone?: string;
   targetPlatform?: string;
   onSelectHook: (hook: AIHookOption, mode?: 'replace' | 'add_variant') => void;
 }
 
-const FORMULA_FILTERS = ['Semua', 'Visual & Proof', 'Psikologi & FOMO', 'Cerita & Relatable', 'Edukasi & Twist'] as const;
+const FORMULA_FILTERS = [
+  'Semua',
+  'Visual & Proof',
+  'Psikologi & FOMO',
+  'Cerita & Relatable',
+  'Edukasi & Twist',
+  'Interaktif & Tren',
+] as const;
+
+function pickRandom<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)] || items[0];
+}
 
 export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
   isOpen,
@@ -36,6 +48,7 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
   productDescription = '',
   keySellingPoints = '',
   persona = '',
+  tone = '',
   targetPlatform = 'TikTok Shop',
   onSelectHook,
 }) => {
@@ -54,6 +67,7 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
           productDescription,
           keySellingPoints,
           persona,
+          tone,
           targetPlatform,
         }
       );
@@ -61,37 +75,49 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
         setHooks(data.hooks);
       } else {
         const safeProd = productName || 'Produk Ini';
-        setHooks([
+        const fallbackList: AIHookOption[] = [
           {
             type: 'Visual Shock & Contrast',
             formulaGroup: 'Visual & Proof',
-            hookDialog: `Lihat langsung bedanya sebelum sama sesudah pakai ${safeProd}, beneran gak perlu nunggu lama!`,
+            hookDialog: pickRandom([
+              `Lihat langsung bedanya sebelum sama sesudah pakai ${safeProd}, beneran gak perlu nunggu lama!`,
+              `Coba perhatiin perubahan detik ke-3 setelah pakai ${safeProd} ini...`,
+            ]),
             visualAction: `Kamera close-up menyorot perbandingan nyata di depan lensa saat tangan memegang kemasan asli ${safeProd} dengan kontak 5 jari solid.`,
-            popupText: 'BANDINGIN BEDANYA DETIK INI! ⚡',
+            popupText: pickRandom(['BANDINGIN BEDANYA DETIK INI! ⚡', 'REAL CONTRAST NO FILTER 👀']),
             sfx: 'Snap-zoom bass hit & Sparkle magic ting',
           },
           {
             type: 'Negative Warning / Reverse Psychology',
             formulaGroup: 'Psikologi & FOMO',
-            hookDialog: `Serius, jangan checkout ${safeProd} dulu kalau kalian belum siap ditanyain temen sekantor pakai apa!`,
+            hookDialog: pickRandom([
+              `Serius, jangan checkout ${safeProd} dulu kalau kalian belum siap ditanyain temen sekantor pakai apa!`,
+              `Awas nyesel kalau beli ${safeProd} cuma satu—soalnya bakal langsung rebutan di rumah!`,
+            ]),
             visualAction: `Kreator mencondongkan wajah dengan tatapan serius ke lensa 0.5x sambil menggenggam ${safeProd}.`,
-            popupText: 'JANGAN CHECKOUT SEBELUM TAHU INI ⚠️',
+            popupText: pickRandom(['JANGAN CHECKOUT SEBELUM TAHU INI ⚠️', 'WARNING: BIKIN REPEAT ORDER 🚨']),
             sfx: 'Record scratch freeze & Dramatic riser',
           },
           {
             type: 'Curiosity Gap / Rahasia Tersembunyi',
             formulaGroup: 'Psikologi & FOMO',
-            hookDialog: `Baru ngeh ternyata ada satu detail kecil di ${safeProd} yang bikin orang selalu repeat order...`,
+            hookDialog: pickRandom([
+              `Baru ngeh ternyata ada satu detail kecil di ${safeProd} yang bikin orang selalu repeat order...`,
+              `Pantesan ratingnya tinggi—baru sadar ada detail kecil ini di ${safeProd}.`,
+            ]),
             visualAction: `Tangan menunjuk bagian detail fitur pada fisik ${safeProd} dari sudut makro dengan pencahayaan tajam.`,
-            popupText: 'DETAIL RAHASIA YANG JARANG DISADARI 🤫',
+            popupText: pickRandom(['DETAIL RAHASIA YANG JARANG DISADARI 🤫', 'KENAPA REPEAT ORDER TERUS? 🤔']),
             sfx: 'Whisper mic brush & Mystery chime',
           },
           {
             type: 'Social Proof & Ditanyain Teman',
             formulaGroup: 'Cerita & Relatable',
-            hookDialog: `Barusan pas lagi ngumpul, tiga temen langsung minta link ${safeProd} ini gara-gara lihat hasilnya langsung!`,
+            hookDialog: pickRandom([
+              `Barusan pas lagi ngumpul, tiga temen langsung minta link ${safeProd} ini gara-gara lihat hasilnya langsung!`,
+              `Gara-gara bawa ${safeProd} ke kantor tadi pagi, grup chat langsung rame minta di-spill linknya!`,
+            ]),
             visualAction: `Kreator mengeluarkan ${safeProd} dari tas jinjing dengan senyum antusias di depan pencahayaan ruangan hangat.`,
-            popupText: 'DITANYAIN 3 TEMEN SEKALIGUS! 💬',
+            popupText: pickRandom(['DITANYAIN 3 TEMEN SEKALIGUS! 💬', 'SATU KANTOR AUTO MINTA LINK 🔥']),
             sfx: 'Bag zipper & iPhone notification ping',
           },
           {
@@ -126,7 +152,24 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
             popupText: 'HEMAT 70% KUALITAS JUARA 💎',
             sfx: 'Cha-ching cash register & Fast whip whoosh',
           },
-        ]);
+          {
+            type: 'Balas Komentar Netizen ("Kak Spill!")',
+            formulaGroup: 'Interaktif & Tren',
+            hookDialog: `Buat yang kemarin ramai nanyain ${safeProd} awet atau gak di komentar, sini aku buktiin langsung!`,
+            visualAction: `Kreator menunjuk stiker komentar netizen di bagian atas frame lalu memperlihatkan fisik ${safeProd}.`,
+            popupText: 'BALAS KOMEN: "KAK SPILL DONG!" 💬',
+            sfx: 'Comment pop-up bloop & iPhone ping',
+          },
+          {
+            type: 'Unpopular Opinion / Hot Take',
+            formulaGroup: 'Interaktif & Tren',
+            hookDialog: `Opini jujur: kebanyakan produk viral cuma menang kemasan, kecuali ${safeProd} satu ini.`,
+            visualAction: `Kreator menatap kamera dengan ekspresi jujur sedikit skeptis sambil meletakkan ${safeProd} di atas meja.`,
+            popupText: 'OPINI JUJUR TANPA ENDORSE 🔥',
+            sfx: 'Dramatic dun dun dun & Shutter',
+          },
+        ];
+        setHooks(fallbackList.sort(() => Math.random() - 0.5));
       }
     } catch (e) {
       console.error('Failed to load hooks:', e);
@@ -139,7 +182,7 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
     if (isOpen) {
       fetchHooks();
     }
-  }, [isOpen, productName, category]);
+  }, [isOpen, productName, category, tone]);
 
   if (!isOpen) return null;
 
@@ -159,7 +202,7 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2 flex-wrap">
-                <span>8 Formula Hook Viral 3 Detik (A/B/C Testing)</span>
+                <span>10 Formula Hook Viral 3 Detik (A/B/C Testing)</span>
                 <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-700/50 px-2 py-0.5 rounded-full font-bold">
                   Anti-Klise R&amp;D
                 </span>
@@ -176,7 +219,7 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
               onClick={fetchHooks}
               disabled={isLoading}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-300 hover:text-white bg-[#172035] hover:bg-[#1e2a45] border border-amber-500/30 transition-colors cursor-pointer"
-              title="Generate 8 variasi formula baru"
+              title="Generate variasi formula baru"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
               <span className="hidden sm:inline">Refresh Formula</span>
@@ -219,7 +262,7 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
             <div className="py-16 text-center space-y-3">
               <Sparkles className="w-8 h-8 text-amber-400 animate-spin mx-auto" />
               <p className="text-sm font-semibold text-slate-300">
-                Menyusun 8 formula hook viral untuk &ldquo;{productName || 'Produk'}&rdquo;...
+                Menyusun variasi formula hook viral untuk &ldquo;{productName || 'Produk'}&rdquo;...
               </p>
             </div>
           ) : (

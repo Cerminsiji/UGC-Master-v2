@@ -30,7 +30,18 @@ export interface UGCTemplateCategory {
   badgeText: string;
   description: string;
   recommendedDuration: number;
+  categoryHashtags?: string[];
   defaultScenes: Omit<Scene, 'id' | 'order'>[];
+}
+
+export interface VoiceToneOption {
+  id: string;
+  name: string;
+  badge: string;
+  pacing: string;
+  description: string;
+  directive: string;
+  sampleOpener: string;
 }
 
 export interface HookVariant {
@@ -161,7 +172,12 @@ export interface AutoDetectResult {
 
 export interface AIHookOption {
   type: string;
-  formulaGroup?: 'Visual & Proof' | 'Psikologi & FOMO' | 'Cerita & Relatable' | 'Edukasi & Twist';
+  formulaGroup?:
+    | 'Visual & Proof'
+    | 'Psikologi & FOMO'
+    | 'Cerita & Relatable'
+    | 'Edukasi & Twist'
+    | 'Interaktif & Tren';
   hookDialog: string;
   visualAction: string;
   popupText: string;
@@ -180,7 +196,31 @@ export interface RateCardConfig {
   notes?: string;
 }
 
-export type StoryboardViewMode = 'cards' | 'table' | 'motion_control' | 'rate_card' | 'meta_cleaner';
+export type StoryboardViewMode =
+  | 'cards'
+  | 'table'
+  | 'motion_control'
+  | 'tiktok_dance'
+  | 'rate_card'
+  | 'meta_cleaner';
+
+export interface DanceStoryboardScene extends Scene {
+  beatCue?: string;
+  choreographyMove?: string;
+  cameraChoreo?: string;
+}
+
+export interface DanceStoryboardResult {
+  title: string;
+  danceStyle: string;
+  bpmRange: string;
+  choreoConcept: string;
+  soundRecommendation: string;
+  outfitNotes: string;
+  caption: string;
+  hashtags?: string[];
+  scenes: DanceStoryboardScene[];
+}
 
 export type StorageDeployAction =
   | 'save'

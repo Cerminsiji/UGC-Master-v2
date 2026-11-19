@@ -25,6 +25,10 @@ interface ExportModalProps {
   onClose: () => void;
   title: string;
   categoryName: string;
+  productName?: string;
+  keySellingPoints?: string;
+  targetPlatform?: string;
+  tone?: string;
   referenceImage?: string;
   caption?: string;
   scenes: Scene[];
@@ -38,6 +42,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   onClose,
   title,
   categoryName,
+  productName,
+  keySellingPoints,
+  targetPlatform,
+  tone,
   referenceImage,
   caption: initialCaption,
   scenes,
@@ -53,6 +61,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   }
 
   const [caption, setCaption] = useState(initialCaption || '');
+  const [captionVariations, setCaptionVariations] = useState<string[]>([]);
   const [prevCap, setPrevCap] = useState(initialCaption);
   if (prevCap !== initialCaption) {
     setPrevCap(initialCaption);
@@ -303,14 +312,21 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          productName: title,
+          productName: productName || title,
           category: categoryName,
-          keySellingPoints: scenes.map((s) => s.popupText).filter(Boolean).slice(0, 3).join(', '),
+          keySellingPoints:
+            keySellingPoints || scenes.map((s) => s.popupText).filter(Boolean).slice(0, 3).join(', '),
+          targetPlatform: targetPlatform || 'TikTok Shop',
+          tone: tone || '',
+          hookDialog: scenes[0]?.dialogVO || '',
         }),
       });
       const data = await res.json();
       if (data.success && data.caption) {
         setCaption(data.caption);
+        if (Array.isArray(data.variations) && data.variations.length > 0) {
+          setCaptionVariations(data.variations);
+        }
       }
     } catch (e) {
       console.error('Failed to generate caption:', e);
@@ -607,7 +623,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   placeholder="Ketik caption video..."
                 />
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-500">Maksimal 150 karakter untuk TikTok Affiliate.</span>
+                  <span className="text-slate-500">Maksimal 150 karakter untuk TikTok/Shopee Video.</span>
                   <span
                     className={`font-mono font-bold px-2 py-0.5 rounded ${
                       caption.length <= 150
@@ -618,6 +634,34 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     {caption.length} / 150 Karakter
                   </span>
                 </div>
+
+                {captionVariations.length > 1 && (
+                  <div className="pt-2 space-y-1.5">
+                    <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider block">
+                      Pilih Variasi Angle Viral ({captionVariations.length} Opsi):
+                    </span>
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {captionVariations.map((variant, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setCaption(variant)}
+                          className={`text-left p-2.5 rounded-xl border text-xs transition-all cursor-pointer ${
+                            caption === variant
+                              ? 'bg-purple-950/60 border-purple-500 text-white'
+                              : 'bg-[#0b101d] border-[#1c273e] text-slate-300 hover:border-purple-600/60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <span className="text-[10px] font-bold text-amber-300">Opsi Angle {idx + 1}</span>
+                            <span className="text-[10px] font-mono text-slate-400">{variant.length}/150</span>
+                          </div>
+                          <p className="leading-snug">{variant}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

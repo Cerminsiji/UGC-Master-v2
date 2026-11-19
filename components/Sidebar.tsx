@@ -20,6 +20,10 @@ import {
   ChevronRight,
   FileText,
   Eraser,
+  ShieldAlert,
+  MessageCircle,
+  Sun,
+  Gem,
 } from 'lucide-react';
 import { UGC_CATEGORIES } from '../data/categories';
 import { UGCTemplateCategory, StoryboardProject } from '../types';
@@ -71,6 +75,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return Lightbulb;
       case 'Headphones':
         return Headphones;
+      case 'ShieldAlert':
+        return ShieldAlert;
+      case 'MessageCircle':
+        return MessageCircle;
+      case 'Sun':
+        return Sun;
+      case 'Gem':
+        return Gem;
       default:
         return HaulBag;
     }

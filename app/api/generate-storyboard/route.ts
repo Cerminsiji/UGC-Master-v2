@@ -7,6 +7,10 @@ import {
   generateRichFallback,
   pickDynamicHookArchetype,
   sanitizeClicheSceneOne,
+  getVoiceToneDirective,
+  ensureVariedStoryboardScenes,
+  buildNicheHashtags,
+  fitCaptionWithHashtags,
 } from '@/lib/gemini-ugc';
 
 async function handleGenerateStoryboardRequest(body: any) {
@@ -168,6 +172,7 @@ Kategori Konten: ${category}
 Target Audiens: ${targetAudience}
 Persona Talent Kreator: "${persona}" (Sesuaikan gaya bicara VO, diksi gaul/santai/elegan, ekspresi visual, dan OOTD talent dengan persona "${persona}" ini secara mendalam agar sangat otentik!)
 Tone of Voice: ${tone}
+Panduan Gaya Bicara & Pacing VO: ${getVoiceToneDirective(tone)}
 ${cameraInstructions}
 Target Durasi Total: ${targetDuration} detik
 Jumlah Adegan yang Diminta: ${sceneCountText}
@@ -285,9 +290,16 @@ Syarat Wajib Format Storyboard:
     const parsedData = parseSafeJson<any>(rawText);
     if (parsedData && Array.isArray(parsedData.scenes) && parsedData.scenes.length > 0) {
       if (!parsedData.caption || typeof parsedData.caption !== 'string') {
-        parsedData.caption = formatShortCaption(productName, category, keySellingPoints, platform);
+        parsedData.caption = formatShortCaption(productName, category, keySellingPoints, platform, tone);
       } else if (parsedData.caption.length > 150) {
-        parsedData.caption = parsedData.caption.slice(0, 147) + '...';
+        const inlineTags = parsedData.caption.match(/#[a-zA-Z0-9_]+/g) || [];
+        const bodyOnly = parsedData.caption.replace(/#[a-zA-Z0-9_]+/g, '').trim();
+        const nicheTags = buildNicheHashtags(productName, category, keySellingPoints, platform);
+        parsedData.caption = fitCaptionWithHashtags(
+          bodyOnly,
+          inlineTags.length > 0 ? inlineTags : nicheTags,
+          150
+        );
       }
 
       // Sanitize Scene 1 if the model accidentally slipped in any "Stop scrolling" / "Jangan skip" cliché
@@ -330,10 +342,11 @@ Syarat Wajib Format Storyboard:
                     usp: keySellingPoints,
                     category,
                     isHandsOnly,
+                    tone,
                   }).popupText
                 : idx === sanitizedScenes.length - 1
                 ? (isShopee ? 'KLIK KERANJANG OREN DI BAWAH! 🛒👇' : (isTikTok ? 'CEK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇'))
-                : `KEUNGGULAN: ${productName.toUpperCase().slice(0, 24)}`;
+                : '';
           }
         }
 
@@ -377,6 +390,13 @@ Syarat Wajib Format Storyboard:
         };
       });
 
+      parsedData.scenes = ensureVariedStoryboardScenes(
+        parsedData.scenes,
+        productName,
+        keySellingPoints,
+        platform
+      );
+
       return NextResponse.json({
         success: true,
         data: parsedData,
@@ -400,7 +420,8 @@ Syarat Wajib Format Storyboard:
       allReferenceImages.length > 0
         ? allReferenceImages
         : Array.from({ length: Math.max(1, totalRefCount) }, (_, i) => `Image ${i + 1}`),
-      enforcePhysicsCheck
+      enforcePhysicsCheck,
+      tone
     );
 
     return NextResponse.json({

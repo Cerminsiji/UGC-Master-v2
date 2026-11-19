@@ -71,6 +71,17 @@ const MotionControlPanel = dynamic(
     ),
   }
 );
+const TikTokDanceStudio = dynamic(
+  () => import('@/components/TikTokDanceStudio').then((mod) => mod.TikTokDanceStudio),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-8 text-center text-xs text-slate-400 animate-pulse">
+        Memuat TikTok Dance Storyboard Studio...
+      </div>
+    ),
+  }
+);
 const RateCardCalculator = dynamic(
   () => import('@/components/RateCardCalculator').then((mod) => mod.RateCardCalculator),
   {
@@ -125,6 +136,7 @@ import {
   HookVariant,
   AutoDetectResult,
   StorageDeployAction,
+  DanceStoryboardResult,
 } from '@/types';
 import { copyToClipboard, generateId, postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
 import { formatShortCaption, generateRichFallback, UGC_RD_HOOK_ARCHETYPES } from '@/lib/gemini-ugc';
@@ -296,6 +308,8 @@ export default function HomePage() {
   const [copiedCaption, setCopiedCaption] = useState(false);
   const [isCaptionOpen, setIsCaptionOpen] = useState(true);
   const [isGeneratingCaption, setIsGeneratingCaption] = useState(false);
+  const [captionVariations, setCaptionVariations] = useState<string[]>([]);
+  const [captionHashtags, setCaptionHashtags] = useState<string[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Active Hook variant index for Scene 1
@@ -1477,7 +1491,15 @@ export default function HomePage() {
         targetAudience: params.targetAudience,
         targetDuration: params.targetDuration || genScenes.reduce((s, x) => s + x.duration, 0),
         physicsConsistencyCheck: enforcePhysicsCheck,
-        caption: resolvedData.caption || formatShortCaption(params.productName, params.category, params.keySellingPoints, params.targetPlatform),
+        caption:
+          resolvedData.caption ||
+          formatShortCaption(
+            params.productName,
+            params.category,
+            params.keySellingPoints,
+            params.targetPlatform,
+            params.tone
+          ),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         hookVariants: buildInitialHookVariants(
@@ -1532,7 +1554,7 @@ export default function HomePage() {
       keySellingPoints: data.keySellingPoints,
       persona: data.persona || 'Semua (Netral Universal)',
       personaExplanation: data.personaExplanation,
-      tone: data.tone || 'Santai, Relatable & Meyakinkan',
+      tone: data.tone || 'Santai, Mengalir & Natural (Teman Curhat)',
       cameraAngleStyle: data.cameraAngleStyle,
       cameraStyleExplanation: data.cameraStyleExplanation,
       preferredCameraAngles: data.preferredCameraAngles,
@@ -1697,20 +1719,25 @@ export default function HomePage() {
     }
   };
 
-  // Generate fresh caption under 150 chars
+  // Generate fresh caption under 150 chars with viral angle rotation & niche hashtags
   const handleGenerateNewCaption = async () => {
     setIsGeneratingCaption(true);
     try {
-      const data = await postJsonWithRetry<{ success?: boolean; caption?: string }>(
-        '/api/generate-caption',
-        {
-          productName: currentProject.productName || 'Produk Unggulan',
-          category: activeCategory.name,
-          keySellingPoints: currentProject.keySellingPoints || '',
-          targetAudience: currentProject.targetAudience || '',
-          targetPlatform: currentProject.targetPlatform || 'TikTok Shop',
-        }
-      );
+      const data = await postJsonWithRetry<{
+        success?: boolean;
+        caption?: string;
+        hashtags?: string[];
+        variations?: string[];
+        angleUsed?: string;
+      }>('/api/generate-caption', {
+        productName: currentProject.productName || 'Produk Unggulan',
+        category: activeCategory.name,
+        keySellingPoints: currentProject.keySellingPoints || '',
+        targetAudience: currentProject.targetAudience || '',
+        targetPlatform: currentProject.targetPlatform || 'TikTok Shop',
+        tone: currentProject.tone || '',
+        hookDialog: currentProject.scenes[0]?.dialogVO || '',
+      });
       const nextCaption =
         data && data.success && data.caption
           ? data.caption
@@ -1718,10 +1745,21 @@ export default function HomePage() {
               currentProject.productName || 'Produk Unggulan',
               activeCategory.name,
               currentProject.keySellingPoints || '',
-              currentProject.targetPlatform || 'TikTok Shop'
+              currentProject.targetPlatform || 'TikTok Shop',
+              currentProject.tone || ''
             );
+      setCaptionVariations(
+        Array.isArray(data?.variations) && data.variations.length > 0 ? data.variations : []
+      );
+      setCaptionHashtags(
+        Array.isArray(data?.hashtags) && data.hashtags.length > 0 ? data.hashtags : []
+      );
       updateCurrentProject((p) => ({ ...p, caption: nextCaption }));
-      showToast('✨ Caption viral baru berhasil dibuat!');
+      showToast(
+        data?.angleUsed
+          ? `✨ Caption viral (${data.angleUsed}) berhasil dibuat!`
+          : '✨ Caption viral baru berhasil dibuat!'
+      );
     } catch (e) {
       console.error('Caption generate error:', e);
       showToast('Gagal membuat caption');
@@ -1958,6 +1996,97 @@ export default function HomePage() {
     });
     setDeployLogsVersion((v) => v + 1);
     showToast(`🧹 ${removedCount} project ganda berhasil dibersihkan!`);
+  };
+
+  const mapDanceScenesToStandard = (danceResult: DanceStoryboardResult): Scene[] =>
+    danceResult.scenes.map((sc, idx) => ({
+      id: sc.id || generateId(),
+      order: idx + 1,
+      cameraAngle: sc.cameraChoreo ? `${sc.cameraAngle} • ${sc.cameraChoreo}` : sc.cameraAngle,
+      visualAction: sc.choreographyMove
+        ? `[${sc.beatCue || `Bar ${idx + 1}`}] ${sc.choreographyMove}${
+            sc.visualAction && sc.visualAction !== sc.choreographyMove ? ` — ${sc.visualAction}` : ''
+          }`
+        : sc.visualAction,
+      popupText: sc.popupText,
+      soundEffect: sc.soundEffect,
+      dialogVO: sc.dialogVO,
+      notesMood: `${sc.beatCue ? `${sc.beatCue} | ` : ''}${sc.notesMood || ''}`.trim(),
+      duration: Math.max(1, Number(sc.duration) || 3),
+      googleFlowPrompt: sc.googleFlowPrompt,
+      imageReferenceNote: sc.imageReferenceNote,
+      motionControl: sc.motionControl,
+    }));
+
+  const handleCreateProjectFromDance = (danceResult: DanceStoryboardResult) => {
+    const mappedScenes = mapDanceScenesToStandard(danceResult);
+    const totalDur = mappedScenes.reduce((sum, s) => sum + (Number(s.duration) || 0), 0);
+    const matchedCat =
+      UGC_CATEGORIES.find((c) => c.id === 'daily_vlog' || c.id === 'grwm') || activeCategory;
+
+    const newProj: StoryboardProject = {
+      id: generateId(),
+      title: danceResult.title || 'TikTok Dance Storyboard',
+      categoryId: matchedCat.id,
+      productName: currentProject.productName || danceResult.danceStyle,
+      brandName: currentProject.brandName,
+      referenceImage: currentProject.referenceImage,
+      referenceImages: currentProject.referenceImages,
+      keySellingPoints: currentProject.keySellingPoints || danceResult.choreoConcept,
+      persona: currentProject.persona || 'Wanita Muda / Gen Z',
+      tone: 'Spill Racun Enerjik & Hype (Fast-Cut FYP)',
+      cameraAngleStyle: 'Gen-Z 0.5x Ultra-Wide & Match-Cut Fast Pace',
+      targetPlatform: currentProject.targetPlatform || 'TikTok Shop',
+      targetDuration: totalDur,
+      physicsConsistencyCheck: true,
+      caption: danceResult.caption,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      hookVariants: buildInitialHookVariants(
+        mappedScenes,
+        currentProject.productName || danceResult.danceStyle,
+        danceResult.choreoConcept,
+        matchedCat.name,
+        currentProject.persona || ''
+      ),
+      scenes: mappedScenes,
+    };
+
+    const nextList = [newProj, ...projectsRef.current];
+    setProjects(nextList);
+    setCurrentProjectId(newProj.id);
+    setActiveHookIndex(0);
+    performLocalSave(
+      false,
+      nextList,
+      newProj.id,
+      'create',
+      `Project TikTok Dance "${newProj.title}" disimpan ke Local Storage.`
+    );
+    setViewMode('cards');
+    showToast(`💃 Project "${newProj.title}" dibuat & dibuka di Editor Adegan!`);
+  };
+
+  const handleApplyDanceToCurrentProject = (danceResult: DanceStoryboardResult) => {
+    const mappedScenes = mapDanceScenesToStandard(danceResult);
+    const totalDur = mappedScenes.reduce((sum, s) => sum + (Number(s.duration) || 0), 0);
+    updateCurrentProject((p) => ({
+      ...p,
+      title: danceResult.title || p.title,
+      caption: danceResult.caption || p.caption,
+      targetDuration: totalDur,
+      scenes: mappedScenes,
+      hookVariants: buildInitialHookVariants(
+        mappedScenes,
+        p.productName || danceResult.danceStyle,
+        p.keySellingPoints || danceResult.choreoConcept,
+        activeCategory.name,
+        p.persona || ''
+      ),
+    }));
+    setActiveHookIndex(0);
+    setViewMode('cards');
+    showToast(`💃 Storyboard TikTok Dance dipasang ke naskah aktif & Motion Control!`);
   };
 
   // If not authenticated or not mounted yet, show PasswordGate
@@ -2283,7 +2412,7 @@ export default function HomePage() {
                   </div>
 
                   {isCaptionOpen && (
-                    <div className="p-3.5 pt-0 space-y-2 border-t border-[#1a2336] bg-[#0b0f1a]">
+                    <div className="p-3.5 pt-0 space-y-2.5 border-t border-[#1a2336] bg-[#0b0f1a]">
                       <textarea
                         rows={2}
                         value={currentProject.caption || ''}
@@ -2296,15 +2425,57 @@ export default function HomePage() {
                           type="button"
                           onClick={handleGenerateNewCaption}
                           disabled={isGeneratingCaption}
-                          className="text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 transition-colors disabled:opacity-50"
+                          className="text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 transition-colors disabled:opacity-50 cursor-pointer"
                         >
                           <Sparkles className={`w-3 h-3 ${isGeneratingCaption ? 'animate-spin' : ''}`} />
-                          <span>{isGeneratingCaption ? 'Membuat Caption...' : 'AI Buat Caption Baru'}</span>
+                          <span>{isGeneratingCaption ? 'Membuat Caption...' : 'AI Buat Caption & Hashtag Baru'}</span>
                         </button>
                         <span className={(currentProject.caption || '').length > 150 ? 'text-red-400 font-bold' : 'text-emerald-400'}>
                           {(currentProject.caption || '').length <= 150 ? '✅ Sesuai batas posting' : '⚠️ Melebihi 150 karakter'}
                         </span>
                       </div>
+
+                      {captionVariations.length > 1 && (
+                        <div className="pt-1 space-y-1.5 border-t border-[#151e32]">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">
+                              Pilih Angle Viral Lain ({captionVariations.length} Variasi):
+                            </span>
+                            {captionHashtags.length > 0 && (
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {captionHashtags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="text-[10px] font-mono text-sky-300 bg-sky-950/60 border border-sky-800/50 px-1.5 py-0.5 rounded"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5">
+                            {captionVariations.map((variant, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => updateCurrentProject((p) => ({ ...p, caption: variant }))}
+                                className={`text-left p-2 rounded-xl border text-[11px] transition-all cursor-pointer ${
+                                  currentProject.caption === variant
+                                    ? 'bg-purple-950/70 border-purple-500 text-white'
+                                    : 'bg-[#080c15] border-[#1d273e] text-slate-300 hover:border-purple-600/60'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between text-[10px] mb-0.5">
+                                  <span className="font-bold text-amber-300">Angle {idx + 1}</span>
+                                  <span className="font-mono text-slate-400">{variant.length}/150</span>
+                                </div>
+                                <p className="line-clamp-2 leading-snug">{variant}</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2455,6 +2626,21 @@ export default function HomePage() {
               />
             )}
 
+            {/* VIEW MODE 3B: TikTok Dance Storyboard Generator Studio */}
+            {viewMode === 'tiktok_dance' && (
+              <TikTokDanceStudio
+                currentProjectTitle={currentProject.title}
+                currentProductName={currentProject.productName}
+                currentBrandName={currentProject.brandName}
+                currentKeySellingPoints={currentProject.keySellingPoints}
+                currentPersona={currentProject.persona}
+                currentPlatform={currentProject.targetPlatform}
+                onCreateProjectFromDance={handleCreateProjectFromDance}
+                onApplyToCurrentProject={handleApplyDanceToCurrentProject}
+                onNotify={showToast}
+              />
+            )}
+
             {/* VIEW MODE 4: Kalkulator Rate Card & Penawaran Jasa */}
             {viewMode === 'rate_card' && (
               <RateCardCalculator
@@ -2500,6 +2686,7 @@ export default function HomePage() {
           productDescription={currentProject.productDescription || ''}
           keySellingPoints={currentProject.keySellingPoints || ''}
           persona={currentProject.persona || ''}
+          tone={currentProject.tone || ''}
           targetPlatform={currentProject.targetPlatform || 'TikTok Shop'}
           onSelectHook={handleApplyHook}
         />
@@ -2520,6 +2707,10 @@ export default function HomePage() {
           onClose={() => setIsExportModalOpen(false)}
           title={currentProject.title}
           categoryName={activeCategory.name}
+          productName={currentProject.productName}
+          keySellingPoints={currentProject.keySellingPoints}
+          targetPlatform={currentProject.targetPlatform}
+          tone={currentProject.tone}
           referenceImage={currentProject.referenceImage}
           caption={currentProject.caption}
           scenes={currentProject.scenes}

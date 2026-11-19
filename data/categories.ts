@@ -1,4 +1,4 @@
-import { UGCTemplateCategory } from '../types';
+import { UGCTemplateCategory, VoiceToneOption } from '../types';
 
 export const UGC_CATEGORIES: UGCTemplateCategory[] = [
   {
@@ -853,6 +853,194 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
         duration: 3
       }
     ]
+  },
+  {
+    id: 'myth_busting',
+    name: 'Mitos vs Fakta (Bedah Klaim)',
+    iconName: 'ShieldAlert',
+    badgeText: 'MITOS VS FAKTA',
+    description: 'Membongkar salah kaprah populer atau keraguan netizen dengan pembuktian uji langsung dan fakta komposisi produk.',
+    recommendedDuration: 35,
+    categoryHashtags: ['#MitosVsFakta', '#ReviewJujur', '#EdukasiProduk', '#TesLangsung'],
+    defaultScenes: [
+      {
+        cameraAngle: '0.5x Ultra-Wide Gen-Z Selfie (Ekspresif & Dekat)',
+        visualAction: 'Kreator mengangkat alis skeptis sambil menunjuk klaim populer pada kemasan produk di dekat lensa kamera.',
+        popupText: 'KATANYA CUMA GIMMICK? KITA BEDAH! 🔍',
+        soundEffect: 'Record scratch freeze & Dramatic dun dun dun',
+        dialogVO: 'Banyak yang bilang produk kayak gini cuma menang iklan doang, beneran ngaruh gak sih di pemakaian nyata?',
+        notesMood: 'Gaya teks: Bold Contrast Fact-Check.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
+        visualAction: 'Kamera makro menguji langsung ketahanan, tekstur, atau detail komposisi produk di atas meja terang.',
+        popupText: 'FAKTA #1: UJI LANGSUNG TANPA FILTER 🧪',
+        soundEffect: 'Camera shutter click & Fast whip whoosh',
+        dialogVO: 'Pas aku tes langsung, faktanya bahan dan teksturnya jauh lebih ringan dan cepet meresap dibanding dugaan awal.',
+        notesMood: 'Gaya teks: Clean Editorial Fact Card.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'Over the Shoulder (OTS)',
+        visualAction: 'Menunjukkan hasil pemakaian nyata setelah beberapa jam tanpa retouch.',
+        popupText: 'BUKTI SETELAH PEMAKAIAN NYATA ✅',
+        soundEffect: 'Sparkle magic ting & Bubble pop sound',
+        dialogVO: 'Yang bikin kaget, hasilnya konsisten dan gak bikin efek samping aneh-aneh kayak rumor yang beredar.',
+        notesMood: 'Gaya teks: Verified Green Check.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'Medium Close-up (Dada ke Atas)',
+        visualAction: 'Kreator mengangguk yakin dan mengarahkan jari ke keranjang di bawah.',
+        popupText: 'MITOS TERBANTAHKAN! CEK DI BAWAH 🛒',
+        soundEffect: 'Cha-ching cash register & Level up victory chime',
+        dialogVO: 'Jadi mitosnya resmi terbantahkan ya. Cek detail varian aslinya langsung di keranjang di bawah.',
+        notesMood: 'Gaya teks: Trust Badge CTA.',
+        duration: 3
+      }
+    ]
+  },
+  {
+    id: 'comment_reply',
+    name: 'Balas Komentar Netizen (Q&A)',
+    iconName: 'MessageCircle',
+    badgeText: 'REPLY KOMEN',
+    description: 'Format menjawab langsung pertanyaan/keraguan paling sering dari kolom komentar TikTok & Reels secara interaktif.',
+    recommendedDuration: 30,
+    categoryHashtags: ['#SpillProduk', '#BalasKomen', '#TanyaNetizen', '#RekomendasiViral'],
+    defaultScenes: [
+      {
+        cameraAngle: 'Front Camera / Selfie Mode (Curhat Langsung)',
+        visualAction: 'Kreator menunjuk area stiker komentar netizen di bagian atas layar lalu mengangkat produk ke depan lensa.',
+        popupText: 'BALAS KOMEN: "KAK SPILL & AWETNYA?" 💬',
+        soundEffect: 'Comment pop-up bloop & iPhone ping',
+        dialogVO: 'Buat kakak yang kemarin komen nanyain ini beneran awet atau gak, sini aku jawab sambil tes langsung!',
+        notesMood: 'Gaya teks: TikTok Reply Comment Sticker.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'POV Hands-Only (Hanya Tangan & Produk)',
+        visualAction: 'Tangan mendemonstrasikan poin yang ditanyakan netizen dari sudut pandang orang pertama secara jujur.',
+        popupText: 'JAWABAN JUJUR: INI BUKTINYA 👀',
+        soundEffect: 'Fast whip whoosh & Crisp click',
+        dialogVO: 'Kalau dipakai rutin tiap hari, satu kemasan ini bisa tahan sebulan lebih dan hasilnya stabil banget.',
+        notesMood: 'Gaya teks: Minimalist Q&A Card.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
+        visualAction: 'Menunjukkan segel, tanggal kedaluwarsa/garansi, dan cara cek produk original.',
+        popupText: 'PASTIKAN BELI YANG ORI DI SINI ✅',
+        soundEffect: 'Sparkle magic ting & Bell counter ding',
+        dialogVO: 'Pastikan juga ambil dari toko resminya biar dapet kualitas asli dan garansi penuh.',
+        notesMood: 'Gaya teks: Trust Badge Original.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Medium Shot (Setengah Badan)',
+        visualAction: 'Kreator tersenyum ramah menunjuk tautan keranjang di bawah layar.',
+        popupText: 'LINK RESMI SUDAH DI SEMATKAN 👇🛒',
+        soundEffect: 'Cha-ching cash register',
+        dialogVO: 'Link yang aku pakai udah ku-sematin di keranjang di bawah, mumpung stok variannya masih lengkap!',
+        notesMood: 'Gaya teks: Friendly CTA Bubble.',
+        duration: 3
+      }
+    ]
+  },
+  {
+    id: 'routine_ritual',
+    name: 'Morning / Night Routine Ritual',
+    iconName: 'Sun',
+    badgeText: 'ROUTINE RITUAL',
+    description: 'Montase rutinitas pagi/malam estetik menenangkan yang menyelipkan produk sebagai bagian wajib self-care atau gaya hidup.',
+    recommendedDuration: 40,
+    categoryHashtags: ['#MorningRoutine', '#NightRoutine', '#SelfCareIndonesia', '#AestheticVlog'],
+    defaultScenes: [
+      {
+        cameraAngle: 'Walk-and-Talk Gimbal Follow (Jalan Santai Estetik)',
+        visualAction: 'Cahaya pagi hangat masuk dari tirai jendela, kreator berjalan santai menuju meja rias/kerja yang bersih.',
+        popupText: '5 MENIT RITUAL ANTI-BURU-BURU ☀️',
+        soundEffect: 'Wind gust breeze & Acoustic chime',
+        dialogVO: 'Mulai hari dengan mood tenang ternyata sesimpel nyiapin lima menit buat rutinitas wajib ini.',
+        notesMood: 'Gaya teks: Golden Hour Sunlight & Clean Serif.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'Flat Lay / Top-down (Meja Estetik)',
+        visualAction: 'Tangan mengambil produk secara lembut dari nampan keramik estetik dengan bayangan pagi natural.',
+        popupText: 'STEP UTAMA YANG GAK PERNAH SKIP ✨',
+        soundEffect: 'Magnetic lid snap click & Soft pop',
+        dialogVO: 'Dari semua step yang aku punya, bagian ini yang paling gak pernah aku lewatin karena efeknya instan.',
+        notesMood: 'Gaya teks: Minimalist Handwritten.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'Mirror Reflection Shot (Kaca GRWM)',
+        visualAction: 'Pantulan cermin memperlihatkan kreator mengaplikasikan produk dengan rileks dan senyum tenang.',
+        popupText: 'NYAMAN, RINGAN & AUTO FRESH 🌿',
+        soundEffect: 'Spray mist hiss crisp & Sparkle magic ting',
+        dialogVO: 'Sensasinya seger banget di awal, bikin siap beraktivitas seharian tanpa rasa risih.',
+        notesMood: 'Gaya teks: Soft Glow Aesthetic.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'Close-up (Face / Ekspresi)',
+        visualAction: 'Kreator mengangkat kemasan produk di dekat jendela berawan lembut dan menatap kamera hangat.',
+        popupText: 'STOK RUTINITAS DI KERANJANG BAWAH 🛒',
+        soundEffect: 'Bell counter ding & Soft swoosh',
+        dialogVO: 'Kalau lagi nyari produk buat ngelengkapin rutinitas kamu, cek aja di keranjang di bawah ya.',
+        notesMood: 'Gaya teks: Cozy Lifestyle CTA.',
+        duration: 3
+      }
+    ]
+  },
+  {
+    id: 'dupe_hunter',
+    name: 'Dupe Hunter (Hemat Rasa Mewah)',
+    iconName: 'Gem',
+    badgeText: 'DUPE HUNTER',
+    description: 'Berburu alternatif produk viral berharga jauh lebih terjangkau dengan performa, finishing, atau kemasan setara versi mahal.',
+    recommendedDuration: 30,
+    categoryHashtags: ['#DupeAlert', '#HematCerdas', '#RacunHemat', '#WorthItBanget'],
+    defaultScenes: [
+      {
+        cameraAngle: 'Split-Screen Multi-Angle (Dua Sudut Sekaligus)',
+        visualAction: 'Layar terbagi memperlihatkan opsi mahal di kiri vs produk hemat andalan di kanan dengan pencahayaan crisp.',
+        popupText: 'HARGA SEPEREMPATNYA, KUALITAS SAMA?! 🤯',
+        soundEffect: 'Vine boom / Bass drop & Cash register',
+        dialogVO: 'Serius masih mau keluar duit ratusan ribu kalau ternyata ada versi hematnya yang performanya nyaris kembar?',
+        notesMood: 'Gaya teks: Split Price Comparison Alert.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Macro Droplet / Swatch Texture (Ultra Detail)',
+        visualAction: 'Kamera makro memperlihatkan tekstur, detail material, atau finish produk saat diuji berdampingan.',
+        popupText: 'TES TEKSTUR & FINISHING: 99% MIRIP! 💎',
+        soundEffect: 'Camera shutter click & Sparkle magic ting',
+        dialogVO: 'Lihat dari dekat deh, mulai dari detail finishing sampai kenyamanannya pas dipakai beneran gak kalah jauh.',
+        notesMood: 'Gaya teks: Luxury Gold Badge.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'POV / Handheld (First-Person)',
+        visualAction: 'Tangan menunjukkan hasil pemakaian nyata dan mengetuk label harga hemat di layar.',
+        popupText: 'HEMAT PULUHAN RIBU TIAP BULAN 💸',
+        soundEffect: 'Level up victory chime & Finger snap click',
+        dialogVO: 'Sisa budget-nya bisa kamu alihkan buat kebutuhan lain tanpa harus turunin standar kualitas.',
+        notesMood: 'Gaya teks: Smart Buyer Calculator Tag.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Low Angle (Hero / Powerful)',
+        visualAction: 'Kreator mengangkat produk dengan bangga dan menunjuk tombol keranjang bawah.',
+        popupText: 'AMANKAN DUPE TERBAIK DI BAWAH! 🛒🔥',
+        soundEffect: 'Cha-ching cash register & Applause',
+        dialogVO: 'Mumpung belum viral dan kehabisan stok, langsung amankan di keranjang di bawah sekarang!',
+        notesMood: 'Gaya teks: Bold Neon CTA.',
+        duration: 3
+      }
+    ]
   }
 ];
 
@@ -869,6 +1057,11 @@ export const CAMERA_ANGLE_PRESETS = [
   'Walk-and-Talk Gimbal Follow (Jalan Santai Estetik)',
   'Whip-Pan Outfit / Result Reveal (Transisi Putar)',
   'Macro Droplet / Swatch Texture (Ultra Detail)',
+  'Dolly Zoom / Vertigo Reveal (Dramatis)',
+  'Time-Lapse Transformation Cut (Harian / Progres)',
+  'Macro Pour / Spray Slow-Motion (Cairan & Mist)',
+  'Split-Frame Reaction & Product Demo',
+  'Overhead Desk Tour Pan (Meja Rapi)',
   'Eye-Level (Natural Eye)',
   'Close-up (Face / Ekspresi)',
   'Extreme Close-up / Macro (Tekstur & Detail)',
@@ -993,6 +1186,163 @@ export const CAMERA_ANGLE_STYLES: CameraAngleStyleOption[] = [
     badge: 'Comparison & Story',
     description: 'Kombinasi layar belah dua untuk uji produk vs kompetitor dan kamera jalan santai bercerita natural.',
     recommendedAngles: ['Split-Screen Multi-Angle (Dua Sudut Sekaligus)', 'Walk-and-Talk Gimbal Follow (Jalan Santai Estetik)', 'Macro Droplet / Swatch Texture (Ultra Detail)', 'Over the Shoulder (OTS)']
+  },
+  {
+    id: 'soft_aesthetic_daylight',
+    name: 'Soft Aesthetic & Golden Hour (Clean Girl / Cozy)',
+    badge: 'Aesthetic Glow',
+    description: 'Cahaya jendela pagi/sore hangat, panning lembut, komposisi bersih menenangkan ala clean-girl & daily routine.',
+    recommendedAngles: ['Walk-and-Talk Gimbal Follow (Jalan Santai Estetik)', 'Flat Lay / Top-down (Meja Estetik)', 'Mirror Reflection Shot (Kaca GRWM)', 'Slow Zoom-In Push (Dramatis Fokus)']
+  },
+  {
+    id: 'studio_macro_tech',
+    name: 'Crisp Studio Commercial & Tech Detail (Minimalis Tajam)',
+    badge: 'Studio Tech',
+    description: 'Meja setup rapi, gerakan kamera presisi mengitari gadget/botol, sorotan slow-motion mist & detail material.',
+    recommendedAngles: ['Overhead Desk Tour Pan (Meja Rapi)', 'Macro Pour / Spray Slow-Motion (Cairan & Mist)', '360° Product Orbit / Spin (Putaran Produk)', 'Extreme Close-up / Macro (Tekstur & Detail)']
+  },
+  {
+    id: 'live_dual_energy',
+    name: 'Live Commerce Host & Dynamic Framing (Checkout Cepat)',
+    badge: 'Live Energy',
+    description: 'Framing interaktif khas live host dengan split-frame reaksi + demo langsung dan snap-zoom menuju etalase.',
+    recommendedAngles: ['Split-Frame Reaction & Product Demo', 'Front Camera / Selfie Mode (Curhat Langsung)', 'Snap-Zoom Product Punch (Zoom Cepat Beat Drop)', 'Low Angle (Hero / Powerful)']
+  },
+  {
+    id: 'narrative_cinematic_broll',
+    name: 'Narrative B-Roll & Storytelling Montage (Film Pendek)',
+    badge: 'Cinematic Story',
+    description: 'Rangkaian B-roll emosional, time-lapse progres pemakaian, dan transisi whip-pan untuk cerita transformasi nyata.',
+    recommendedAngles: ['Time-Lapse Transformation Cut (Harian / Progres)', 'Dolly Zoom / Vertigo Reveal (Dramatis)', 'Side Profile 45° (Angle Samping)', 'Tracking Following Shot (Gerak Mengikuti)']
+  }
+];
+
+export const VOICE_TONE_OPTIONS: VoiceToneOption[] = [
+  {
+    id: 'bestie_curhat',
+    name: 'Santai, Mengalir & Natural (Teman Curhat)',
+    badge: 'Bestie Natural',
+    pacing: 'Sedang • Hangat',
+    description: 'Ngobrol akrab kayak lagi curhat ke sahabat sendiri, tanpa nada jualan kaku.',
+    directive: 'Gunakan diksi percakapan sehari-hari Indonesia ("aku/kamu", "jujur", "deh", "sih"), kalimat mengalir santai seolah sedang voice note ke teman dekat.',
+    sampleOpener: 'Jujur awalnya aku gak ekspek bakal kepake sesering ini sih...'
+  },
+  {
+    id: 'spill_fyp_enerjik',
+    name: 'Spill Racun Enerjik & Hype (Fast-Cut FYP)',
+    badge: 'Spill FYP',
+    pacing: 'Cepat • Antusias',
+    description: 'Tempo lincah, ekspresif, cocok untuk video racun belanja dengan cut cepat dan beat musik.',
+    directive: 'Gunakan tempo kalimat pendek-pendek, enerjik, antusias tinggi, ekspresi kagum otentik tanpa terdengar dibuat-buat.',
+    sampleOpener: 'Fix kalian wajib masukin ini ke wishlist sebelum stoknya ilang lagi!'
+  },
+  {
+    id: 'skeptis_plot_twist',
+    name: 'Skeptis Jadi Yakin (Review Jujur Tanpa Endorse)',
+    badge: 'Plot Twist',
+    pacing: 'Sedang • Kritis',
+    description: 'Dimulai dari rasa ragu atau komentar objektif lalu berubah takjub setelah uji coba nyata.',
+    directive: 'Mulai dengan nada kritis/ragu, tampilkan observasi jujur (termasuk detail minus kecil bila perlu), lalu tutup dengan konklusi meyakinkan berbasis bukti.',
+    sampleOpener: 'Tadinya ku-kira cuma menang viral doang, ternyata pas dites seminggu...'
+  },
+  {
+    id: 'storytelling_emosional',
+    name: 'Storytelling Emosional & Problem Solver',
+    badge: 'Storytime',
+    pacing: 'Mengalir • Empatik',
+    description: 'Membangun kedekatan lewat cerita kegelisahan sebelum menemukan solusi nyata.',
+    directive: 'Gunakan alur cerita awal-konflik-pencerahan, sentuh rasa frustrasi spesifik audiens secara empatik sebelum masuk ke manfaat produk.',
+    sampleOpener: 'Dulu tiap mau berangkat selalu keteteran, sampai akhirnya nemu jalan keluar ini.'
+  },
+  {
+    id: 'edukatif_expert',
+    name: 'Edukatif, Kredibel & Berwibawa (Dokter / Expert)',
+    badge: 'Expert / Lab',
+    pacing: 'Tenang • Jelas',
+    description: 'Berbasis fakta, komposisi bahan, mekanisme kerja, dan uji pemakaian yang rapi.',
+    directive: 'Gunakan bahasa informatif yang mudah dipahami, sebut alasan logis/cara kerja produk secara tenang, objektif, dan terpercaya tanpa overclaim.',
+    sampleOpener: 'Biar gak asal fomo, yuk pahami dulu kenapa formulanya bekerja seefektif ini.'
+  },
+  {
+    id: 'genz_witty',
+    name: 'Gen-Z Witty, Sat-Set & Sarkas Halus',
+    badge: 'Gen-Z Sat-Set',
+    pacing: 'Cepat • Snappy',
+    description: 'Singkat, punchy, pakai humor tipis dan bahasa anak muda kekinian yang langsung ke inti.',
+    directive: 'Gunakan gaya bahasa Gen-Z yang lincah ("sat-set", "literally", "valid no debat"), kalimat padat bebas basa-basi, dan transisi witty.',
+    sampleOpener: 'No drama no ribet, 10 detik kelar dan hasilnya udah cakep.'
+  },
+  {
+    id: 'asmr_bisik',
+    name: 'Soft-Spoken, ASMR Bisik & Sensory',
+    badge: 'ASMR Sensory',
+    pacing: 'Pelan • Intimate',
+    description: 'Suara pelan/bisikan dekat mic menonjolkan bunyi kemasan, tekstur, dan rasa rileks.',
+    directive: 'Buat kalimat pendek bernada lembut/bisikan di dekat mic, arahkan perhatian penonton ke suara foley (klik, crinkle, tuang, oles) dan sensasi tekstur.',
+    sampleOpener: '(Bisik pelan) Dengerin bunyi segelnya dulu... terus lihat teksturnya pas disentuh.'
+  },
+  {
+    id: 'live_commerce_urgent',
+    name: 'Live Commerce Host & FOMO Mendesak',
+    badge: 'Live Host',
+    pacing: 'Cepat • Persuasif',
+    description: 'Vokal bertenaga khas host live shopping, menyorot nilai bundle, voucher, dan kelangkaan stok.',
+    directive: 'Gunakan energi host live shopping yang hangat namun mendesak: soroti value promo, bonus, dan urgensi stok menipis secara natural.',
+    sampleOpener: 'Yang kemarin kehabisan pas live, barusan etalasenya baru restock lagi nih!'
+  },
+  {
+    id: 'komedi_sketsa',
+    name: 'Komedi Ekspresif, Blunder & Drama Sketsa',
+    badge: 'Komedi Viral',
+    pacing: 'Dinamis • Ekspresif',
+    description: 'Penuh punchline lucu, ekspresi kaget, atau dialog dua sisi yang memancing komentar.',
+    directive: 'Buat dialog jenaka, reaksi kaget spontan, atau percakapan dua karakter kontras yang menghibur sambil menonjolkan fungsi produk.',
+    sampleOpener: 'Lah kok bisa secepet itu?! Kenapa gak bilang dari kemarin sih!'
+  },
+  {
+    id: 'quiet_luxury',
+    name: 'Quiet Luxury, Elegan & Berkelas',
+    badge: 'High-End Chic',
+    pacing: 'Tenang • Berkelas',
+    description: 'Pemilihan kata rapi, berwibawa, halus, fokus pada craftsmanship dan pengalaman premium.',
+    directive: 'Gunakan diksi elegan, tenang, tidak berteriak, tonjolkan detail material, ketahanan, dan kesan mewah yang effortless.',
+    sampleOpener: 'Detail kecil kayak gini yang bikin pemakaian harian terasa jauh lebih refined.'
+  },
+  {
+    id: 'smart_buyer_math',
+    name: 'Smart Buyer & Hitung-Hitungan Hemat',
+    badge: 'Value Logic',
+    pacing: 'Lugas • Rasional',
+    description: 'Menyentuh logika penghematan biaya/waktu per hari dan perbandingan kualitas vs harga.',
+    directive: 'Sajikan hitungan logis biaya per hari atau perbandingan nilai vs alternatif mahal sehingga audiens merasa cerdas jika membeli.',
+    sampleOpener: 'Kalau dihitung cuma seribuan sehari, tapi awetnya bisa berbulan-bulan.'
+  },
+  {
+    id: 'reply_netizen_qa',
+    name: 'Balas Komentar Netizen (Q&A Interaktif)',
+    badge: 'Reply Comment',
+    pacing: 'Interaktif • Akrab',
+    description: 'Terasa seperti langsung menjawab pertanyaan spesifik di kolom komentar.',
+    directive: 'Buka dan alirkan kalimat seperti merespons langsung pertanyaan netizen ("Buat yang kemarin nanya..."), lalu tunjukkan bukti nyatanya.',
+    sampleOpener: 'Buat yang kemarin nanya tahan berapa jam di kolom komentar, nih buktinya!'
+  },
+  {
+    id: 'soft_aesthetic_poetic',
+    name: 'Soft Aesthetic, Hangat & Poetic Lifestyle',
+    badge: 'Cozy Aesthetic',
+    pacing: 'Lembut • Hangat',
+    description: 'Kalimat puitis ringan yang menyatu dengan daily vlog menenangkan dan visual golden hour.',
+    directive: 'Gunakan kalimat hangat, puitis ringan, menenangkan, fokus pada mood baik dan kenyamanan rutinitas sehari-hari.',
+    sampleOpener: 'Hal kecil di pagi hari yang selalu berhasil bikin mood balik lagi.'
+  },
+  {
+    id: 'direct_hard_selling',
+    name: 'To-The-Point Hard Selling (Langsung Bukti)',
+    badge: 'Direct CTA',
+    pacing: 'Tegas • Padat',
+    description: 'Tanpa basa-basi, detik 1 langsung lihat masalah + solusi + keunggulan + ajakan checkout.',
+    directive: 'Langsung ke inti masalah, tunjukkan fungsi utama secara padat dan jelas, serta akhiri dengan CTA konversi yang kuat.',
+    sampleOpener: 'Butuh solusi yang langsung kelihatan hasilnya tanpa ribet? Ini jawabannya.'
   }
 ];
 

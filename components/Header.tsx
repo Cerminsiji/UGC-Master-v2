@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   HardDrive,
   Clapperboard,
+  Music,
 } from 'lucide-react';
 import { StoryboardViewMode, Scene } from '../types';
 import { formatDuration } from '../utils/helpers';
@@ -180,6 +181,18 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Clapperboard className="w-3.5 h-3.5" />
             <span>Motion Control</span>
+          </button>
+
+          <button
+            onClick={() => onViewModeChange('tiktok_dance')}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${
+              viewMode === 'tiktok_dance'
+                ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white shadow-md shadow-pink-900/40'
+                : 'text-pink-300 hover:text-white'
+            }`}
+          >
+            <Music className="w-3.5 h-3.5" />
+            <span>TikTok Dance</span>
           </button>
 
           <button

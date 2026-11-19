@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Type } from '@google/genai';
-import { generateWithFallback, parseSafeJson } from '@/lib/gemini-ugc';
+import { generateWithFallback, parseSafeJson, getVoiceToneDirective } from '@/lib/gemini-ugc';
 
 interface SceneSummaryInput {
   order?: number;
@@ -11,6 +11,10 @@ interface SceneSummaryInput {
   soundEffect?: string;
   notesMood?: string;
   duration?: number;
+}
+
+function pickRandom<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)] || items[0];
 }
 
 async function handleEnhanceSceneRequest(body: any) {
@@ -80,6 +84,8 @@ async function handleEnhanceSceneRequest(body: any) {
       ? `ATURAN PLATFORM TIKTOK SHOP: Jika adegan ini berisi CTA, gunakan "Keranjang Kuning" atau "Klik keranjang di bawah".`
       : `ATURAN CTA: Jika adegan ini berisi CTA, gunakan kalimat universal "Klik keranjang di bawah".`;
 
+    const toneDirective = getVoiceToneDirective(tone);
+
     const continuityMandate = `
 === KONTEKS ALUR STORYBOARD LENGKAP (${scenePositionLabel}) ===
 ${fullTimelineContext}
@@ -96,10 +102,10 @@ ATURAN WAJIB KESINAMBUNGAN ANTAR-ADEGAN (SCENE-TO-SCENE CONTINUITY):
         ? `ANTARKAN KE ADEGAN BERIKUTNYA (Adegan ${resolvedIndex + 2}): Adegan sesudahnya berbunyi "${nextScene.dialogVO || nextScene.visualAction}". Akhiri adegan ini dengan transisi visual & jembatan narasi yang mengantar masuk ke adegan berikutnya secara logis!`
         : 'Ini adalah ADEGAN PENUTUP (Closing/CTA): simpulkan pembuktian dari adegan-adegan sebelumnya dan arahkan penonton untuk checkout sekarang.'
     }
-4. ANTI-MONOTON SUDUT KAMERA & POP-UP:
+4. ANTI-MONOTON SUDUT KAMERA, VO & POP-UP:
    - Gunakan sudut kamera yang BERBEDA dan kontras dari ${prevScene ? `"${prevScene.cameraAngle}"` : 'adegan lain'} maupun ${nextScene ? `"${nextScene.cameraAngle}"` : 'adegan akhir'} agar potongan visual terasa dinamis!
-   - Buat popupText yang singkat, punchy, variatif, dan tidak mengulang teks pop-up adegan lain.
-   - Variasikan gaya bahasa dialogVO agar selaras dengan persona "${persona || 'Kreator UGC Natural'}" dan tone "${tone || 'Santai & Relatable'}", menggunakan Bahasa Indonesia percakapan sehari-hari yang natural (bukan bahasa robot/iklan kaku).`;
+   - Buat popupText yang singkat, punchy, variatif, dan tidak mengulang teks pop-up adegan lain (hindari teks generik "KEUNGGULAN: ..." atau "SOLUSI TERBAIK").
+   - Variasikan gaya bahasa dialogVO sesuai persona "${persona || 'Kreator UGC Natural'}" dan tone "${tone || 'Santai & Relatable'}" (${toneDirective}) dengan Bahasa Indonesia percakapan sehari-hari yang natural.`;
 
     const physicsMandate = enforcePhysics
       ? `
@@ -117,7 +123,7 @@ DETAIL PRODUK & KONTEKS:
 - Keunggulan Utama (USP): "${keySellingPoints || '-'}"
 - Kategori Konten: "${category}"
 - Persona Talent: "${persona || 'Kreator UGC Natural'}"
-- Tone Suara / Gaya VO: "${tone || 'Santai, Mengalir & Natural'}"
+- Tone Suara / Gaya VO: "${tone || 'Santai, Mengalir & Natural'}" (${toneDirective})
 - Target Audiens: "${targetAudience || 'Pengguna media sosial Indonesia'}"
 - Gaya Kamera Utama: "${cameraAngleStyle || 'Dinamis & Multi-Angle'}"
 - Instruksi Tambahan: "${instruction}"
@@ -152,7 +158,7 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan dan menyatu kuat deng
           dialogVO: {
             type: Type.STRING,
             description:
-              'Narasi VO natural yang menyambung langsung dari kalimat adegan sebelumnya dan mengantar ke adegan berikutnya sesuai persona.',
+              'Narasi VO natural yang menyambung langsung dari kalimat adegan sebelumnya dan mengantar ke adegan berikutnya sesuai persona & voice tone.',
           },
           notesMood: { type: Type.STRING },
           duration: { type: Type.INTEGER },
@@ -172,7 +178,7 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan dan menyatu kuat deng
     const rawText = await generateWithFallback(
       prompt,
       config,
-      'You are an elite UGC Creative Director. When polishing a middle or specific scene, you strictly preserve narrative continuity, logical pacing, and visual contrast with the previous and next scenes in the storyboard while keeping physical laws and lighting consistency intact.'
+      'You are an elite UGC Creative Director. When polishing a middle or specific scene, you strictly preserve narrative continuity, voice tone consistency, logical pacing, and visual contrast with the previous and next scenes in the storyboard while keeping physical laws and lighting consistency intact.'
     );
     const parsedScene = parseSafeJson<any>(rawText);
 
@@ -181,7 +187,7 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan dan menyatu kuat deng
       : 'natural product showcase, consistent lighting, photorealistic 9:16 vertical 4k 60fps';
 
     if (parsedScene && parsedScene.visualAction) {
-      const popupText = parsedScene.popupText || scene.popupText || 'HASIL NYATA TERBUKTI ✨';
+      const popupText = parsedScene.popupText || scene.popupText || 'BUKTI NYATA TANPA FILTER ✨';
       const angle = parsedScene.cameraAngle || scene.cameraAngle || 'Medium Shot';
       const flowPrompt = `[Image 1 Reference: ${productName || 'Produk'}] Scene ${
         resolvedIndex >= 0 ? resolvedIndex + 1 : scene.order || 1
@@ -200,7 +206,14 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan dan menyatu kuat deng
       });
     }
 
-    // Context-aware fallback when Gemini is offline/unavailable
+    // Context-aware & varied fallback when Gemini is offline/unavailable
+    const usedPopups = new Set(
+      normalizedScenes.map((s) => String(s.popupText || '').trim().toUpperCase()).filter(Boolean)
+    );
+    const usedSfx = new Set(
+      normalizedScenes.map((s) => String(s.soundEffect || '').trim().toLowerCase()).filter(Boolean)
+    );
+
     const fallbackAnglePool = [
       'Extreme Close-up / Macro (Tekstur & Detail)',
       'Over the Shoulder (OTS)',
@@ -208,36 +221,39 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan dan menyatu kuat deng
       'POV / Handheld (First-Person)',
       'Side Profile 45° (Angle Samping)',
       'Snap-Zoom Product Punch (Zoom Cepat Beat Drop)',
+      'Dolly Zoom / Vertigo Reveal (Dramatis)',
     ].filter((a) => a !== prevScene?.cameraAngle && a !== nextScene?.cameraAngle);
     const chosenAngle =
-      scene.cameraAngle &&
-      scene.cameraAngle !== prevScene?.cameraAngle &&
-      scene.cameraAngle !== nextScene?.cameraAngle
-        ? scene.cameraAngle
-        : fallbackAnglePool[0] || 'Over the Shoulder (OTS)';
+      fallbackAnglePool.length > 0
+        ? pickRandom(fallbackAnglePool)
+        : scene.cameraAngle || 'Over the Shoulder (OTS)';
 
     const uspSnippet = keySellingPoints ? keySellingPoints.split(/[,.;]/)[0]?.trim() : '';
     const bridgeIntro = prevScene
       ? resolvedIndex === totalCount - 1
-        ? `Nah, dari semua pembuktian tadi`
-        : `Lanjut dari situ`
-      : `Jujur`;
+        ? pickRandom(['Nah, dari semua bukti tadi', 'Singkatnya', 'Biar gak kehabisan lagi'])
+        : pickRandom(['Lanjut dari situ', 'Nah bagian serunya nih', 'Pas dicek lebih dekat'])
+      : pickRandom(['Jujur aja', 'Awalnya sempet ragu sih', 'Beneran baru ngeh']);
+
     const bridgeOutro = nextScene
       ? resolvedIndex === 0
-        ? `Makanya lihat langsung detailnya!`
-        : `Nah, bagian paling kerasa ada di tahap berikutnya.`
+        ? pickRandom(['Lihat sendiri deh detail aslinya!', 'Sini ku-tunjukin buktinya.'])
+        : pickRandom(['Dan bagian paling kerasa ada di tahap berikutnya.', 'Makanya efeknya langsung kelihatan.'])
       : isShopee
-      ? `Langsung checkout di keranjang oren sekarang ya!`
-      : `Langsung cek di keranjang di bawah sekarang ya!`;
+      ? pickRandom(['Langsung checkout di keranjang oren sekarang ya!', 'Amankan stoknya di keranjang oren mumpung promo!'])
+      : isTikTok
+      ? pickRandom(['Langsung cek keranjang kuning mumpung masih promo!', 'Klik keranjang kuning di bawah sebelum ludes!'])
+      : pickRandom(['Langsung cek di keranjang di bawah sekarang ya!', 'Klik link di bawah sebelum kehabisan!']);
 
-    const enhancedDialog = scene.dialogVO
+    const baseVoClean = (scene.dialogVO || '').trim();
+    const enhancedDialog = baseVoClean
       ? prevScene
-        ? `${bridgeIntro}, ${scene.dialogVO.charAt(0).toLowerCase()}${scene.dialogVO.slice(1)}${
-            uspSnippet && !scene.dialogVO.toLowerCase().includes(uspSnippet.toLowerCase())
+        ? `${bridgeIntro}, ${baseVoClean.charAt(0).toLowerCase()}${baseVoClean.slice(1)}${
+            uspSnippet && !baseVoClean.toLowerCase().includes(uspSnippet.toLowerCase())
               ? ` Apalagi ${uspSnippet.toLowerCase()}.`
               : ''
           }`
-        : scene.dialogVO
+        : baseVoClean
       : `${bridgeIntro}, ${productName || 'produk ini'} beneran ngebantu banget. ${bridgeOutro}`;
 
     const enhancedVisual = scene.visualAction
@@ -246,11 +262,37 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan dan menyatu kuat deng
         } dengan genggaman 5 jari solid, inersia bobot nyata, dan pencahayaan terarah konsisten)`
       : `Kreator menampilkan detail ${productName || 'produk'} secara natural menyambung dari adegan sebelumnya dengan kontak fisik solid dan pencahayaan konsisten.`;
 
-    const fallbackPopup = scene.popupText
-      ? scene.popupText
-      : nextScene
-      ? 'DETAIL & BUKTI NYATA ✨'
-      : 'KLIK KERANJANG DI BAWAH! 🛒👇';
+    const popupCandidates = (
+      !nextScene
+        ? isShopee
+          ? ['KLIK KERANJANG OREN SEKARANG! 🛒👇', 'PROMO KERANJANG OREN HARI INI 🔥']
+          : isTikTok
+          ? ['CEK KERANJANG KUNING SEKARANG! 🛒👇', 'VOUCHER KERANJANG KUNING AKTIF 🏷️']
+          : ['KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇', 'AMANKAN PROMO HARI INI 🔥']
+        : resolvedIndex === 0
+        ? ['DETIK KE-1 LANGSUNG KAGET 😳', 'AWALNYA KIRA GIMMICK... 🤨', 'TES REAL-TIME TANPA CUT 🔍']
+        : ['DETAIL NYATA BUKAN FILTER ✨', '10 DETIK LANGSUNG TERASA ⚡', 'RINGAN & PRAKTIS DIPAKAI ✅', 'BUILD QUALITY 10/10 💎']
+    ).filter((p) => !usedPopups.has(p.toUpperCase()));
+
+    const fallbackPopup =
+      popupCandidates.length > 0
+        ? pickRandom(popupCandidates)
+        : scene.popupText || 'HASIL NYATA TANPA FILTER ✨';
+
+    const sfxCandidates = [
+      'Match-cut hand slap whoosh & Sparkle ting',
+      'Camera shutter click & Bubble pop sound',
+      'Sub-bass beat drop hit & Chime',
+      'Fast whip whoosh & Crisp ASMR tap',
+      'Level up victory chime & Soft pop',
+    ].filter((s) => !usedSfx.has(s.toLowerCase()));
+    const chosenSfx = sfxCandidates.length > 0 ? pickRandom(sfxCandidates) : 'Match-cut whoosh & Sparkle ting';
+
+    const moodCandidates = [
+      'Gaya teks: Kinetic Typography Fast-Cut. Pencahayaan directional konsisten dengan bayangan kontak realistis.',
+      'Gaya teks: Clean Modern Pill Overlay. Fokus tajam pada tekstur & reaksi natural.',
+      'Gaya teks: TikTok Reply Sticker Vibe. Cahaya jendela alami lembut.',
+    ];
 
     const fallbackFlowPrompt = `[Image 1 Reference: ${productName || 'Produk'}] Scene ${
       resolvedIndex >= 0 ? resolvedIndex + 1 : scene.order || 1
@@ -262,13 +304,9 @@ Tulis ulang adegan ini dalam format JSON yang ditingkatkan dan menyatu kuat deng
         cameraAngle: chosenAngle,
         visualAction: enhancedVisual,
         popupText: fallbackPopup,
-        soundEffect: scene.soundEffect
-          ? `${scene.soundEffect} + Smooth Riser`
-          : 'Match-cut whoosh & Sparkle ting',
+        soundEffect: chosenSfx,
         dialogVO: enhancedDialog,
-        notesMood:
-          scene.notesMood ||
-          'Gaya teks: Kinetic Typography Fast-Cut. Pencahayaan terarah konsisten dengan bayangan kontak realistis.',
+        notesMood: scene.notesMood || pickRandom(moodCandidates),
         duration: Number(scene.duration) || 3,
         googleFlowPrompt: fallbackFlowPrompt,
         imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
