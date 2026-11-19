@@ -15,6 +15,7 @@ import {
   Lock,
   ShieldCheck,
   HardDrive,
+  Clapperboard,
 } from 'lucide-react';
 import { StoryboardViewMode, Scene } from '../types';
 import { formatDuration } from '../utils/helpers';
@@ -170,6 +171,18 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           <button
+            onClick={() => onViewModeChange('motion_control')}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${
+              viewMode === 'motion_control'
+                ? 'bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'text-fuchsia-300 hover:text-white'
+            }`}
+          >
+            <Clapperboard className="w-3.5 h-3.5" />
+            <span>Motion Control</span>
+          </button>
+
+          <button
             onClick={() => onViewModeChange('rate_card')}
             className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${
               viewMode === 'rate_card'
@@ -190,7 +203,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>MetaCleaner Pro</span>
+            <span>MetaCleaner V 2.0</span>
           </button>
         </div>
 

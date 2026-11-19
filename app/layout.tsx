@@ -4,6 +4,13 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'UGC Master - Creator Studio',
   description: 'Aplikasi pembuatan dan generator storyboard UGC (User Generated Content) dengan template video viral, AI script generator, teleprompter, dan export JSON/PDF.',
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
+  },
   openGraph: {
     title: 'UGC Master - Creator Studio',
     description: 'Aplikasi pembuatan dan generator storyboard UGC (User Generated Content) dengan template video viral, AI script generator, teleprompter, dan export JSON/PDF.',

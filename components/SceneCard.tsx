@@ -21,7 +21,8 @@ import {
   Layers,
   Image as ImageIcon,
   Wand2,
-  GripVertical
+  GripVertical,
+  X,
 } from 'lucide-react';
 import type { DraggableAttributes } from '@dnd-kit/core';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
@@ -33,6 +34,8 @@ import {
   SFX_CATEGORIES,
   VO_TONE_PRESETS,
   MOOD_PRESETS,
+  POPUP_TEXT_CATEGORIES,
+  POPUP_TEXT_PRESETS,
 } from '../data/categories';
 
 export interface SceneCardProps {
@@ -53,6 +56,7 @@ export interface SceneCardProps {
   activeHookIndex?: number;
   onSelectHookVariant?: (variantIndex: number) => void;
   onAddHookVariant?: () => void;
+  onDeleteHookVariant?: (variantIndex: number) => void;
   dragHandleRef?: (element: HTMLElement | null) => void;
   dragHandleAttributes?: DraggableAttributes;
   dragHandleListeners?: SyntheticListenerMap;
@@ -77,16 +81,19 @@ export const SceneCard: React.FC<SceneCardProps> = ({
   activeHookIndex = 0,
   onSelectHookVariant,
   onAddHookVariant,
+  onDeleteHookVariant,
   dragHandleRef,
   dragHandleAttributes,
   dragHandleListeners,
   isDragging = false,
 }) => {
   const [showAngleMenu, setShowAngleMenu] = useState(false);
+  const [showPopupMenu, setShowPopupMenu] = useState(false);
   const [showSfxMenu, setShowSfxMenu] = useState(false);
   const [showMoodMenu, setShowMoodMenu] = useState(false);
   const [showVoMenu, setShowVoMenu] = useState(false);
   const [selectedSfxCat, setSelectedSfxCat] = useState<string>('Semua');
+  const [selectedPopupCat, setSelectedPopupCat] = useState<string>('Semua');
   const [copiedFlow, setCopiedFlow] = useState(false);
 
   const handleChange = (field: keyof Scene, value: any) => {
@@ -238,7 +245,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({
               onClick={() => onEnhanceAI(scene)}
               disabled={isEnhancing}
               className="p-1.5 rounded-lg text-purple-400 hover:text-purple-200 hover:bg-purple-950 transition-colors"
-              title="Poles deskripsi & dialog adegan ini dengan AI"
+              title="Poles AI Kontekstual: selaraskan adegan ini agar tetap nyambung dengan adegan sebelum & sesudahnya"
             >
               <Sparkles className={`w-3.5 h-3.5 ${isEnhancing ? 'animate-spin' : ''}`} />
             </button>
@@ -275,7 +282,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({
                   {
                     id: 'hook_a',
                     name: 'Hook A (Utama)',
-                    type: 'FOMO',
+                    type: 'Utama',
                     dialogVO: scene.dialogVO,
                     visualAction: scene.visualAction,
                     popupText: scene.popupText,
@@ -283,27 +290,54 @@ export const SceneCard: React.FC<SceneCardProps> = ({
                     duration: scene.duration,
                   },
                 ]
-            ).map((variant, vIdx) => (
-              <button
-                key={variant.id || vIdx}
-                type="button"
-                onClick={() => onSelectHookVariant && onSelectHookVariant(vIdx)}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                  activeHookIndex === vIdx
-                    ? 'bg-amber-400 text-black shadow-md font-black scale-105'
-                    : 'bg-[#192236] text-slate-300 hover:text-white border border-[#2a3854]'
-                }`}
-              >
-                {variant.name || `Hook ${String.fromCharCode(65 + vIdx)}`}
-              </button>
-            ))}
+            ).map((variant, vIdx, list) => {
+              const isActive = activeHookIndex === vIdx;
+              return (
+                <div
+                  key={variant.id || vIdx}
+                  className={`inline-flex items-center rounded-lg border transition-all ${
+                    isActive
+                      ? 'bg-amber-400 text-black border-amber-300 shadow-md'
+                      : 'bg-[#192236] text-slate-300 hover:text-white border-[#2a3854]'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSelectHookVariant && onSelectHookVariant(vIdx)}
+                    className={`px-2.5 py-1 text-xs cursor-pointer ${
+                      isActive ? 'font-black' : 'font-bold'
+                    }`}
+                    title={variant.type ? `Formula: ${variant.type}` : variant.name}
+                  >
+                    {variant.name || `Hook ${String.fromCharCode(65 + vIdx)}`}
+                  </button>
+                  {onDeleteHookVariant && list.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteHookVariant(vIdx);
+                      }}
+                      className={`pr-1.5 pl-0.5 py-1 transition-colors cursor-pointer ${
+                        isActive
+                          ? 'text-black/70 hover:text-red-700'
+                          : 'text-slate-500 hover:text-rose-400'
+                      }`}
+                      title={`Hapus ${variant.name || `Hook ${String.fromCharCode(65 + vIdx)}`}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
 
-            {onAddHookVariant && hookVariants.length < 3 && (
+            {onAddHookVariant && hookVariants.length < 5 && (
               <button
                 type="button"
                 onClick={onAddHookVariant}
-                className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-300 hover:text-white bg-purple-950/80 hover:bg-purple-900 border border-purple-700/50 transition-colors flex items-center gap-1"
-                title="Tambah varian hook pembuka (maksimal 3 variasi)"
+                className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-purple-300 hover:text-white bg-purple-950/80 hover:bg-purple-900 border border-purple-700/50 transition-colors flex items-center gap-1 cursor-pointer"
+                title="Tambah varian Hook B/C baru otomatis untuk A/B Testing (maksimal 5 varian)"
               >
                 <Plus className="w-3 h-3" />
                 <span>+ Varian Hook</span>
@@ -315,10 +349,10 @@ export const SceneCard: React.FC<SceneCardProps> = ({
             <button
               type="button"
               onClick={onOpenHooksModal}
-              className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1.5 transition-colors self-end sm:self-auto bg-amber-950/50 px-2.5 py-1 rounded-lg border border-amber-500/30"
+              className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1.5 transition-colors self-end sm:self-auto bg-amber-950/50 px-2.5 py-1 rounded-lg border border-amber-500/30 cursor-pointer"
             >
               <Flame className="w-3.5 h-3.5 text-amber-400" />
-              <span>Pilih Formula Hook Viral</span>
+              <span>8 Formula Hook Viral</span>
             </button>
           )}
         </div>
@@ -408,17 +442,28 @@ export const SceneCard: React.FC<SceneCardProps> = ({
           </div>
 
           {/* On-screen Popup Text */}
-          <div>
-            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-              <Type className="w-3 h-3 text-sky-400" />
-              <span>Teks Pop-up di Layar (Overlay TikTok)</span>
-            </label>
+          <div className="relative">
+            <div className="flex items-center justify-between mb-1">
+              <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <Type className="w-3 h-3 text-sky-400" />
+                <span>Teks Pop-up di Layar (Overlay TikTok)</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowPopupMenu(!showPopupMenu)}
+                className="text-[10px] text-sky-300 hover:text-white flex items-center gap-1 font-semibold bg-sky-950/60 hover:bg-sky-900 border border-sky-700/50 px-2 py-0.5 rounded-lg transition-colors active:scale-95 cursor-pointer"
+                title="Pilih variasi teks pop-up yang tidak monoton"
+              >
+                <span>✨ Variasi Pop-up</span>
+                <ChevronDown className="w-3 h-3" />
+              </button>
+            </div>
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 value={scene.popupText}
                 onChange={(e) => handleChange('popupText', e.target.value)}
-                placeholder="e.g. JANGAN SKIP DULU! 😱 atau HASIL 7 HARI!"
+                placeholder="e.g. BANDINGIN BEDANYA DETIK INI! ⚡"
                 className="flex-1 bg-[#0c101a] border border-[#202c44] focus:border-sky-500 rounded-xl px-3 py-1.5 text-xs font-bold text-sky-300 placeholder-slate-500 outline-none transition-colors"
               />
               {scene.popupText && (
@@ -427,6 +472,68 @@ export const SceneCard: React.FC<SceneCardProps> = ({
                 </span>
               )}
             </div>
+
+            {showPopupMenu && (
+              <div className="absolute left-0 top-full mt-1.5 w-full sm:w-[420px] max-h-72 overflow-y-auto bg-[#121929] border border-[#2b3a58] rounded-xl shadow-2xl z-30 p-2.5 space-y-2 custom-scrollbar">
+                <div className="text-[11px] font-bold text-sky-300 pb-1.5 border-b border-slate-800 flex items-center justify-between">
+                  <span>Pustaka Pop-up Viral ({POPUP_TEXT_PRESETS.length} Variasi):</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowPopupMenu(false)}
+                    className="text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded hover:bg-slate-800"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-1 pb-1">
+                  {['Semua', ...POPUP_TEXT_CATEGORIES.map((c) => c.category.split(',')[0].split(' ')[0])].map((catName) => (
+                    <button
+                      key={catName}
+                      type="button"
+                      onClick={() => setSelectedPopupCat(catName)}
+                      className={`text-[9px] px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer ${
+                        selectedPopupCat === catName
+                          ? 'bg-sky-400 text-black shadow-sm'
+                          : 'bg-[#0d121f] text-slate-400 hover:text-slate-200 border border-slate-800'
+                      }`}
+                    >
+                      {catName}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-2">
+                  {POPUP_TEXT_CATEGORIES.filter(
+                    (c) => selectedPopupCat === 'Semua' || c.category.includes(selectedPopupCat)
+                  ).map((group) => (
+                    <div key={group.category} className="space-y-1">
+                      <span className="text-[9px] font-bold text-sky-400/90 uppercase tracking-wider block px-1">
+                        {group.category}
+                      </span>
+                      <div className="space-y-0.5">
+                        {group.items.map((pop) => (
+                          <button
+                            key={pop}
+                            type="button"
+                            onClick={() => {
+                              handleChange('popupText', pop);
+                              setShowPopupMenu(false);
+                            }}
+                            className="w-full text-left text-xs px-2.5 py-1.5 rounded-lg text-sky-200 hover:bg-sky-950/60 hover:text-white transition-colors flex items-center justify-between cursor-pointer"
+                          >
+                            <span className="font-bold truncate">{pop}</span>
+                            {scene.popupText === pop && (
+                              <Check className="w-3.5 h-3.5 text-sky-400 shrink-0 ml-1" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

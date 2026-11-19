@@ -345,7 +345,12 @@ function neutralizeContainerBoxesInPlace(bytes: Uint8Array): void {
         bytes.fill(0x00, offset + headerSize, offset + size);
       } else if (['udta', 'meta', 'ilst', '©too', '©enc'].includes(type)) {
         const payload = decoder.decode(bytes.subarray(offset + headerSize, Math.min(offset + size, offset + 512)));
+        const isEmptyTombstone =
+          (type === 'udta' && payload.includes('mdirappl') && size <= 128) ||
+          (type === 'meta' && payload.includes('mdirappl') && size <= 120) ||
+          (type === 'ilst' && size <= 16);
         if (
+          isEmptyTombstone ||
           payload.includes('c2pa') ||
           payload.includes('SynthID') ||
           payload.includes('trainedAlgorithmicMedia') ||
@@ -797,13 +802,13 @@ export const MetaCleanerPro: React.FC = () => {
     {
       id: 'init-1',
       time: '--:--:--',
-      text: "[MetaCleaner v22.0 Sub-Pixel Perspective + Zero-mdta Forensics] Ready: Perspective Micro-Drift 29.97fps + 1080p BT.709 + 1/f Room Air (-49dB) + Native 2-Ref GOP.",
+      text: "[MetaCleaner V 2.0 Organic Mobile Capture] Ready: Native 30fps (Zero-Ghost) + Quasi-Aperiodic Sub-Pixel Drift + Gaussian CMOS Grain + Zero-Silence Audio + Zero-Tombstone MP4.",
       color: 'indigo',
     },
     {
       id: 'init-2',
       time: '--:--:--',
-      text: 'Membersihkan 4 lapisan sidik jari AI: Zero-mdta/Zero-Free MP4, Zero-SEI Type 6, Sub-Pixel CMOS Micro-Drift + Motion-Interp 1080p, & 1/f Room Floor + aexciter.',
+      text: 'Membersihkan 4 lapisan jejak AI & editan: Zero-Tombstone udta/meta/free MP4, Zero-SEI Type 6, Native 30fps + Gaussian Sensor Grain, & Zero-Silence Pink/Brown Voice.',
       color: 'slate',
     },
   ]);
@@ -1548,13 +1553,13 @@ export const MetaCleanerPro: React.FC = () => {
           </div>
           <div>
             <h2 className="font-bold text-base sm:text-lg leading-tight text-white flex items-center gap-2 flex-wrap">
-              <span>MetaCleaner Pro</span>
+              <span>MetaCleaner V 2.0</span>
               <span className="text-xs font-mono text-indigo-300 tabular-nums">
-                · v22.0 Sub-Pixel Perspective 1080p + Zero-mdta
+                · Organic Mobile Capture (30fps + Gaussian CMOS)
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Anti-AI 4 Lapisan: Sub-Pixel Perspective Micro-Drift 29.97fps, 1080p BT.709 + CMOS Breathing, 1/f Room Floor (-49dB) &amp; <code>aexciter</code>, + Zero-mdta/Zero-SEI Native 2-Ref MP4
+              Anti-AI &amp; Anti-Edit 4 Lapisan: Native 30fps (Bebas Frame-Blend Ghost), Sub-Pixel Quasi-Aperiodic Drift + Gaussian Sensor Grain, Audio Zero-Silence (-51dB), &amp; Zero-Tombstone MP4
             </p>
           </div>
         </div>
@@ -1635,15 +1640,15 @@ export const MetaCleanerPro: React.FC = () => {
                 <div className="space-y-1.5 text-[10px] font-mono">
                   <div className="flex items-center gap-2 text-cyan-300 bg-cyan-950/25 border border-cyan-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-                    <span>1. Sub-Pixel Perspective Micro-Drift 29.97fps + 1080p BT.709 • 0% Pulldown</span>
+                    <span>1. Native 30fps (0% Ghost) + Quasi-Aperiodic Sub-Pixel Drift + Gaussian Grain</span>
                   </div>
                   <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/25 border border-emerald-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-                    <span>2. 1/f Indoor Room Floor (-49dB) + Speech Harmonics (aexciter)</span>
+                    <span>2. Zero-Silence Indoor Pink/Brown Room (-51dB) + Natural 160k AAC Voice</span>
                   </div>
                   <div className="flex items-center gap-2 text-indigo-300 bg-indigo-950/25 border border-indigo-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
-                    <span>3. Zero-SEI + Zero-Free + Zero-mdta (Native Handler &amp; 2-Ref GOP)</span>
+                    <span>3. Zero-SEI + Zero-Free + Zero-Tombstone udta/meta/ilst (2-Ref 60-GOP)</span>
                   </div>
                 </div>
               </div>
@@ -2881,7 +2886,7 @@ export const MetaCleanerPro: React.FC = () => {
                 <span>Pembersihan 4 Lapisan Tanpa Glitch</span>
               </div>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                MetaCleaner v22 menulis ulang paket dengan <code className="text-emerald-300">-bsf:v filter_units=remove_types=6</code> (0% SEI, 0% atom <code>free</code>, 0% <code>udta/meta/mdta</code> spoofing), <strong>sub-pixel perspective micro-drift</strong> per-frame + CMOS auto-exposure breathing pada <strong>29.97fps 1080p BT.709</strong>, &amp; GOP 2-ref kamera native.
+                MetaCleaner V 2.0 menulis ulang paket dengan <code className="text-emerald-300">-bsf:v filter_units=remove_types=6</code> (0% SEI, 0% atom <code>free</code>, 0% <code>udta/meta/mdta</code> spoofing), <strong>sub-pixel quasi-aperiodic drift</strong> per-frame + CMOS sensor grain pada <strong>Native 30fps 1080p BT.709</strong>, &amp; GOP 2-ref kamera native.
               </p>
             </div>
 
@@ -2891,7 +2896,7 @@ export const MetaCleanerPro: React.FC = () => {
                 <span>Penetralan Audio TTS &amp; Vocoder AI</span>
               </div>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Detektor platform modern memindai <strong>jeda hening digital (&lt;-55dB)</strong>, <strong>hiss &gt;12kHz sintetik (&gt;-40dB)</strong>, <strong>pseudo-stereo TTS</strong>, dan <strong>cliff spektrum &gt;17kHz</strong>. MetaCleaner v22 menyuntikkan 1/f pink indoor room floor (-49dB), harmonik suara <code>aexciter</code>, &amp; AAC 256kbps <code className="text-indigo-300">-cutoff 20500</code>.
+                Detektor platform modern memindai jeda hening digital (&lt;-55dB), hiss sintetik, dan cliff spektrum. MetaCleaner V 2.0 menyuntikkan 1/f pink+brown indoor room floor (-52dB), harmonik suara <code>aexciter</code>, &amp; AAC 160kbps alami.
               </p>
             </div>
           </div>

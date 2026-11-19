@@ -1,3 +1,13 @@
+export interface SceneMotionControl {
+  danceStyle?: string;
+  cameraMovement?: string;
+  aestheticEffect?: string;
+  motionIntensity?: 'Subtle' | 'Medium' | 'Dynamic' | 'High Energy';
+  beatTempo?: 'Slow (70-90 BPM)' | 'Medium (100-120 BPM)' | 'Fast (125-140 BPM)';
+  aspectRatio?: '9:16' | '16:9' | '1:1';
+  customMotionNotes?: string;
+}
+
 export interface Scene {
   id: string;
   order: number;
@@ -10,6 +20,7 @@ export interface Scene {
   duration: number; // in seconds
   googleFlowPrompt?: string; // Prompt Google Flow Video UGC yang selalu mengikuti referensi image
   imageReferenceNote?: string; // Catatan kepatuhan visual terhadap referensi image
+  motionControl?: SceneMotionControl;
 }
 
 export interface UGCTemplateCategory {
@@ -24,12 +35,13 @@ export interface UGCTemplateCategory {
 
 export interface HookVariant {
   id: string;
-  name: string; // e.g. "Varian A (FOMO)", "Varian B (Visual Shock)"
+  name: string; // e.g. "Hook A (Utama)", "Hook B (Visual Shock)"
   type: string;
   dialogVO: string;
   visualAction: string;
   popupText: string;
   soundEffect: string;
+  notesMood?: string;
   duration: number;
 }
 
@@ -148,7 +160,8 @@ export interface AutoDetectResult {
 }
 
 export interface AIHookOption {
-  type: 'Visual Shock' | 'Negative Hook' | 'Curiosity / Question' | 'FOMO / Secret' | 'Relatable Pain Point';
+  type: string;
+  formulaGroup?: 'Visual & Proof' | 'Psikologi & FOMO' | 'Cerita & Relatable' | 'Edukasi & Twist';
   hookDialog: string;
   visualAction: string;
   popupText: string;
@@ -167,7 +180,7 @@ export interface RateCardConfig {
   notes?: string;
 }
 
-export type StoryboardViewMode = 'cards' | 'table' | 'rate_card' | 'meta_cleaner';
+export type StoryboardViewMode = 'cards' | 'table' | 'motion_control' | 'rate_card' | 'meta_cleaner';
 
 export type StorageDeployAction =
   | 'save'

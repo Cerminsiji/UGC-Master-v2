@@ -51,15 +51,48 @@ interface ConfirmDialogState {
 }
 const ScriptTableView = dynamic(
   () => import('@/components/ScriptTableView').then((mod) => mod.ScriptTableView),
-  { ssr: false }
+  {
+    ssr: false,
+    loading: () => (
+      <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-8 text-center text-xs text-slate-400 animate-pulse">
+        Memuat tampilan tabel storyboard...
+      </div>
+    ),
+  }
+);
+const MotionControlPanel = dynamic(
+  () => import('@/components/MotionControlPanel').then((mod) => mod.MotionControlPanel),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-8 text-center text-xs text-slate-400 animate-pulse">
+        Memuat Motion Control Studio...
+      </div>
+    ),
+  }
 );
 const RateCardCalculator = dynamic(
   () => import('@/components/RateCardCalculator').then((mod) => mod.RateCardCalculator),
-  { ssr: false }
+  {
+    ssr: false,
+    loading: () => (
+      <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-8 text-center text-xs text-slate-400 animate-pulse">
+        Memuat Kalkulator Rate Card...
+      </div>
+    ),
+  }
 );
 const MetaCleanerPro = dynamic(
   () => import('@/components/MetaCleanerPro').then((mod) => mod.MetaCleanerPro),
-  { ssr: false }
+  {
+    ssr: false,
+    loading: () => (
+      <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-10 text-center space-y-2 animate-pulse">
+        <div className="text-sm font-bold text-white">Memuat MetaCleaner V 2.0...</div>
+        <div className="text-xs text-slate-400">Menyiapkan engine inspeksi & pembersihan metadata video</div>
+      </div>
+    ),
+  }
 );
 const AIGeneratorModal = dynamic(
   () => import('@/components/AIGeneratorModal').then((mod) => mod.AIGeneratorModal),
@@ -94,7 +127,7 @@ import {
   StorageDeployAction,
 } from '@/types';
 import { copyToClipboard, generateId, postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
-import { formatShortCaption, generateRichFallback } from '@/lib/gemini-ugc';
+import { formatShortCaption, generateRichFallback, UGC_RD_HOOK_ARCHETYPES } from '@/lib/gemini-ugc';
 import {
   Plus,
   Sparkles,
@@ -307,6 +340,7 @@ export default function HomePage() {
   const [autoSaveCountdown, setAutoSaveCountdown] = useState<number>(AUTO_SAVE_INTERVAL_SECONDS);
   const [deployLogsVersion, setDeployLogsVersion] = useState(0);
 
+  const mainScrollRef = useRef<HTMLElement | null>(null);
   const projectsRef = useRef(projects);
   const currentProjectIdRef = useRef(currentProjectId);
   const hasUnsavedChangesRef = useRef(false);
@@ -315,6 +349,16 @@ export default function HomePage() {
     projectsRef.current = projects;
     currentProjectIdRef.current = currentProjectId;
   }, [projects, currentProjectId]);
+
+  // Reset scroll position immediately when switching tabs so MetaCleaner / Studio always appears at the top
+  useEffect(() => {
+    if (mainScrollRef.current) {
+      mainScrollRef.current.scrollTo({ top: 0, behavior: 'auto' });
+    }
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }, [viewMode]);
 
   // Show temporary toast notification
   const showToast = useCallback((msg: string) => {
@@ -661,6 +705,62 @@ export default function HomePage() {
     showToast('Judul naskah diperbarui!');
   };
 
+  // Build initial Hook A (from Scene 1) + Hook B (viral alternative) so A/B Hook testing always works
+  const buildInitialHookVariants = useCallback(
+    (
+      scenes: Scene[],
+      productName = 'Produk',
+      usp = '',
+      categoryName = 'UGC',
+      personaName = ''
+    ): HookVariant[] => {
+      if (!scenes || scenes.length === 0) return [];
+      const first = scenes[0];
+      const isHandsOnly = personaName.toLowerCase().includes('faceless') || personaName.toLowerCase().includes('hanya tangan');
+      const hookA: HookVariant = {
+        id: generateId(),
+        name: 'Hook A (Utama)',
+        type: 'Utama',
+        dialogVO: first.dialogVO,
+        visualAction: first.visualAction,
+        popupText: first.popupText,
+        soundEffect: first.soundEffect,
+        notesMood: first.notesMood,
+        duration: Number(first.duration) || 3,
+      };
+
+      const candidateArch =
+        UGC_RD_HOOK_ARCHETYPES.find(
+          (a) =>
+            ['reverse_psychology_warning', 'skeptic_turned_believer', 'social_spill_storytime', 'live_stress_test'].includes(a.id) &&
+            !first.popupText?.toLowerCase().includes(a.name.split(' ')[0].toLowerCase())
+        ) || UGC_RD_HOOK_ARCHETYPES[1];
+
+      const altBuilt = candidateArch.buildSceneOne({
+        productName: productName || 'Produk',
+        usp: usp || 'kualitas terbaik dan praktis dipakai setiap hari',
+        category: categoryName,
+        isHandsOnly,
+      });
+
+      const shortType = candidateArch.name.split('/')[0].split('(')[0].trim().slice(0, 22);
+      const hookB: HookVariant = {
+        id: generateId(),
+        name: `Hook B (${shortType})`,
+        type: candidateArch.name,
+        dialogVO: altBuilt.dialogVO,
+        visualAction: altBuilt.visualAction,
+        popupText: altBuilt.popupText,
+        soundEffect: altBuilt.soundEffect,
+        notesMood: altBuilt.notesMood,
+        duration: Number(first.duration) || 3,
+      };
+
+      return [hookA, hookB];
+    },
+    []
+  );
+
   // Select category
   const handleSelectCategory = (categoryOrId: UGCTemplateCategory | string) => {
     const categoryId = typeof categoryOrId === 'string' ? categoryOrId : categoryOrId.id;
@@ -683,8 +783,16 @@ export default function HomePage() {
         categoryId: cat.id,
         title: `Storyboard ${cat.name}`,
         scenes: newScenes,
+        hookVariants: buildInitialHookVariants(
+          newScenes,
+          p.productName || 'Produk',
+          p.keySellingPoints || '',
+          cat.name,
+          p.persona || ''
+        ),
       };
     });
+    setActiveHookIndex(0);
 
     showToast(`Format berganti ke: ${cat.name}`);
   };
@@ -700,9 +808,8 @@ export default function HomePage() {
       tone: 'warning',
       onConfirm: () => {
         setConfirmDialog(null);
-        updateCurrentProject((p) => ({
-          ...p,
-          scenes: cat.defaultScenes.map((sc, idx) => {
+        updateCurrentProject((p) => {
+          const resetScenes: Scene[] = cat.defaultScenes.map((sc, idx) => {
             const popupText =
               sc.popupText && sc.popupText.trim()
                 ? sc.popupText.trim()
@@ -722,8 +829,20 @@ export default function HomePage() {
                 (sc as any).googleFlowPrompt ||
                 `[Image 1 Reference: ${p.productName || 'Produk'}] Scene ${idx + 1} (${sc.cameraAngle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - strict physical laws, realistic gravity and mass inertia, natural hand biomechanics without clipping, consistent directional lighting with matching cast shadows, authentic camera motion, zero morphing, photorealistic 9:16 vertical, 4k 60fps.`,
             };
-          }),
-        }));
+          });
+          return {
+            ...p,
+            scenes: resetScenes,
+            hookVariants: buildInitialHookVariants(
+              resetScenes,
+              p.productName || 'Produk',
+              p.keySellingPoints || '',
+              cat.name,
+              p.persona || ''
+            ),
+          };
+        });
+        setActiveHookIndex(0);
         showToast(`Template di-reset ke default ${cat.name}`);
       },
     });
@@ -735,12 +854,49 @@ export default function HomePage() {
     setIsAIGeneratorOpen(true);
   };
 
-  // Update single scene
+  // Update single scene (also keeps active Hook A/B variant synced when Scene 1 changes)
   const handleUpdateScene = (updatedScene: Scene) => {
-    updateCurrentProject((p) => ({
-      ...p,
-      scenes: p.scenes.map((s) => (s.id === updatedScene.id ? updatedScene : s)),
-    }));
+    updateCurrentProject((p) => {
+      const nextScenes = p.scenes.map((s) => (s.id === updatedScene.id ? updatedScene : s));
+      const isFirstScene = p.scenes[0]?.id === updatedScene.id;
+      if (!isFirstScene) {
+        return { ...p, scenes: nextScenes };
+      }
+
+      const existingVariants =
+        p.hookVariants && p.hookVariants.length > 0
+          ? [...p.hookVariants]
+          : [
+              {
+                id: generateId(),
+                name: 'Hook A (Utama)',
+                type: 'Utama',
+                dialogVO: updatedScene.dialogVO,
+                visualAction: updatedScene.visualAction,
+                popupText: updatedScene.popupText,
+                soundEffect: updatedScene.soundEffect,
+                notesMood: updatedScene.notesMood,
+                duration: Number(updatedScene.duration) || 3,
+              },
+            ];
+
+      const safeIdx = Math.max(0, Math.min(activeHookIndex, existingVariants.length - 1));
+      existingVariants[safeIdx] = {
+        ...existingVariants[safeIdx],
+        dialogVO: updatedScene.dialogVO,
+        visualAction: updatedScene.visualAction,
+        popupText: updatedScene.popupText,
+        soundEffect: updatedScene.soundEffect,
+        notesMood: updatedScene.notesMood,
+        duration: Number(updatedScene.duration) || 3,
+      };
+
+      return {
+        ...p,
+        scenes: nextScenes,
+        hookVariants: existingVariants,
+      };
+    });
   };
 
   // Delete scene
@@ -860,19 +1016,40 @@ export default function HomePage() {
     showToast(`Adegan ${newOrder} ditambahkan!`);
   };
 
-  // AI Enhance Scene
+  // AI Enhance Scene (Contextual across full storyboard timeline)
   const handleEnhanceScene = async (targetScene: Scene) => {
     setEnhancingSceneId(targetScene.id);
+    const sceneIdx = currentProject.scenes.findIndex((s) => s.id === targetScene.id);
+    const resolvedIndex = sceneIdx >= 0 ? sceneIdx : Math.max(0, (targetScene.order || 1) - 1);
+
     try {
-      const data = await postJsonWithRetry<{ success?: boolean; scene?: Partial<Scene> }>(
+      const data = await postJsonWithRetry<{ success?: boolean; scene?: Partial<Scene>; contextual?: boolean }>(
         '/api/enhance-scene',
         {
           scene: targetScene,
+          sceneIndex: resolvedIndex,
+          allScenes: currentProject.scenes.map((s) => ({
+            order: s.order,
+            cameraAngle: s.cameraAngle,
+            visualAction: s.visualAction,
+            popupText: s.popupText,
+            soundEffect: s.soundEffect,
+            dialogVO: s.dialogVO,
+            notesMood: s.notesMood,
+            duration: s.duration,
+          })),
           category: activeCategory.name,
           productName: currentProject.productName,
+          productDescription: currentProject.productDescription,
+          keySellingPoints: currentProject.keySellingPoints,
+          persona: currentProject.persona,
+          tone: currentProject.tone,
           cameraAngleStyle: currentProject.cameraAngleStyle,
           targetPlatform: currentProject.targetPlatform,
-          instruction: 'make it more viral and catchy with expressive gestures, specific camera angle, and sound effect',
+          targetAudience: currentProject.targetAudience,
+          physicsConsistencyCheck: currentProject.physicsConsistencyCheck,
+          instruction:
+            'Poles adegan ini dengan menjaga kesinambungan narasi dan visual dari adegan sebelum dan sesudahnya, menggunakan gaya bahasa VO dan angle kamera yang segar serta tidak monoton.',
         }
       );
 
@@ -884,17 +1061,35 @@ export default function HomePage() {
           order: targetScene.order,
           duration: targetScene.duration,
         });
-        showToast('✨ Adegan berhasil di-polish oleh AI!');
+        showToast(
+          `✨ Adegan ${targetScene.order} berhasil di-polish & diselaraskan dengan alur cerita!`
+        );
       } else {
-        const fallbackPopup = targetScene.popupText ? `${targetScene.popupText.toUpperCase()} 🔥` : 'RAHASIA VIRAL TERUNGKAP! ✨';
+        const prevScene = resolvedIndex > 0 ? currentProject.scenes[resolvedIndex - 1] : null;
+        const nextScene =
+          resolvedIndex < currentProject.scenes.length - 1
+            ? currentProject.scenes[resolvedIndex + 1]
+            : null;
+        const bridgeHint = prevScene
+          ? `Melanjutkan momen "${(prevScene.popupText || prevScene.cameraAngle || 'adegan sebelumnya').slice(0, 32)}", `
+          : '';
+        const leadHint = nextScene
+          ? ` menuju transisi mulus ke adegan ${resolvedIndex + 2}.`
+          : '.';
+        const fallbackPopup = targetScene.popupText
+          ? targetScene.popupText.toUpperCase()
+          : 'BUKTI NYATA PALING VALID! ✨';
+
         handleUpdateScene({
           ...targetScene,
-          visualAction: `${targetScene.visualAction} (Gerakan dipertegas, mimik wajah lebih ekspresif & meyakinkan)`,
+          visualAction: `${bridgeHint}${targetScene.visualAction} Gerakan tangan dan mimik dipertegas natural${leadHint}`,
           popupText: fallbackPopup,
-          soundEffect: targetScene.soundEffect ? `${targetScene.soundEffect} + Swoosh` : 'Swoosh & Sparkle Chime',
+          soundEffect: targetScene.soundEffect
+            ? `${targetScene.soundEffect} + Fast whip whoosh`
+            : 'Fast whip whoosh & Sparkle magic ting',
           imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         });
-        showToast('✨ Adegan berhasil ditingkatkan!');
+        showToast(`✨ Adegan ${targetScene.order} berhasil ditingkatkan!`);
       }
     } catch (e) {
       console.error('Enhance scene error:', e);
@@ -904,12 +1099,46 @@ export default function HomePage() {
     }
   };
 
-  // Select Hook Variant for Scene 1
+  // Select Hook Variant for Scene 1 (snapshots active edits first and supports bootstrapped empty variants)
   const handleSelectHookVariant = (vIdx: number) => {
-    const variants = currentProject.hookVariants || [];
-    if (!variants[vIdx]) return;
+    const firstScene = currentProject.scenes[0];
+    if (!firstScene) return;
+
+    const existing = currentProject.hookVariants || [];
+    const safeCurrentIdx = existing.length > 0 ? Math.max(0, Math.min(activeHookIndex, existing.length - 1)) : 0;
+    const baseVariants: HookVariant[] =
+      existing.length > 0
+        ? existing.map((v, idx) =>
+            idx === safeCurrentIdx
+              ? {
+                  ...v,
+                  dialogVO: firstScene.dialogVO,
+                  visualAction: firstScene.visualAction,
+                  popupText: firstScene.popupText,
+                  soundEffect: firstScene.soundEffect,
+                  notesMood: firstScene.notesMood,
+                  duration: Number(firstScene.duration) || v.duration || 3,
+                }
+              : v
+          )
+        : [
+            {
+              id: generateId(),
+              name: 'Hook A (Utama)',
+              type: 'Utama',
+              dialogVO: firstScene.dialogVO,
+              visualAction: firstScene.visualAction,
+              popupText: firstScene.popupText,
+              soundEffect: firstScene.soundEffect,
+              notesMood: firstScene.notesMood,
+              duration: Number(firstScene.duration) || 3,
+            },
+          ];
+
+    const chosen = baseVariants[vIdx];
+    if (!chosen) return;
+
     setActiveHookIndex(vIdx);
-    const chosen = variants[vIdx];
     updateCurrentProject((p) => {
       const scenes = [...p.scenes];
       if (scenes[0]) {
@@ -919,16 +1148,142 @@ export default function HomePage() {
           visualAction: chosen.visualAction,
           popupText: chosen.popupText,
           soundEffect: chosen.soundEffect,
+          notesMood: chosen.notesMood ?? scenes[0].notesMood,
           duration: Number(chosen.duration) || scenes[0].duration,
         };
       }
-      return { ...p, scenes };
+      return { ...p, scenes, hookVariants: baseVariants };
     });
     showToast(`Mengaktifkan ${chosen.name}!`);
   };
 
+  // Directly add & activate a fresh A/B Hook variant (without losing Hook A)
   const handleAddHookVariant = () => {
-    setIsHooksModalOpen(true);
+    const firstScene = currentProject.scenes[0];
+    if (!firstScene) return;
+
+    const existing = currentProject.hookVariants || [];
+    if (existing.length >= 5) {
+      showToast('Maksimal 5 varian A/B Hook per project.');
+      return;
+    }
+
+    const safeCurrentIdx = existing.length > 0 ? Math.max(0, Math.min(activeHookIndex, existing.length - 1)) : 0;
+    const baseVariants: HookVariant[] =
+      existing.length > 0
+        ? existing.map((v, idx) =>
+            idx === safeCurrentIdx
+              ? {
+                  ...v,
+                  dialogVO: firstScene.dialogVO,
+                  visualAction: firstScene.visualAction,
+                  popupText: firstScene.popupText,
+                  soundEffect: firstScene.soundEffect,
+                  notesMood: firstScene.notesMood,
+                  duration: Number(firstScene.duration) || v.duration || 3,
+                }
+              : v
+          )
+        : [
+            {
+              id: generateId(),
+              name: 'Hook A (Utama)',
+              type: 'Utama',
+              dialogVO: firstScene.dialogVO,
+              visualAction: firstScene.visualAction,
+              popupText: firstScene.popupText,
+              soundEffect: firstScene.soundEffect,
+              notesMood: firstScene.notesMood,
+              duration: Number(firstScene.duration) || 3,
+            },
+          ];
+
+    const usedTypes = new Set(baseVariants.map((v) => (v.type || '').toLowerCase()));
+    const nextArch =
+      UGC_RD_HOOK_ARCHETYPES.find((a) => !usedTypes.has(a.name.toLowerCase())) ||
+      UGC_RD_HOOK_ARCHETYPES[baseVariants.length % UGC_RD_HOOK_ARCHETYPES.length];
+
+    const isHandsOnly =
+      (currentProject.persona || '').toLowerCase().includes('faceless') ||
+      (currentProject.persona || '').toLowerCase().includes('hanya tangan');
+    const built = nextArch.buildSceneOne({
+      productName: currentProject.productName || 'Produk',
+      usp: currentProject.keySellingPoints || 'kualitas terbaik dan praktis dipakai',
+      category: activeCategory.name,
+      isHandsOnly,
+    });
+
+    const letter = String.fromCharCode(65 + baseVariants.length);
+    const shortType = nextArch.name.split('/')[0].split('(')[0].trim().slice(0, 20);
+    const newVariant: HookVariant = {
+      id: generateId(),
+      name: `Hook ${letter} (${shortType})`,
+      type: nextArch.name,
+      dialogVO: built.dialogVO,
+      visualAction: built.visualAction,
+      popupText: built.popupText,
+      soundEffect: built.soundEffect,
+      notesMood: built.notesMood,
+      duration: Number(firstScene.duration) || 3,
+    };
+
+    const nextVariants = [...baseVariants, newVariant];
+    const nextActiveIdx = nextVariants.length - 1;
+
+    setActiveHookIndex(nextActiveIdx);
+    updateCurrentProject((p) => {
+      const scenes = [...p.scenes];
+      if (scenes[0]) {
+        scenes[0] = {
+          ...scenes[0],
+          dialogVO: newVariant.dialogVO,
+          visualAction: newVariant.visualAction,
+          popupText: newVariant.popupText,
+          soundEffect: newVariant.soundEffect,
+          notesMood: newVariant.notesMood ?? scenes[0].notesMood,
+          duration: newVariant.duration,
+        };
+      }
+      return { ...p, scenes, hookVariants: nextVariants };
+    });
+
+    showToast(`✨ ${newVariant.name} ditambahkan & diaktifkan!`);
+  };
+
+  // Delete an A/B Hook variant while keeping at least 1
+  const handleDeleteHookVariant = (vIdx: number) => {
+    const variants = currentProject.hookVariants || [];
+    if (variants.length <= 1) {
+      showToast('Minimal harus ada 1 varian Hook.');
+      return;
+    }
+
+    const filtered = variants.filter((_, i) => i !== vIdx);
+    const nextActiveIdx =
+      vIdx < activeHookIndex
+        ? activeHookIndex - 1
+        : vIdx === activeHookIndex
+        ? Math.max(0, Math.min(vIdx, filtered.length - 1))
+        : activeHookIndex;
+    const nextChosen = filtered[nextActiveIdx];
+
+    setActiveHookIndex(nextActiveIdx);
+    updateCurrentProject((p) => {
+      const scenes = [...p.scenes];
+      if (scenes[0] && nextChosen) {
+        scenes[0] = {
+          ...scenes[0],
+          dialogVO: nextChosen.dialogVO,
+          visualAction: nextChosen.visualAction,
+          popupText: nextChosen.popupText,
+          soundEffect: nextChosen.soundEffect,
+          notesMood: nextChosen.notesMood ?? scenes[0].notesMood,
+          duration: Number(nextChosen.duration) || scenes[0].duration,
+        };
+      }
+      return { ...p, scenes, hookVariants: filtered };
+    });
+    showToast('Varian Hook dihapus.');
   };
 
   const workspaceRefInput = useRef<HTMLInputElement | null>(null);
@@ -1125,12 +1480,20 @@ export default function HomePage() {
         caption: resolvedData.caption || formatShortCaption(params.productName, params.category, params.keySellingPoints, params.targetPlatform),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        hookVariants: buildInitialHookVariants(
+          genScenes,
+          params.productName,
+          params.keySellingPoints || '',
+          params.category,
+          params.persona || ''
+        ),
         scenes: genScenes,
       };
 
       const nextList = [newProj, ...projectsRef.current];
       setProjects(nextList);
       setCurrentProjectId(newProj.id);
+      setActiveHookIndex(0);
       setIsAIGeneratorOpen(false);
       performLocalSave(
         false,
@@ -1218,42 +1581,93 @@ export default function HomePage() {
     setIsAIGeneratorOpen(true);
   };
 
-  // Apply viral hook to Scene 1
-  const handleApplyHook = (hook: AIHookOption) => {
+  // Apply viral hook to Scene 1 (supports replacing active variant or adding new A/B variant while keeping Hook A)
+  const handleApplyHook = (hook: AIHookOption, mode: 'replace' | 'add_variant' = 'replace') => {
     if (currentProject.scenes.length === 0) return;
 
+    let resultingActiveIdx = activeHookIndex;
+
     updateCurrentProject((p) => {
+      const firstScene = p.scenes[0];
       const newScenes = [...p.scenes];
+      const updatedDuration = Math.max(2, Math.min(4, Number(firstScene.duration) || 3));
       newScenes[0] = {
-        ...newScenes[0],
+        ...firstScene,
         dialogVO: hook.hookDialog,
         visualAction: hook.visualAction,
         popupText: hook.popupText,
         soundEffect: hook.sfx,
-        duration: Math.max(2, Math.min(4, newScenes[0].duration)),
+        duration: updatedDuration,
       };
 
-      const newVariant: HookVariant = {
-        id: generateId(),
-        name: `Hook (${hook.type})`,
+      const existing =
+        p.hookVariants && p.hookVariants.length > 0
+          ? [...p.hookVariants]
+          : [
+              {
+                id: generateId(),
+                name: 'Hook A (Utama)',
+                type: 'Utama',
+                dialogVO: firstScene.dialogVO,
+                visualAction: firstScene.visualAction,
+                popupText: firstScene.popupText,
+                soundEffect: firstScene.soundEffect,
+                notesMood: firstScene.notesMood,
+                duration: Number(firstScene.duration) || 3,
+              },
+            ];
+
+      const shortType = (hook.type || 'Viral').split('/')[0].split('(')[0].trim().slice(0, 20);
+
+      if (mode === 'add_variant' && existing.length < 5) {
+        const letter = String.fromCharCode(65 + existing.length);
+        const addedVariant: HookVariant = {
+          id: generateId(),
+          name: `Hook ${letter} (${shortType})`,
+          type: hook.type,
+          dialogVO: hook.hookDialog,
+          visualAction: hook.visualAction,
+          popupText: hook.popupText,
+          soundEffect: hook.sfx,
+          notesMood: firstScene.notesMood,
+          duration: updatedDuration,
+        };
+        const nextVariants = [...existing, addedVariant];
+        resultingActiveIdx = nextVariants.length - 1;
+        return {
+          ...p,
+          scenes: newScenes,
+          hookVariants: nextVariants,
+        };
+      }
+
+      const safeIdx = Math.max(0, Math.min(activeHookIndex, existing.length - 1));
+      const letter = String.fromCharCode(65 + safeIdx);
+      existing[safeIdx] = {
+        ...existing[safeIdx],
+        name: `Hook ${letter} (${shortType})`,
         type: hook.type,
         dialogVO: hook.hookDialog,
         visualAction: hook.visualAction,
         popupText: hook.popupText,
         soundEffect: hook.sfx,
-        duration: 2,
+        duration: updatedDuration,
       };
+      resultingActiveIdx = safeIdx;
 
-      const existingVariants = p.hookVariants || [];
       return {
         ...p,
         scenes: newScenes,
-        hookVariants: [newVariant, ...existingVariants],
+        hookVariants: existing,
       };
     });
 
-    setActiveHookIndex(0);
-    showToast(`Hook "${hook.type}" berhasil dipasang di Adegan 1!`);
+    setActiveHookIndex(resultingActiveIdx);
+    showToast(
+      mode === 'add_variant'
+        ? `Varian baru "${hook.type}" ditambahkan ke A/B Hook Testing!`
+        : `Hook "${hook.type}" dipasang pada varian aktif!`
+    );
   };
 
   // Import JSON
@@ -1318,6 +1732,35 @@ export default function HomePage() {
 
   // Project management
   const handleCreateNewProject = () => {
+    const starterScenes: Scene[] = [
+      {
+        id: generateId(),
+        order: 1,
+        cameraAngle: 'POV / Close-up',
+        visualAction: 'Tangan dengan 5 jari alami mengangkat kemasan produk asli secara mantap di atas meja, melawan gravitasi dengan inersia nyata di bawah pencahayaan directional hangat.',
+        popupText: 'PERNAH NGALAMIN INI JUGA? 🤔',
+        soundEffect: 'Vine boom & Soft pop',
+        dialogVO: 'Ternyata masih banyak yang belum tahu cara paling praktis buat hasil maksimal!',
+        notesMood: 'Gaya teks: Bold Modern Tag. Pencahayaan natural realistis.',
+        duration: 3,
+        googleFlowPrompt: '[Image 1 Reference: Produk Baru] POV close-up creator holding product with anatomically realistic hand grip, authentic mass inertia, strict physical laws, matching cast shadows, consistent directional lighting, zero morphing - On-Screen Pop-up Text Overlay: "PERNAH NGALAMIN INI JUGA? 🤔" - 9:16 vertical UGC video, 4k 60fps.',
+        imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+      },
+      {
+        id: generateId(),
+        order: 2,
+        cameraAngle: 'Medium Close-up',
+        visualAction: 'Kreator memperagakan penggunaan produk dengan gerakan tangan biomekanik alami tanpa clipping di bawah pencahayaan directional yang serasi dengan bayangan jatuh nyata.',
+        popupText: 'HASIL NYATA BANGET ✨',
+        soundEffect: 'Swoosh & Chime',
+        dialogVO: 'Ini dia produk yang bikin perubahan instan dan beneran terbukti efisien!',
+        notesMood: 'Gaya teks: Clean Modern. Bayangan konsisten.',
+        duration: 3,
+        googleFlowPrompt: '[Image 1 Reference: Produk Baru] Medium close-up creator demonstrating product to camera with genuine excitement, realistic physical interaction without clipping, matching cast shadows, zero glitch - On-Screen Pop-up Text Overlay: "HASIL NYATA BANGET ✨" - branding matching reference image, 9:16 vertical 4k 60fps.',
+        imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+      },
+    ];
+
     const newProj: StoryboardProject = {
       id: generateId(),
       title: 'Naskah Storyboard Baru',
@@ -1331,39 +1774,20 @@ export default function HomePage() {
       caption: 'Wajib coba produk ini! Bikin takjub & super praktis. Klik keranjang di bawah ya! ✨ #fyp #viral',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      scenes: [
-        {
-          id: generateId(),
-          order: 1,
-          cameraAngle: 'POV / Close-up',
-          visualAction: 'Tangan dengan 5 jari alami mengangkat kemasan produk asli secara mantap di atas meja, melawan gravitasi dengan inersia nyata di bawah pencahayaan directional hangat.',
-          popupText: 'PERNAH NGALAMIN INI JUGA? 🤔',
-          soundEffect: 'Vine boom & Soft pop',
-          dialogVO: 'Ternyata masih banyak yang belum tahu cara paling praktis buat hasil maksimal!',
-          notesMood: 'Gaya teks: Bold Modern Tag. Pencahayaan natural realistis.',
-          duration: 3,
-          googleFlowPrompt: '[Image 1 Reference: Produk Baru] POV close-up creator holding product with anatomically realistic hand grip, authentic mass inertia, strict physical laws, matching cast shadows, consistent directional lighting, zero morphing - On-Screen Pop-up Text Overlay: "PERNAH NGALAMIN INI JUGA? 🤔" - 9:16 vertical UGC video, 4k 60fps.',
-          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-        },
-        {
-          id: generateId(),
-          order: 2,
-          cameraAngle: 'Medium Close-up',
-          visualAction: 'Kreator memperagakan penggunaan produk dengan gerakan tangan biomekanik alami tanpa clipping di bawah pencahayaan directional yang serasi dengan bayangan jatuh nyata.',
-          popupText: 'HASIL NYATA BANGET ✨',
-          soundEffect: 'Swoosh & Chime',
-          dialogVO: 'Ini dia produk yang bikin perubahan instan dan beneran terbukti efisien!',
-          notesMood: 'Gaya teks: Clean Modern. Bayangan konsisten.',
-          duration: 3,
-          googleFlowPrompt: '[Image 1 Reference: Produk Baru] Medium close-up creator demonstrating product to camera with genuine excitement, realistic physical interaction without clipping, matching cast shadows, zero glitch - On-Screen Pop-up Text Overlay: "HASIL NYATA BANGET ✨" - branding matching reference image, 9:16 vertical 4k 60fps.',
-          imageReferenceNote: 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
-        },
-      ],
+      hookVariants: buildInitialHookVariants(
+        starterScenes,
+        'Produk Baru',
+        'Kualitas terbaik, hasil nyata, terjangkau.',
+        'Before & After',
+        'Wanita'
+      ),
+      scenes: starterScenes,
     };
 
     const nextList = [newProj, ...projectsRef.current];
     setProjects(nextList);
     setCurrentProjectId(newProj.id);
+    setActiveHookIndex(0);
     setIsProjectsModalOpen(false);
     performLocalSave(
       false,
@@ -1570,28 +1994,33 @@ export default function HomePage() {
       {/* Main Workspace Layout */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         
-        {/* Left Sidebar: Formats & Saved Projects */}
-        <Sidebar
-          selectedCategoryId={currentProject.categoryId}
-          onSelectCategory={handleSelectCategory}
-          onTriggerAICategory={handleTriggerAICategory}
-          projects={projects}
-          currentProjectId={currentProject.id}
-          onSelectProject={(id) => {
-            setCurrentProjectId(id);
-            performLocalSave(false, projectsRef.current, id);
-          }}
-          onCreateNewProject={handleCreateNewProject}
-          onClearProjects={handleClearAllProjects}
-        />
+        {/* Left Sidebar: Formats & Saved Projects (hidden when MetaCleaner Pro active so it displays immediately at top) */}
+        {viewMode !== 'meta_cleaner' && (
+          <Sidebar
+            selectedCategoryId={currentProject.categoryId}
+            onSelectCategory={handleSelectCategory}
+            onTriggerAICategory={handleTriggerAICategory}
+            projects={projects}
+            currentProjectId={currentProject.id}
+            onSelectProject={(id) => {
+              setCurrentProjectId(id);
+              setActiveHookIndex(0);
+              performLocalSave(false, projectsRef.current, id);
+            }}
+            onCreateNewProject={handleCreateNewProject}
+            onClearProjects={handleClearAllProjects}
+          />
+        )}
 
         {/* Main Content Area */}
-        <main className="flex-1 bg-[#070a12] overflow-y-auto p-4 md:p-6 lg:p-7 custom-scrollbar">
-          <div className="max-w-6xl mx-auto space-y-5">
+        <main
+          ref={mainScrollRef}
+          className="flex-1 bg-[#070a12] overflow-y-auto p-4 md:p-6 lg:p-7 custom-scrollbar"
+        >
+          <div className={`${viewMode === 'meta_cleaner' ? 'max-w-7xl' : 'max-w-6xl'} mx-auto space-y-5`}>
 
-            {/* Context header */}
-            
-            {/* Context Bar: Current Format, Summary & Quick Triggers */}
+            {/* Context Bar: Current Format, Summary & Quick Triggers (hidden on MetaCleaner tab) */}
+            {viewMode !== 'meta_cleaner' && (
             <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-purple-950/80 border border-purple-800/60 flex items-center justify-center text-purple-300">
@@ -1665,7 +2094,7 @@ export default function HomePage() {
                   className="flex items-center gap-1.5 bg-[#141b2c] hover:bg-[#1b253b] text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-xl border border-amber-500/30 transition-all shadow-sm active:scale-95"
                 >
                   <Flame className="w-3.5 h-3.5 text-amber-400" />
-                  <span>5 Hook Viral</span>
+                  <span>8 Hook Viral</span>
                 </button>
 
                 {/* Primary Button: Ekstrak Link Produk */}
@@ -1679,6 +2108,7 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
+            )}
 
             {/* HERO DIRECT LINK EXTRACTOR BAR (TikTok, Tokopedia, Shopee + Multi-Image Reference Upload) */}
             {viewMode !== 'meta_cleaner' && (
@@ -1932,6 +2362,7 @@ export default function HomePage() {
                           activeHookIndex={activeHookIndex}
                           onSelectHookVariant={handleSelectHookVariant}
                           onAddHookVariant={handleAddHookVariant}
+                          onDeleteHookVariant={index === 0 ? handleDeleteHookVariant : undefined}
                         />
                       ))}
                     </div>
@@ -1999,7 +2430,32 @@ export default function HomePage() {
               />
             )}
 
-            {/* VIEW MODE 3: Kalkulator Rate Card & Penawaran Jasa */}
+            {/* VIEW MODE 3: Motion Control & Choreography Studio */}
+            {viewMode === 'motion_control' && (
+              <MotionControlPanel
+                scenes={currentProject.scenes}
+                projectTitle={currentProject.title}
+                productName={currentProject.productName}
+                persona={currentProject.persona}
+                referenceImages={
+                  currentProject.referenceImages && currentProject.referenceImages.length > 0
+                    ? currentProject.referenceImages
+                    : currentProject.referenceImage
+                    ? [currentProject.referenceImage]
+                    : []
+                }
+                onUpdateScene={handleUpdateScene}
+                onBatchUpdateScenes={(updater) => {
+                  updateCurrentProject((p) => ({
+                    ...p,
+                    scenes: updater(p.scenes),
+                  }));
+                }}
+                onNotify={showToast}
+              />
+            )}
+
+            {/* VIEW MODE 4: Kalkulator Rate Card & Penawaran Jasa */}
             {viewMode === 'rate_card' && (
               <RateCardCalculator
                 projectTitle={currentProject.title}
@@ -2008,7 +2464,7 @@ export default function HomePage() {
               />
             )}
 
-            {/* VIEW MODE 4: MetaCleaner Pro - FFmpeg.wasm Remux & SEI Stripper */}
+            {/* VIEW MODE 5: MetaCleaner Pro - FFmpeg.wasm Remux & SEI Stripper */}
             {viewMode === 'meta_cleaner' && <MetaCleanerPro />}
 
           </div>
@@ -2041,6 +2497,10 @@ export default function HomePage() {
           onClose={() => setIsHooksModalOpen(false)}
           productName={currentProject.productName || 'Produk'}
           category={activeCategory.name}
+          productDescription={currentProject.productDescription || ''}
+          keySellingPoints={currentProject.keySellingPoints || ''}
+          persona={currentProject.persona || ''}
+          targetPlatform={currentProject.targetPlatform || 'TikTok Shop'}
           onSelectHook={handleApplyHook}
         />
       )}
@@ -2077,6 +2537,7 @@ export default function HomePage() {
           currentProjectId={currentProject.id}
           onSelectProject={(id) => {
             setCurrentProjectId(id);
+            setActiveHookIndex(0);
             performLocalSave(false, projectsRef.current, id);
           }}
           onCreateNewProject={handleCreateNewProject}

@@ -56,6 +56,7 @@ export interface VisualAiForensics {
   hasZeroCreationTime: boolean;
   hasFfmpegMuxerBrand: boolean;
   hasSpoofedMdtaBox: boolean;
+  hasEmptyMetaTombstone: boolean;
   visualAiFlags: string[];
   visualClean: boolean;
 }
@@ -528,6 +529,7 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
   const isolatedSeiUnits: IsolatedSeiUnit[] = [];
   let hasZeroCreationTime = false;
   let hasMdtaHandler = false;
+  let hasEmptyMetaTombstone = false;
   let ftypMajorBrand = '';
   let moovFreeBoxCount = 0;
   let moovFreeBoxBytes = 0;
@@ -670,6 +672,28 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
         const bodySample = buf.subarray(offset + hdr, Math.min(offset + size, offset + hdr + 2048));
         const matches = extractAsciiKeywords(bodySample);
         const asciiPreview = sanitizeAsciiPreview(bodySample, 140);
+        const isEmptyMdirappl =
+          (type === 'udta' || type === 'meta') &&
+          size <= 128 &&
+          bodySample.includes(Buffer.from('mdirappl'));
+        const isEmptyIlst = type === 'ilst' && size <= 16;
+        if (isEmptyMdirappl || isEmptyIlst) {
+          if (!hasEmptyMetaTombstone && isolatedMetadataBlocks.length < 40) {
+            isolatedMetadataBlocks.push({
+              id: `box_${offsetHex}_empty_mdirappl_ilst`,
+              category: 'UDTA_META',
+              boxOrStreamName: type,
+              path: currentPath,
+              offsetHex,
+              sizeBytes: size,
+              asciiPreview: asciiPreview || `(empty ${type} tombstone)`,
+              matchedKeywords: ['empty_mdirappl_ilst'],
+              isAiTrigger: true,
+              triggerReason: 'Empty udta/meta/ilst tombstone signature khas FFmpeg -map_metadata -1 terdeteksi',
+            });
+          }
+          hasEmptyMetaTombstone = true;
+        }
         if ((matches.length > 0 || type === 'tmcd') && isolatedMetadataBlocks.length < 40) {
           isolatedMetadataBlocks.push({
             id: `box_${offsetHex}_${type}`,
@@ -937,6 +961,7 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
     jumbfManifests,
     hasZeroCreationTime,
     hasSpoofedMdtaBox,
+    hasEmptyMetaTombstone,
     moovFreeBoxCount,
     moovFreeBoxBytes,
     binarySeiCount,
@@ -971,6 +996,7 @@ async function analyzeAudioVisualForensics(
   fmtTags: Record<string, string>,
   hasZeroCreationTime: boolean,
   hasSpoofedMdtaBox: boolean,
+  hasEmptyMetaTombstone: boolean,
   moovFreeBoxCount: number,
   moovFreeBoxBytes: number
 ): Promise<AudioVisualForensicsReport> {
@@ -1073,7 +1099,7 @@ async function analyzeAudioVisualForensics(
   if (hasAudio) {
     try {
       const filterBranches = [
-        '[0:a]silencedetect=noise=-55dB:d=0.10,astats=measure_perchannel=0[raw]',
+        '[0:a]silencedetect=noise=-55dB:d=0.05,astats=measure_perchannel=0[raw]',
         '[0:a]lowpass=f=4000,astats=measure_perchannel=0:measure_overall=RMS_level[low]',
         '[0:a]highpass=f=14000,astats=measure_perchannel=0:measure_overall=RMS_level[hi14]',
         '[0:a]highpass=f=17000,astats=measure_perchannel=0:measure_overall=RMS_level[hi17]',
@@ -1200,6 +1226,9 @@ async function analyzeAudioVisualForensics(
   if (hasSpoofedMdtaBox) {
     visualAiFlags.push('Struktur udta/meta/mdta Anomali (Signature FFmpeg Spoofing di MP4)');
   }
+  if (hasEmptyMetaTombstone) {
+    visualAiFlags.push('Kerangka Kosong udta/meta(mdirappl)/ilst (Ciri Stripping Metadata FFmpeg)');
+  }
   if (startTimeSec > 0.04) {
     visualAiFlags.push(`PTS/ELST Start-Time Drift (${startTimeSec}s • Artefak Remux)`);
   }
@@ -1219,9 +1248,11 @@ async function analyzeAudioVisualForensics(
     } else if (highBand14kDb <= -52) {
       audioAiFlags.push(`Energi Udara >14kHz sangat rendah (${highBand14kDb} dB)`);
     }
+    const hasSyntheticHiss =
+      noiseFloorDb >= -40.5 && (highBand14kDb >= -37 || overallRmsDb - noiseFloorDb < 11);
     if (noiseFloorDb <= -55) {
       audioAiFlags.push(`Noise Floor Audio Sintetik (${noiseFloorDb} dB)`);
-    } else if (noiseFloorDb >= -40.5) {
+    } else if (hasSyntheticHiss) {
       audioAiFlags.push(`Noise Floor Terlalu Tinggi / Hiss White-Noise Sintetik (${noiseFloorDb} dB)`);
     }
   }
@@ -1237,11 +1268,18 @@ async function analyzeAudioVisualForensics(
   if (hasZeroCreationTime) riskScore += 16;
   if (hasFfmpegMuxerBrand) riskScore += 15;
   if (hasSpoofedMdtaBox) riskScore += 14;
+  if (hasEmptyMetaTombstone) riskScore += 14;
   if (startTimeSec > 0.04) riskScore += 10;
   if (hasAudio && (channels === 1 || stereoSideGapDb >= 27.5)) riskScore += 16;
   if (hasAudio && digitalSilenceCount > 0) riskScore += 20;
   if (hasAudio && (highBand17kDb <= -56 || airCliffDb >= 32.5)) riskScore += 20;
-  if (hasAudio && (noiseFloorDb <= -55 || noiseFloorDb >= -40.5)) riskScore += 14;
+  if (
+    hasAudio &&
+    (noiseFloorDb <= -55 ||
+      (noiseFloorDb >= -40.5 && (highBand14kDb >= -37 || overallRmsDb - noiseFloorDb < 11)))
+  ) {
+    riskScore += 14;
+  }
   riskScore = Math.min(100, riskScore);
 
   const visualClean = visualAiFlags.length === 0;
@@ -1276,6 +1314,7 @@ async function analyzeAudioVisualForensics(
       hasZeroCreationTime,
       hasFfmpegMuxerBrand,
       hasSpoofedMdtaBox,
+      hasEmptyMetaTombstone,
       visualAiFlags,
       visualClean,
     },
@@ -1383,6 +1422,7 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
     fmtTags,
     bmff.hasZeroCreationTime,
     bmff.hasSpoofedMdtaBox,
+    bmff.hasEmptyMetaTombstone,
     bmff.moovFreeBoxCount,
     bmff.moovFreeBoxBytes
   );

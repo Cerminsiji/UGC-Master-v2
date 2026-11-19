@@ -114,7 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="px-4 py-2 flex items-center justify-between text-[11px] text-slate-400 font-medium">
             <span>Pilih Format Storyboard:</span>
             <span className="text-[10px] bg-[#141c2c] text-purple-300 font-mono px-2 py-0.5 rounded-full border border-purple-900/40">
-              12 Pilihan
+              {UGC_CATEGORIES.length} Pilihan
             </span>
           </div>
 

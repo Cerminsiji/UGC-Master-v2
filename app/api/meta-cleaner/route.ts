@@ -340,12 +340,6 @@ function computeTargetDimensions(width = 0, height = 0, upscale1080p = true): [n
   return [evenW, evenH];
 }
 
-/**
- * Multi-Domain Anti-SynthID Pixel Watermark Disruption Filtergraph v21:
- * - Motion-interpolated 29.97fps NTSC camera cadence (eliminates 4:1 duplicate pulldown)
- * - Native-resolution optical warp & handheld breathing -> single-pass Lanczos 1080p BT.709 scale
- * - Cross-plane chroma shift, CAS sharpening, and luma/chroma CMOS sensor grain
- */
 function buildSynthIdVideoFilter(width = 0, height = 0, upscale1080p = true): string {
   const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
   const scaleStep =
@@ -355,54 +349,46 @@ function buildSynthIdVideoFilter(width = 0, height = 0, upscale1080p = true): st
 
   return [
     'setpts=0.961538*(PTS-STARTPTS)',
-    'framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0',
+    'fps=30',
     'format=yuv420p',
-    'hqdn3d=0.9:0.7:1.1:0.9',
-    'lenscorrection=cx=0.495:cy=0.505:k1=-0.022:k2=0.007',
-    'perspective=x0=W*0.022+W*0.0022*sin(on*0.19)+W*0.0010*cos(on*0.37):y0=H*0.022+H*0.0016*cos(on*0.16)+H*0.0009*sin(on*0.31):x1=W*0.978+W*0.0022*sin(on*0.19+0.4)+W*0.0009*cos(on*0.33):y1=H*0.022+H*0.0016*cos(on*0.16-0.3)+H*0.0009*sin(on*0.29):x2=W*0.022+W*0.0022*sin(on*0.19-0.3)+W*0.0010*cos(on*0.35):y2=H*0.978+H*0.0016*cos(on*0.16+0.4)+H*0.0009*sin(on*0.27):x3=W*0.978+W*0.0022*sin(on*0.19+0.2)+W*0.0009*cos(on*0.31):y3=H*0.978+H*0.0016*cos(on*0.16+0.2)+H*0.0009*sin(on*0.34):interpolation=linear:sense=source:eval=frame',
+    'lenscorrection=cx=0.498:cy=0.502:k1=-0.012:k2=0.003',
+    "rotate=a='0.0019*sin(t*1.13)+0.0011*cos(t*2.71)+0.0006*sin(t*4.37)':bilinear=1:ow=iw:oh=ih",
+    "crop=w=trunc(iw*0.970/2)*2:h=trunc(ih*0.970/2)*2:x='(iw-ow)/2+iw*(0.0014*sin(t*1.13)+0.0009*cos(t*2.71)+0.0005*sin(t*4.37))':y='(ih-oh)/2+ih*(0.0011*cos(t*0.97)+0.0007*sin(t*2.33)+0.0004*cos(t*3.89))'",
     scaleStep,
     'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
-    'chromashift=cbh=1:cbv=0:crh=-1:crv=0',
-    'colorchannelmixer=rr=1.011:rg=-0.008:rb=-0.003:gr=-0.005:gg=1.007:gb=-0.002:br=-0.003:bg=-0.007:bb=1.010',
-    'eq=contrast=1.02:brightness=-0.002+0.004*sin(t*4.7+0.6*cos(t*8.3)):saturation=1.02:gamma=1.012:eval=frame',
-    'cas=strength=0.18',
-    'vignette=angle=PI/8',
-    'noise=c0s=2.8:c1s=1.5:c2s=1.5:allf=t+u',
+    'colorchannelmixer=rr=1.007:rg=-0.005:rb=-0.002:gr=-0.003:gg=1.005:gb=-0.002:br=-0.002:bg=-0.004:bb=1.006',
+    "eq=contrast=1.012:brightness='0.0015*sin(t*0.83)+0.0009*cos(t*1.97)':saturation=1.012:gamma=1.006:eval=frame",
+    'unsharp=3:3:0.16:3:3:0.0',
+    'noise=c0s=2.1:c1s=0.9:c2s=0.9:allf=t',
     'setsar=1',
   ].join(',');
 }
 
 function buildSafeModeVideoFilter(width = 0, height = 0, upscale1080p = true): string {
   const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
-  const geomSteps =
+  const scaleStep =
     targetW >= 64 && targetH >= 64
-      ? [
-          'perspective=x0=W*0.015+W*0.0015*sin(on*0.17)+W*0.0007*cos(on*0.33):y0=H*0.015+H*0.0011*cos(on*0.15)+H*0.0006*sin(on*0.29):x1=W*0.985+W*0.0015*sin(on*0.17+0.3)+W*0.0007*cos(on*0.31):y1=H*0.015+H*0.0011*cos(on*0.15-0.2)+H*0.0006*sin(on*0.27):x2=W*0.015+W*0.0015*sin(on*0.17-0.2)+W*0.0007*cos(on*0.35):y2=H*0.985+H*0.0011*cos(on*0.15+0.3)+H*0.0006*sin(on*0.25):x3=W*0.985+W*0.0015*sin(on*0.17+0.2)+W*0.0007*cos(on*0.29):y3=H*0.985+H*0.0011*cos(on*0.15+0.2)+H*0.0006*sin(on*0.31):interpolation=linear:sense=source:eval=frame',
-          `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`,
-        ]
-      : [
-          'crop=trunc(iw*0.97/2)*2:trunc(ih*0.97/2)*2',
-          'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv',
-        ];
+      ? `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
+      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
 
   return [
     'setpts=PTS-STARTPTS',
-    'framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0',
+    'fps=30',
     'format=yuv420p',
-    'hqdn3d=0.8:0.6:1.0:0.8',
-    ...geomSteps,
+    "rotate=a='0.0015*sin(t*1.07)+0.0009*cos(t*2.57)+0.0005*sin(t*4.19)':bilinear=1:ow=iw:oh=ih",
+    "crop=w=trunc(iw*0.976/2)*2:h=trunc(ih*0.976/2)*2:x='(iw-ow)/2+iw*(0.0011*sin(t*1.07)+0.0007*cos(t*2.57)+0.0004*sin(t*4.19))':y='(ih-oh)/2+ih*(0.0009*cos(t*0.89)+0.0006*sin(t*2.11)+0.0003*cos(t*3.67))'",
+    scaleStep,
     'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
-    'chromashift=cbh=1:cbv=0:crh=-1:crv=0',
-    'colorchannelmixer=rr=1.008:rg=-0.006:rb=-0.002:gr=-0.004:gg=1.006:gb=-0.002:br=-0.002:bg=-0.006:bb=1.008',
-    'eq=contrast=1.015:brightness=-0.002+0.0035*sin(t*4.5+0.5*cos(t*7.9)):saturation=1.015:gamma=1.01:eval=frame',
-    'cas=strength=0.16',
-    'noise=c0s=2.4:c1s=1.3:c2s=1.3:allf=t+u',
+    'colorchannelmixer=rr=1.005:rg=-0.004:rb=-0.001:gr=-0.002:gg=1.004:gb=-0.002:br=-0.002:bg=-0.003:bb=1.005',
+    "eq=contrast=1.010:brightness='0.0012*sin(t*0.79)+0.0008*cos(t*1.81)':saturation=1.010:gamma=1.005:eval=frame",
+    'unsharp=3:3:0.14:3:3:0.0',
+    'noise=c0s=1.9:c1s=0.8:c2s=0.8:allf=t',
     'setsar=1',
   ].join(',');
 }
 
 function buildUnifiedVideoFilter(width = 0, height = 0, durationSec = 0, upscale1080p = true): string {
-  const trimPrefix = durationSec > 2.0 ? 'trim=start=0.08,setpts=PTS-STARTPTS' : 'setpts=PTS-STARTPTS';
+  const trimPrefix = durationSec > 2.0 ? 'trim=start=0.06,setpts=0.988*(PTS-STARTPTS)' : 'setpts=0.988*(PTS-STARTPTS)';
   const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
   const scaleStep =
     targetW >= 64 && targetH >= 64
@@ -411,63 +397,63 @@ function buildUnifiedVideoFilter(width = 0, height = 0, durationSec = 0, upscale
 
   return [
     trimPrefix,
-    'framerate=fps=30000/1001:interp_start=15:interp_end=240:scene=7.0',
+    'fps=30',
     'format=yuv420p',
-    'hqdn3d=0.8:0.6:1.0:0.8',
-    'lenscorrection=cx=0.494:cy=0.506:k1=-0.020:k2=0.006',
-    'perspective=x0=W*0.022+W*0.0022*sin(on*0.19)+W*0.0010*cos(on*0.37):y0=H*0.022+H*0.0016*cos(on*0.16)+H*0.0009*sin(on*0.31):x1=W*0.978+W*0.0022*sin(on*0.19+0.4)+W*0.0009*cos(on*0.33):y1=H*0.022+H*0.0016*cos(on*0.16-0.3)+H*0.0009*sin(on*0.29):x2=W*0.022+W*0.0022*sin(on*0.19-0.3)+W*0.0010*cos(on*0.35):y2=H*0.978+H*0.0016*cos(on*0.16+0.4)+H*0.0009*sin(on*0.27):x3=W*0.978+W*0.0022*sin(on*0.19+0.2)+W*0.0009*cos(on*0.31):y3=H*0.978+H*0.0016*cos(on*0.16+0.2)+H*0.0009*sin(on*0.34):interpolation=linear:sense=source:eval=frame',
+    'lenscorrection=cx=0.498:cy=0.502:k1=-0.010:k2=0.003',
+    "rotate=a='0.0018*sin(t*1.13)+0.0010*cos(t*2.71)+0.0005*sin(t*4.37)':bilinear=1:ow=iw:oh=ih",
+    "crop=w=trunc(iw*0.972/2)*2:h=trunc(ih*0.972/2)*2:x='(iw-ow)/2+iw*(0.0013*sin(t*1.13)+0.0008*cos(t*2.71)+0.0004*sin(t*4.37))':y='(ih-oh)/2+ih*(0.0010*cos(t*0.97)+0.0007*sin(t*2.33)+0.0004*cos(t*3.89))'",
     scaleStep,
     'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
-    'chromashift=cbh=1:cbv=0:crh=-1:crv=0',
-    'hue=h=1.1:s=1.015',
-    'colorchannelmixer=rr=1.009:rg=-0.007:rb=-0.002:gr=-0.004:gg=1.006:gb=-0.002:br=-0.003:bg=-0.006:bb=1.009',
-    'eq=contrast=1.015:brightness=-0.002+0.004*sin(t*4.7+0.6*cos(t*8.3)):saturation=1.015:gamma=1.010:eval=frame',
-    'cas=strength=0.16',
-    'vignette=angle=PI/9',
-    'noise=c0s=2.8:c1s=1.5:c2s=1.5:allf=t+u',
+    'colorchannelmixer=rr=1.006:rg=-0.004:rb=-0.002:gr=-0.003:gg=1.004:gb=-0.001:br=-0.002:bg=-0.004:bb=1.006',
+    "eq=contrast=1.012:brightness='0.0015*sin(t*0.83)+0.0009*cos(t*1.97)':saturation=1.012:gamma=1.006:eval=frame",
+    'unsharp=3:3:0.15:3:3:0.0',
+    'noise=c0s=2.0:c1s=0.9:c2s=0.9:allf=t',
     'setsar=1',
   ].join(',');
 }
 
 /**
- * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph v22:
- * - True 1/f indoor pink room ambiance (-49dB natural floor, zero synthetic >12.5kHz hiss shelf bump)
- * - Speech-correlated aexciter (>14kHz/17kHz air) + 0.08s start trim matching video trim
+ * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph v23:
+ * - Natural pink+brown indoor room floor (-51dB) with zero leading/trailing digital silence cliffs
+ * - Non-metallic pitch/tempo variation locked to video speed + smooth HF rolloff
  */
 function buildSynthIdAudioFilterComplex(voiceLabel = '[0:a]', outLabel = '[aout]'): string {
   return [
-    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL]',
-    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR]',
-    '[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room]',
-    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,afftdn=nr=7:nf=-42:tn=1,rubberband=tempo=1.04:pitch=0.968:formant=shifted,highpass=f=70,equalizer=f=195:t=q:w=1.0:g=1.2,equalizer=f=3200:t=q:w=1.4:g=-0.9,aexciter=level_in=1:level_out=1:amount=2.8:drive=5.0:blend=0:freq=6800:ceil=19600,aecho=0.94:0.90:15|25:0.038|0.020,extrastereo=m=1.26,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,asplit=2[vdry][ver_in]`,
-    '[ver_in]highpass=f=280,lowpass=f=5000,adelay=8|18,volume=0.11[ver]',
-    '[vdry][ver]amix=inputs=2:normalize=0[voice]',
-    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95${outLabel}`,
+    'anoisesrc=color=pink:amplitude=0.014:sample_rate=48000:seed=104729[pL]',
+    'anoisesrc=color=pink:amplitude=0.014:sample_rate=48000:seed=224737[pR]',
+    'anoisesrc=color=brown:amplitude=0.007:sample_rate=48000:seed=319993[bRoom]',
+    '[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt]',
+    '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
+    '[pinkSt][bSt]amix=inputs=2:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
+    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*0.990,aresample=48000,atempo=1.0505,highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.25:drive=2.5:blend=0:freq=7600:ceil=18800,aecho=0.96:0.94:11:0.022,extrastereo=m=1.14,acompressor=threshold=-20dB:ratio=1.8:attack=10:release=130:makeup=1.5dB,apad=pad_dur=0.25[voice]`,
+    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
 
 function buildSafeModeAudioFilterComplex(voiceLabel = '[0:a]', outLabel = '[aout]'): string {
   return [
-    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL]',
-    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR]',
-    '[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room]',
-    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,afftdn=nr=7:nf=-42:tn=1,rubberband=tempo=1.0:pitch=0.984:formant=shifted,highpass=f=70,equalizer=f=195:t=q:w=1.0:g=1.2,equalizer=f=3200:t=q:w=1.4:g=-0.8,aexciter=level_in=1:level_out=1:amount=2.7:drive=4.8:blend=0:freq=6800:ceil=19600,aecho=0.94:0.90:14|23:0.035|0.019,extrastereo=m=1.22,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,asplit=2[vdry][ver_in]`,
-    '[ver_in]highpass=f=280,lowpass=f=5000,adelay=6|15,volume=0.10[ver]',
-    '[vdry][ver]amix=inputs=2:normalize=0[voice]',
-    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95${outLabel}`,
+    'anoisesrc=color=pink:amplitude=0.014:sample_rate=48000:seed=104729[pL]',
+    'anoisesrc=color=pink:amplitude=0.014:sample_rate=48000:seed=224737[pR]',
+    'anoisesrc=color=brown:amplitude=0.007:sample_rate=48000:seed=319993[bRoom]',
+    '[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt]',
+    '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
+    '[pinkSt][bSt]amix=inputs=2:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
+    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*0.992,aresample=48000,atempo=1.00806,highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.20:drive=2.4:blend=0:freq=7600:ceil=18800,aecho=0.96:0.94:11:0.020,extrastereo=m=1.12,acompressor=threshold=-20dB:ratio=1.8:attack=10:release=130:makeup=1.5dB,apad=pad_dur=0.25[voice]`,
+    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
 
 function buildUnifiedAudioFilterComplex(voiceLabel = '[0:a]', outLabel = '[aout]', durationSec = 0): string {
-  const atrimPrefix = durationSec > 2.0 ? 'atrim=start=0.08,asetpts=PTS-STARTPTS,' : 'asetpts=PTS-STARTPTS,';
+  const atrimPrefix = durationSec > 2.0 ? 'atrim=start=0.04,asetpts=PTS-STARTPTS,' : 'asetpts=PTS-STARTPTS,';
   return [
-    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=104729[pL]',
-    'anoisesrc=color=pink:amplitude=0.0014:sample_rate=48000:seed=224737[pR]',
-    '[pL][pR]amerge=inputs=2,highpass=f=75,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-3,tremolo=f=0.33:d=0.18[room]',
-    `${voiceLabel}${atrimPrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,afftdn=nr=7:nf=-42:tn=1,rubberband=tempo=1.0:pitch=0.976:formant=shifted,highpass=f=70,equalizer=f=195:t=q:w=1.0:g=1.2,equalizer=f=2600:t=q:w=1.5:g=-0.8,aexciter=level_in=1:level_out=1:amount=2.8:drive=5.0:blend=0:freq=6800:ceil=19600,aecho=0.94:0.90:14|24:0.036|0.019,extrastereo=m=1.24,asoftclip=type=tanh:threshold=0.92,acompressor=threshold=-20dB:ratio=2.0:attack=8:release=120:makeup=2.0dB,asplit=2[vdry][ver_in]`,
-    '[ver_in]highpass=f=280,lowpass=f=5000,adelay=7|17,volume=0.11[ver]',
-    '[vdry][ver]amix=inputs=2:normalize=0[voice]',
-    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95${outLabel}`,
+    'anoisesrc=color=pink:amplitude=0.014:sample_rate=48000:seed=104729[pL]',
+    'anoisesrc=color=pink:amplitude=0.014:sample_rate=48000:seed=224737[pR]',
+    'anoisesrc=color=brown:amplitude=0.007:sample_rate=48000:seed=319993[bRoom]',
+    '[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt]',
+    '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=15500,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
+    '[pinkSt][bSt]amix=inputs=2:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
+    `${voiceLabel}${atrimPrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*0.992,aresample=48000,atempo=1.0203,highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.25:drive=2.5:blend=0:freq=7600:ceil=18800,aecho=0.96:0.94:11:0.022,extrastereo=m=1.14,acompressor=threshold=-20dB:ratio=1.8:attack=10:release=130:makeup=1.5dB,apad=pad_dur=0.25[voice]`,
+    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
 
@@ -787,10 +773,13 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
         buf[offset + 7] = 0x65;
         buf.fill(0x00, offset + hdr, offset + size);
       } else if (['udta', 'meta', 'ilst'].includes(type)) {
-        const payload = decoder
-          .decode(buf.subarray(offset + hdr, Math.min(offset + size, offset + 1024)))
-          .toLowerCase();
-        if (badMarkers.some((m) => payload.includes(m))) {
+        const rawSub = buf.subarray(offset + hdr, Math.min(offset + size, offset + 2048));
+        const payload = decoder.decode(rawSub).toLowerCase();
+        const isFfmpegEmptySkeleton =
+          (type === 'udta' && payload.includes('mdirappl') && size <= 128) ||
+          (type === 'meta' && payload.includes('mdirappl') && size <= 120) ||
+          (type === 'ilst' && size <= 16);
+        if (isFfmpegEmptySkeleton || badMarkers.some((m) => payload.includes(m))) {
           buf[offset + 4] = 0x66; // 'f'
           buf[offset + 5] = 0x72; // 'r'
           buf[offset + 6] = 0x65; // 'e'
@@ -963,8 +952,8 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       ]);
       probedDurationSec = Number(durOut?.trim()) || 0;
       if (probedDurationSec > 0) {
-        const fpsScale = isTemporalCfrMode ? 1 : 0.992;
-        probedFrames = Math.max(1, Math.round(probedDurationSec * fpsScale * 29.97));
+        const fpsScale = isTemporalCfrMode ? 0.988 : 0.9615;
+        probedFrames = Math.max(1, Math.round(probedDurationSec * fpsScale * 30.0));
         nodeProgressState.durationSec = Number(probedDurationSec.toFixed(2));
         nodeProgressState.totalFrames = probedFrames;
       }
@@ -1000,11 +989,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
     const keyframeInsertionFlags = [
       '-g',
-      '30',
+      '60',
       '-keyint_min',
-      '12',
+      '15',
       '-sc_threshold',
-      '42',
+      '40',
       '-refs',
       '2',
       '-color_primaries',
@@ -1018,7 +1007,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     ];
 
     const x264ParamString =
-      'ref=2:bframes=2:b-adapt=1:b-pyramid=none:weightp=1:psy-rd=1.15,0.15:aq-mode=3:no-dct-decimate=1:nal-hrd=none:force-cfr=1:deblock=1,1:open-gop=0:scenecut=42:keyint=30:min-keyint=12';
+      'ref=2:bframes=2:b-adapt=1:b-pyramid=normal:weightp=1:psy-rd=1.05,0.10:aq-mode=2:nal-hrd=none:force-cfr=1:deblock=0,0:open-gop=0:scenecut=40:keyint=60:min-keyint=15';
 
     const movflagsStr = '+faststart';
 
@@ -1055,7 +1044,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
       if (isAllInOne) {
         serverLogs.push(
-          `[ALL-IN-ONE SINGLE PIPELINE v22] Sub-Pixel Perspective Micro-Drift + 29.97fps + 1080p BT.709 + 1/f Room Floor (-49dB) + Zero-mdta/Zero-SEI (${cameraProfileField.toUpperCase()})...`
+          `[ALL-IN-ONE SINGLE PIPELINE V 2.0] Native 30fps + Sub-Pixel Quasi-Aperiodic Drift + Gaussian CMOS Grain + Zero-Silence Pink/Brown Room + Zero-Tombstone MP4 (${cameraProfileField.toUpperCase()})...`
         );
 
         const langTag = cameraProfileField === 'neutral' ? 'und' : 'eng';
@@ -1079,6 +1068,10 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '4.1',
           '-crf',
           '18',
+          '-maxrate',
+          '14M',
+          '-bufsize',
+          '28M',
           '-bf',
           '2',
           '-pix_fmt',
@@ -1124,11 +1117,9 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-c:a',
           'aac',
           '-b:a',
-          '256k',
+          '160k',
           '-ar',
           '48000',
-          '-cutoff',
-          '20500',
           ...aioCommonTail,
           '-metadata:s:a:0',
           `handler_name=${audioHandlerName}`,
@@ -1144,6 +1135,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '+bitexact',
           '-movflags',
           movflagsStr,
+          '-shortest',
           outputPath,
         ];
 
@@ -1178,11 +1170,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             await runFfmpegWithProgress(aioWithAudioArgs, 180000, {
               state: nodeProgressState,
               stage: 'pass1_reencode',
-              stageLabel: 'All-in-One Pipeline (Node): Safe CFR + Deep Anti-SynthID + Zero-SEI',
+              stageLabel: 'All-in-One V 2.0 (Node): 30fps Native + Sub-Pixel Drift + Gaussian Grain + Zero-Silence Audio',
               startPct: 10,
               endPct: 94,
-              expectedDuration: probedDurationSec,
-              expectedFrames: Math.max(1, Math.round(probedDurationSec * 29.97)),
+              expectedDuration: probedDurationSec * 0.988,
+              expectedFrames: Math.max(1, Math.round(probedDurationSec * 0.988 * 30.0)),
             });
             const statAio = await fs.stat(outputPath).catch(() => null);
             if (statAio && statAio.size > 16384) {
@@ -1236,7 +1228,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             ? `[STEP 1/2 PAKET TERPADU ANTI-GLITCH + ANTI-SYNTHID] Temporal CFR ketat (Bypass Keyframe-Only) + Optik CMOS + Audio Rubberband & Stereo Pink Air (-cutoff 20500)...`
             : isSafeMode
               ? `[STEP 1/2 SAFE MODE TEMPORAL ANTI-GLITCH] Re-encoding ketat frame-by-frame CFR (Bypass Keyframe-Only Injection) + Audio Synced Anti-TTS...`
-              : `[STEP 1/2 RE-ENCODE AUDIO-VISUAL v20] Re-sintesis 29.97fps Bebas-Ghost (bf=2, refs=2, -crf 19) + Rubberband Pitch/Formant + Dual-Seed Pink Room Air (-cutoff 20200)...`
+              : `[STEP 1/2 RE-ENCODE AUDIO-VISUAL V 2.0] Re-sintesis 30fps Bebas-Ghost (bf=2, refs=2, -crf 18) + Pink/Brown Room Air...`
         );
 
         const pass1VideoOnlyArgs = [
@@ -1310,73 +1302,76 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '[aout]',
           '-fps_mode',
           'cfr',
-          '-c:v',
-          'libx264',
-          '-preset',
-          encodePreset,
-          '-threads',
-          '0',
-          '-profile:v',
-          'high',
-          '-level',
-          '4.1',
-          '-crf',
-          isTemporalCfrMode ? '18' : '19',
-          '-bf',
-          '2',
-          '-pix_fmt',
-          'yuv420p',
-          ...keyframeInsertionFlags,
-          '-x264-params',
-          x264ParamString,
-          '-bsf:v',
-          'filter_units=remove_types=6',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '256k',
-          '-ar',
-          '48000',
-          '-cutoff',
-          '20500',
-          ...cameraMetadataArgs,
-          '-metadata:s:v:0',
-          `handler_name=${videoHandlerName}`,
-          '-metadata:s:a:0',
-          `handler_name=${audioHandlerName}`,
-          '-brand',
-          cameraBrand,
-          '-fflags',
-          isTemporalCfrMode ? '+genpts+bitexact' : '+bitexact',
-          '-flags:v',
-          '+bitexact',
-          '-flags:a',
-          '+bitexact',
-          '-map_metadata',
-          '-1',
-          '-map_chapters',
-          '-1',
-          pass1Path,
-        ];
+              '-c:v',
+              'libx264',
+              '-preset',
+              encodePreset,
+              '-threads',
+              '0',
+              '-profile:v',
+              'high',
+              '-level',
+              '4.1',
+              '-crf',
+              '18',
+              '-maxrate',
+              '14M',
+              '-bufsize',
+              '28M',
+              '-bf',
+              '2',
+              '-pix_fmt',
+              'yuv420p',
+              ...keyframeInsertionFlags,
+              '-x264-params',
+              x264ParamString,
+              '-bsf:v',
+              'filter_units=remove_types=6',
+              '-c:a',
+              'aac',
+              '-b:a',
+              '160k',
+              '-ar',
+              '48000',
+              ...cameraMetadataArgs,
+              '-metadata:s:v:0',
+              `handler_name=${videoHandlerName}`,
+              '-metadata:s:a:0',
+              `handler_name=${audioHandlerName}`,
+              '-brand',
+              cameraBrand,
+              '-fflags',
+              isTemporalCfrMode ? '+genpts+bitexact' : '+bitexact',
+              '-flags:v',
+              '+bitexact',
+              '-flags:a',
+              '+bitexact',
+              '-map_metadata',
+              '-1',
+              '-map_chapters',
+              '-1',
+              '-shortest',
+              pass1Path,
+            ];
 
-        let reencodeDone = false;
-        const ptsScale = isTemporalCfrMode ? 1 : 0.961538;
-        if (hasAudio) {
-          try {
-            await runFfmpegWithProgress(pass1WithAudioArgs, 180000, {
-              state: nodeProgressState,
-              stage: 'pass1_reencode',
-              stageLabel:
-                cleanerMode === 'unified'
-                  ? 'Pass 1/2 (Node Unified): Temporal CFR Anti-Glitch + Deep Anti-SynthID'
-                  : isSafeMode
-                    ? 'Pass 1/2 (Node Safe Mode): Strict Temporal CFR Frame Re-Encoding'
-                    : 'Pass 1/2 (Node FFmpeg): Audio-Visual Anti-AI Filtering & B-Frame Synthesis',
-              startPct: 10,
-              endPct: 82,
-              expectedDuration: probedDurationSec * ptsScale,
-              expectedFrames: Math.max(1, Math.round(probedDurationSec * ptsScale * 29.97)),
-            });
+            let reencodeDone = false;
+            const ptsScale = isTemporalCfrMode ? 0.988 : 0.961538;
+            if (hasAudio) {
+              try {
+                await runFfmpegWithProgress(pass1WithAudioArgs, 180000, {
+                  state: nodeProgressState,
+                  stage: 'pass1_reencode',
+                  stageLabel:
+                    cleanerMode === 'unified'
+                      ? 'Pass 1/2 (Node Unified V 2.0): 30fps CFR + Anti-AI'
+                      : isSafeMode
+                        ? 'Pass 1/2 (Node Safe Mode V 2.0): Strict 30fps CFR Re-Encoding'
+                        : 'Pass 1/2 (Node FFmpeg V 2.0): Audio-Visual Anti-AI Filtering',
+                  startPct: 10,
+                  endPct: 82,
+                  expectedDuration: probedDurationSec * ptsScale,
+                  expectedFrames: Math.max(1, Math.round(probedDurationSec * ptsScale * 30.0)),
+                });
             const stat1 = await fs.stat(pass1Path).catch(() => null);
             if (stat1 && stat1.size > 16384) {
               sourceForSeiStrip = pass1Path;

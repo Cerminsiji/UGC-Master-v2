@@ -669,6 +669,190 @@ export const UGC_CATEGORIES: UGCTemplateCategory[] = [
         duration: 3
       }
     ]
+  },
+  {
+    id: 'battle_comparison',
+    name: 'Battle / Adu Produk',
+    iconName: 'ArrowLeftRight',
+    badgeText: 'BATTLE / COMPARE',
+    description: 'Uji head-to-head split screen membandingkan produk andalan dengan alternatif mahal atau produk lama secara objektif.',
+    recommendedDuration: 35,
+    defaultScenes: [
+      {
+        cameraAngle: 'Split-Screen Multi-Angle (Dua Sudut Sekaligus)',
+        visualAction: 'Tangan meletakkan dua produk berdampingan di meja terang; satu berlabel harga mahal (kiri) dan produk andalan (kanan).',
+        popupText: 'YANG MAHAL VS YANG INI: MENANG MANA? ⚖️',
+        soundEffect: 'Boxing bell ring & Heavy cinematic swoosh',
+        dialogVO: 'Banyak yang nanya mending beli versi ratusan ribu atau yang ini? Yuk kita adu langsung di kamera!',
+        notesMood: 'Gaya teks: VS Battle Neon Split. Kontras kiri-kanan tajam.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
+        visualAction: 'Ronde 1: Kamera makro menguji tekstur, ketahanan, atau daya serap keduanya secara bersamaan di atas permukaan bersih.',
+        popupText: 'RONDE 1: UJI TEKSTUR & HASIL 🔍',
+        soundEffect: 'Camera shutter & Fast whip whoosh',
+        dialogVO: 'Ronde pertama soal tekstur dan kenyamanan, lihat sendiri yang kanan malah lebih cepat rata dan gak lengket.',
+        notesMood: 'Gaya teks: Scoreboard 0-1 Overlay. Pencahayaan studio jernih.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'POV Hands-Only (Hanya Tangan & Produk)',
+        visualAction: 'Ronde 2: Uji ketahanan/durability atau hasil pemakaian nyata setelah beberapa jam.',
+        popupText: 'RONDE 2: TEST KETAHANAN NYATA 🧪',
+        soundEffect: 'Heartbeat thud tension & Ding notification',
+        dialogVO: 'Di tes ketahanan, yang harganya seperempatnya ini justru bertahan jauh lebih awet tanpa geser.',
+        notesMood: 'Gaya teks: Live Test Meter. Fokus tajam tanpa filter.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'Medium Close-up (Dada ke Atas)',
+        visualAction: 'Kreator menyimpulkan pemenang mutlak sambil mengangkat produk juara ke dekat lensa dengan senyum puas.',
+        popupText: 'PEMENANG MUTLAK: HEMAT 70%! 🏆',
+        soundEffect: 'Level up victory chime & Cha-ching cash register',
+        dialogVO: 'Kesimpulannya jelas ya, buat apa bayar mahal kalau kualitasnya udah kejawab di keranjang di bawah!',
+        notesMood: 'Gaya teks: Winner Crown Badge. CTA jelas.',
+        duration: 3
+      }
+    ]
+  },
+  {
+    id: 'storytime_viral',
+    name: 'Storytime / Curhat Viral',
+    iconName: 'MessageSquare',
+    badgeText: 'STORYTIME',
+    description: 'Bercerita pengalaman personal (ditanya teman, tragedi sebelum acara, plot twist) yang mengalir natural tanpa terasa seperti iklan.',
+    recommendedDuration: 45,
+    defaultScenes: [
+      {
+        cameraAngle: '0.5x Ultra-Wide Gen-Z Selfie',
+        visualAction: 'Kreator merekam dekat dengan sudut 0.5x ekspresif sambil memegang produk, wajah antusias ingin bercerita.',
+        popupText: 'BARUSAN KEJADIAN DI KANTOR... 😳💬',
+        soundEffect: 'iPhone notification ping & Soft pop',
+        dialogVO: 'Gak nyangka banget barusan pas meeting, tiga orang langsung nanyain aku pakai apa hari ini!',
+        notesMood: 'Gaya teks: TikTok Reply Comment Style. Lighting kamar estetik.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'POV / Handheld (First-Person)',
+        visualAction: 'Flashback singkat: kreator menunjukkan kondisi lama yang bikin gak pede sebelum kenal produk.',
+        popupText: 'PADAHAL DULU SEMUVAH INI... 🤦‍♀️',
+        soundEffect: 'Record scratch freeze & Swoosh',
+        dialogVO: 'Padahal bulan lalu aku tuh sempet minder banget gara-gara masalah ini gak kelar-kelar.',
+        notesMood: 'Gaya teks: Retro Flashback Gray. Transisi whip pan.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Over the Shoulder (OTS)',
+        visualAction: 'Kreator mengeluarkan produk dari tas lalu menunjukkan momen pemakaiannya di sela aktivitas.',
+        popupText: 'PLOT TWIST SEJAK RUTIN PAKAI INI ✨',
+        soundEffect: 'Bag zipper & Sparkle magic ting',
+        dialogVO: 'Sampai akhirnya iseng nyobain satu ini, dan beneran ngerubah mood seharian tanpa drama.',
+        notesMood: 'Gaya teks: Warm Storyteller Caption. Warna hangat cozy.',
+        duration: 4
+      },
+      {
+        cameraAngle: 'Front Camera / Selfie Mode (Curhat Langsung)',
+        visualAction: 'Kreator mengangguk yakin ke kamera, mencondongkan kemasan produk agar label terbaca jelas.',
+        popupText: 'SPILL BIAR GAK PENASARAN! 👇🛒',
+        soundEffect: 'Cha-ching cash register & Bubble pop sound',
+        dialogVO: 'Daripada aku balesin DM satu-satu, langsung aja cek di keranjang di bawah sebelum kehabisan ya!',
+        notesMood: 'Gaya teks: Clean Bubble CTA.',
+        duration: 3
+      }
+    ]
+  },
+  {
+    id: 'pov_mini_drama',
+    name: 'POV Mini Drama',
+    iconName: 'Video',
+    badgeText: 'POV DRAMA',
+    description: 'Adegan POV orang pertama (sudut pandang pasangan, bos, atau sahabat) dengan ketegangan ringan & twist produk.',
+    recommendedDuration: 35,
+    defaultScenes: [
+      {
+        cameraAngle: 'POV / Handheld (First-Person)',
+        visualAction: 'Sudut pandang orang pertama mendekati meja/pintu, ada karakter lain memperhatikan dengan ekspresi heran.',
+        popupText: 'POV: KETAHUAN PAKE BARANG RAHASIA 👀',
+        soundEffect: 'Footsteps & Dramatic bass drop',
+        dialogVO: 'Bentar-bentar, kok bisa sih dari pagi sampai sore tampilan lo tetap rapi dan wangi banget?!',
+        notesMood: 'Gaya teks: Bold POV White Bar. Kamera handheld imersif.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Snap-Zoom Product Punch',
+        visualAction: 'Kamera zoom cepat ke tangan yang mengangkat produk andalan dari meja kerja dengan gerakan percaya diri.',
+        popupText: 'RAHASIANYA CUMA BENDA INI ⚡',
+        soundEffect: 'Whip pan swoosh & Finger snap click',
+        dialogVO: 'Nih, modal bawa satu ini doang di tas! Gak perlu ribet bawa macem-macem lagi.',
+        notesMood: 'Gaya teks: Kinetic Punch Subtitle.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Match-Cut Hand Transition',
+        visualAction: 'Transisi tangan menutup lensa lalu terbuka dengan demo langsung pemakaian produk di tempat.',
+        popupText: '10 DETIK AUTO BERES! ✅',
+        soundEffect: 'Match-cut whoosh & Ting',
+        dialogVO: 'Cara pakainya sat-set banget, gak nyampe semenit hasilnya langsung kelihatan.',
+        notesMood: 'Gaya teks: Seamless Transition Tag.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Medium Shot (Setengah Badan)',
+        visualAction: 'Karakter kedua ikut memegang produk sambil mengacungkan jempol ke arah keranjang bawah.',
+        popupText: 'IKUTAN CHECKOUT SEKARANG 🛒🔥',
+        soundEffect: 'Cha-ching cash register & Pop',
+        dialogVO: 'Pantesan! Spill dong belinya di mana? Udah aku sematin di keranjang di bawah tuh!',
+        notesMood: 'Gaya teks: Dual Character CTA.',
+        duration: 3
+      }
+    ]
+  },
+  {
+    id: 'live_flash_deal',
+    name: 'Flash Deal & Live Energy',
+    iconName: 'Zap',
+    badgeText: 'FLASH DEAL',
+    description: 'Format promo cepat bergaya host Live Shopping TikTok/Shopee untuk dorong urgensi checkout stok terbatas & voucher.',
+    recommendedDuration: 25,
+    defaultScenes: [
+      {
+        cameraAngle: 'Front Camera / Selfie Mode (Curhat Langsung)',
+        visualAction: 'Kreator bersemangat memegang produk tepat di sebelah wajah, cahaya terang crisp seperti studio live commerce.',
+        popupText: 'RESTOCK TERBATAS! HARGA TURUN HARI INI 🚨',
+        soundEffect: 'Urgent alarm ping & Heavy cinematic swoosh',
+        dialogVO: 'Yang kemarin nungguin promo spesialnya turun, hari ini stoknya baru aja dibuka lagi!',
+        notesMood: 'Gaya teks: Flashing Red & Yellow Urgent Ticker.',
+        duration: 2
+      },
+      {
+        cameraAngle: 'Extreme Close-up / Macro (Tekstur & Detail)',
+        visualAction: 'Kamera zoom ke segel keaslian, kelengkapan paket, dan bonus yang didapat dalam 1x checkout.',
+        popupText: 'DAPET FULL SET + BONUS GRATIS! 🎁',
+        soundEffect: 'Sparkle magic ting & Camera shutter click',
+        dialogVO: 'Dengan harga segini udah dapet paket lengkap original plus kualitas se-oke ini.',
+        notesMood: 'Gaya teks: Value Bundle Checklist.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Over the Shoulder (OTS)',
+        visualAction: 'Demo super cepat 3 detik menunjukkan manfaat paling terasa produk langsung di depan layar.',
+        popupText: 'TERBUKTI BINTANG 4.9+ RIBUAN ULASAN ⭐',
+        soundEffect: 'Level up victory chime',
+        dialogVO: 'Gak heran ribuan orang langsung repeat order karena hasilnya emang konsisten.',
+        notesMood: 'Gaya teks: Rating 4.9 Star Badge.',
+        duration: 3
+      },
+      {
+        cameraAngle: 'Low Angle (Hero / Powerful)',
+        visualAction: 'Kreator menunjuk tegas ke keranjang bawah dengan gestur hitung mundur sebelum promo habis.',
+        popupText: 'AMANKAN SEBELUM VOUCHER HABIS! 🛒⏳',
+        soundEffect: 'Cha-ching cash register & Timer ding',
+        dialogVO: 'Cek voucher gratis ongkirnya sekarang di keranjang di bawah sebelum sold out lagi!',
+        notesMood: 'Gaya teks: Countdown CTA Pulsing.',
+        duration: 3
+      }
+    ]
   }
 ];
 
@@ -678,6 +862,13 @@ export const CAMERA_ANGLE_PRESETS = [
   'Top-Down Hands-Only (Tangan di Atas Meja)',
   'Hand Swatch & Application (Tangan Mengoles Produk)',
   'Unboxing Hands-Only (Buka Paket Tangan Saja)',
+  '0.5x Ultra-Wide Gen-Z Selfie (Ekspresif & Dekat)',
+  'Match-Cut Hand Transition (Tutup Lensa & Reveal)',
+  'Snap-Zoom Product Punch (Zoom Cepat Beat Drop)',
+  'Mirror Fit-Check Full Body (OOTD Kaca)',
+  'Walk-and-Talk Gimbal Follow (Jalan Santai Estetik)',
+  'Whip-Pan Outfit / Result Reveal (Transisi Putar)',
+  'Macro Droplet / Swatch Texture (Ultra Detail)',
   'Eye-Level (Natural Eye)',
   'Close-up (Face / Ekspresi)',
   'Extreme Close-up / Macro (Tekstur & Detail)',
@@ -787,7 +978,21 @@ export const CAMERA_ANGLE_STYLES: CameraAngleStyleOption[] = [
     name: 'Mirror Reflection Shot & GRWM (Get Ready With Me)',
     badge: 'Lifestyle OOTD',
     description: 'Pantulan cermin aesthetic memperlihatkan outfit, aplikasi makeup, parfum, atau skincare harian.',
-    recommendedAngles: ['Mirror Reflection Shot (Kaca GRWM)', 'Side Profile 45° (Angle Samping)', 'Eye-Level (Natural Eye)', 'Close-up (Face / Ekspresi)']
+    recommendedAngles: ['Mirror Reflection Shot (Kaca GRWM)', 'Mirror Fit-Check Full Body (OOTD Kaca)', 'Side Profile 45° (Angle Samping)', 'Eye-Level (Natural Eye)', 'Close-up (Face / Ekspresi)']
+  },
+  {
+    id: 'genz_ultrawide_fast',
+    name: 'Gen-Z 0.5x Ultra-Wide & Match-Cut Fast Pace',
+    badge: 'Viral FYP 2026',
+    description: 'Gaya rekaman kamera 0.5x dekat dipadu match-cut tutup lensa dan snap-zoom mengikuti beat musik viral.',
+    recommendedAngles: ['0.5x Ultra-Wide Gen-Z Selfie (Ekspresif & Dekat)', 'Match-Cut Hand Transition (Tutup Lensa & Reveal)', 'Snap-Zoom Product Punch (Zoom Cepat Beat Drop)', 'Whip-Pan Outfit / Result Reveal (Transisi Putar)']
+  },
+  {
+    id: 'split_battle_compare',
+    name: 'Split-Screen Battle & Walk-and-Talk',
+    badge: 'Comparison & Story',
+    description: 'Kombinasi layar belah dua untuk uji produk vs kompetitor dan kamera jalan santai bercerita natural.',
+    recommendedAngles: ['Split-Screen Multi-Angle (Dua Sudut Sekaligus)', 'Walk-and-Talk Gimbal Follow (Jalan Santai Estetik)', 'Macro Droplet / Swatch Texture (Ultra Detail)', 'Over the Shoulder (OTS)']
   }
 ];
 
@@ -1042,7 +1247,9 @@ export const SFX_CATEGORIES = [
       'Gasp sound effect',
       'Bruh sound effect',
       'Cartoon laugh & chuckle',
-      'Heroic fanfare / Tadaa'
+      'Heroic fanfare / Tadaa',
+      'Anime gasp & sparkle',
+      'Skeptical eyebrow pop'
     ]
   },
   {
@@ -1059,14 +1266,20 @@ export const SFX_CATEGORIES = [
       'Keyboard typing clicky',
       'Whisper mic brush',
       'Crunchy bite ASMR',
-      'Glass clink ting'
+      'Glass clink ting',
+      'Magnetic lid snap click',
+      'Spray mist hiss crisp',
+      'Fabric rustle fit-check'
     ]
   },
   {
-    category: 'Transisi & Gerakan',
+    category: 'Transisi & Beat Drop',
     items: [
       'Fast whip whoosh',
       'Heavy cinematic swoosh',
+      'Sub-bass beat drop hit',
+      'Riser tension swoosh',
+      'Match-cut hand slap whoosh',
       'Finger snap click',
       'Camera shutter click',
       'Camera flash click & Ting',
@@ -1079,7 +1292,9 @@ export const SFX_CATEGORIES = [
     category: 'Komersial, Notifikasi & Konversi',
     items: [
       'Cha-ching cash register',
+      'Cashier barcode beep',
       'Ding notification / iPhone ping',
+      'Comment pop-up bloop',
       'Bell counter ding',
       'Level up victory chime',
       'Sparkle magic ting',
@@ -1093,51 +1308,143 @@ export const SFX_CATEGORIES = [
 
 export const SFX_PRESETS = SFX_CATEGORIES.flatMap((c) => c.items);
 
-// Rich VO Delivery Tones for Indonesian UGC
+// Rich VO Delivery Tones for Indonesian UGC (Varied & Non-Monotonous)
 export const VO_TONE_PRESETS = [
   {
-    name: 'Storytelling Curhat',
-    badge: 'Curhat',
-    example: 'Jujur awalnya aku skeptis banget sama produk ini...',
-    style: 'Emosional, santai, terkesan curhat rahasia ke teman dekat.'
+    name: 'Spontan Kaget ("Beneran Se-ngaruh Ini?!")',
+    badge: 'Reaksi Asli',
+    example: 'Bentar deh... kok baru kali ini aku nemu yang hasilnya langsung kelihatan di pemakaian pertama?!',
+    style: 'Spontan, natural tanpa nada iklan, seperti baru sadar pas lagi ngerekam.'
   },
   {
-    name: 'Hard-Selling FOMO',
+    name: 'Storytelling Curhat Sahabat',
+    badge: 'Curhat',
+    example: 'Jujur awalnya aku skeptis banget karena sering lewat FYP, eh pas nyoba sendiri malah keterusan...',
+    style: 'Emosional, hangat, terkesan curhat rahasia ke teman dekat.'
+  },
+  {
+    name: 'Balas Komentar / Q&A Netizen',
+    badge: 'Reply Netizen',
+    example: 'Buat yang kemarin nanyain di kolom komentar awetnya berapa lama, nih aku tes langsung depan kalian!',
+    style: 'Interaktif, membangun percakapan dua arah dengan audiens TikTok/Reels.'
+  },
+  {
+    name: 'Plot Twist / Skeptis Jadi Cinta',
+    badge: 'Plot Twist',
+    example: 'Tadinya udah hampir aku kasih ke adek karena kirain biasa aja, untung sempet ku-tes dua kali lagi!',
+    style: 'Memiliki kejutan di tengah kalimat untuk mempertahankan retensi penonton.'
+  },
+  {
+    name: 'Smart Buyer / Hitung-Hitungan Hemat',
+    badge: 'Value Logic',
+    example: 'Kalau diitung-itung cuma modal dua ribuan per hari, tapi kualitasnya ngalahin yang harganya tiga kali lipat.',
+    style: 'Rasional, menyentuh logika penghematan tanpa terkesan murahan.'
+  },
+  {
+    name: 'Hard-Selling FOMO & Restock',
     badge: 'FOMO Hype',
-    example: 'Mumpung stoknya baru restock dan lagi diskon gede, wajib banget diamankan hari ini!',
+    example: 'Minggu lalu ludes dalam dua jam! Mumpung stoknya baru muncul lagi di etalase, mending amankan sekarang.',
     style: 'Energi tinggi, tempo cepat, mendesak audiens segera checkout.'
   },
   {
-    name: 'ASMR Bisik Santai',
+    name: 'ASMR Bisik Intimate',
     badge: 'ASMR',
-    example: '(Bisik pelan) Dengerin suara renyahnya, ini satisfying banget...',
-    style: 'Suara bisikan halus, tempo tenang, fokus ke efek suara foley.'
+    example: '(Bisik pelan di dekat mic) Dengerin suara klik segelnya... terus lihat teksturnya pas jatuh di kulit.',
+    style: 'Suara bisikan halus, tempo tenang, menonjolkan detail sensori & foley.'
   },
   {
-    name: 'Review Edukatif & Objektif',
+    name: 'Review Lab / Bedah Fakta Objektif',
     badge: 'Edukatif',
-    example: 'Setelah aku bedah kandungannya, ini alasan kenapa formulanya bekerja...',
-    style: 'Kredibel, jelas, nada bicara informatif tanpa terkesan memaksa.'
+    example: 'Setelah aku cek komposisi dan uji ketahanannya selama 14 hari, ada dua hal yang bikin produk ini unggul.',
+    style: 'Kredibel, tenang, jelas, nada informatif tanpa gimmick berlebihan.'
   },
   {
-    name: 'Reaksi Heboh / Shock',
-    badge: 'Shock Viral',
-    example: 'Sumpah kalian gak bakal percaya sama hasilnya barusan!',
-    style: 'Ekspresif, penuh kejutan, intonasi naik turun dramatis.'
+    name: 'Gen-Z Fast Cut & Sat-Set',
+    badge: 'Gen-Z Cepat',
+    example: 'No drama, no ribet: tinggal buka, pakai 10 detik, hasilnya udah rapi siap keluar rumah.',
+    style: 'Lugas, ritme cepat mengikuti fast-cut transisi video pendek.'
   },
   {
-    name: 'Tips & Trik Sat-Set',
-    badge: 'Sat-Set',
-    example: 'Cukup ikutin 3 langkah mudah ini, auto beres tanpa ribet!',
-    style: 'Praktis, to-the-point, berirama cepat dan efisien.'
+    name: 'Reverse Psychology (Larangan Unik)',
+    badge: 'Anti-Nyesel',
+    example: 'Serius, jangan beli ini dulu kalau kamu belum siap ditanyain temen sekantor pakai produk apa!',
+    style: 'Pancingan psikologis terbalik yang memicu rasa penasaran tinggi.'
   },
   {
-    name: 'Sketsa Komedi Lucu',
+    name: 'Bapak-Bapak / Ibu-Ibu Relatable',
+    badge: 'Keluarga',
+    example: 'Kelihatannya sepele, tapi semenjak ada barang ini di rumah urusan pagi-pagi gak pernah keteteran lagi.',
+    style: 'Sederhana, jujur, hangat, fokus ke solusi nyata sehari-hari.'
+  },
+  {
+    name: 'Sketsa Komedi / Dialog Dua Karakter',
     badge: 'Lucu / Sketsa',
-    example: 'Mbak, tolong ini kok bisa semurah ini?! Kebangetan dah!',
-    style: 'Relatable, humoris, memancing tawa dan engagement komentar.'
+    example: 'Lah kok bisa semulus itu?! Bilang kek dari kemarin, gak perlu gue capek-capek cari ke mana-mana!',
+    style: 'Ekspresif, humoris, memancing tawa dan kolom komentar ramai.'
+  },
+  {
+    name: 'Live Commerce Energy (Closing Cepat)',
+    badge: 'Live Host',
+    example: 'Voucher gratis ongkirnya masih nyala di keranjang bawah tuh, klik sekarang sebelum etalasenya ke-lock!',
+    style: 'Vokal lantang, antusias, mengarahkan jari penonton langsung klik keranjang.'
+  },
+  {
+    name: 'Soft Aesthetic / Poetic Lifestyle',
+    badge: 'Aesthetic',
+    example: 'Hal kecil di pagi hari yang bikin suasana hati jauh lebih tenang sebelum mulai aktivitas padat.',
+    style: 'Lembut, menenangkan, cocok untuk video daily vlog atau produk estetik.'
   }
 ];
+
+export const POPUP_TEXT_CATEGORIES = [
+  {
+    category: 'Hook Pembuka Anti-Klise',
+    items: [
+      'AWALNYA KIRA CUMA GIMMICK... 🤨',
+      'JANGAN BELI SEBELUM LIHAT INI! ⚠️',
+      'DITANYAIN 3 TEMEN SEKANTOR! 💬',
+      'NYESEL BARU TAHU SEKARANG 🤦‍♀️',
+      'TES LANGSUNG TANPA FILTER 🔍',
+      'YANG MAHAL VS INI: MENANG MANA? ⚖️',
+      'AKHIRNYA KEBAGIAN RESTOCK! 😭🎉'
+    ]
+  },
+  {
+    category: 'Bukti, Tekstur & Reaksi',
+    items: [
+      'LIHAT DETAIL TEKSTURNYA! ✨',
+      '10 DETIK AUTO KELIHATAN BEDANYA ⚡',
+      'REAL TEST HARI KE-1 VS KE-14 📈',
+      'RINGAN & CEPAT MERESAP ✅',
+      'PACKAGING 10/10 NIAT BANGET 📦',
+      'BUILD QUALITY BUKAN KALENG-KALENG 💎',
+      'PAKAI HEADSET: ASMR NYATA 🎧'
+    ]
+  },
+  {
+    category: 'Value, Edukasi & Perbandingan',
+    items: [
+      'MODAL RECEH KUALITAS BUTIK 💸',
+      'STEP 1: CUKUP TAKARAN SEGINI 💡',
+      'KESALAHAN 90% ORANG ❌',
+      'DUPES VERSI HEMAT 70%! 🔥',
+      'RATING JUJUR: 9.6 / 10 ⭐',
+      'AMAN BPOM & HALAL RESMI ✅'
+    ]
+  },
+  {
+    category: 'Urgensi & CTA Konversi',
+    items: [
+      'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇',
+      'CEK VOUCHER FREE ONGKIR DI BAWAH 🏷️',
+      'STOK MENIPIS! AMANKAN HARI INI ⏳',
+      'SIMPAN VIDEO BIAR GAK LUPA 📌',
+      'LINK PRODUK ORI NO 1 DI BAWAH 🛒'
+    ]
+  }
+];
+
+export const POPUP_TEXT_PRESETS = POPUP_TEXT_CATEGORIES.flatMap((c) => c.items);
 
 export const MOOD_PRESETS = [
   'Gaya teks: Chat Bubble. Pencahayaan redup dramatis.',
@@ -1151,5 +1458,17 @@ export const MOOD_PRESETS = [
   'Gaya teks: Glowing Green Emerald. Suasana cerah dan penuh harapan.',
   'Gaya teks: Soft glowing cursive. Lighting studio moody cinematic.',
   'Gaya teks: Flashing Red Urgent. Countdown flash sale 24 jam.',
-  'Gaya teks: Trust Badge BPOM / Halal. Kredibilitas tinggi.'
+  'Gaya teks: Trust Badge BPOM / Halal. Kredibilitas tinggi.',
+  'Gaya teks: TikTok Reply Comment Sticker. Raw iPhone handheld natural.',
+  'Gaya teks: Kinetic Typography Fast-Cut. Beat-synced pop animation.',
+  'Gaya teks: Split-Screen Battle Scoreboard. Kontras tajam kiri vs kanan.',
+  'Gaya teks: Y2K Camcorder Date Stamp. Flash langsung + retro film grain.',
+  'Gaya teks: Clean Editorial Magazine. Softbox daylight & shadow lembut.',
+  'Gaya teks: High-Contrast Dark Luxury. Rim light keemasan fokus kemasan.',
+  'Gaya teks: Green Screen Reaction Overlay. Gaya kreator respons berita/komentar.',
+  'Gaya teks: Step-by-Step Progress Bar. Warna pastel bersih & rapi.',
+  'Gaya teks: Golden Hour Sunlight. Hangat natural dari jendela samping.',
+  'Gaya teks: Neon Cyberpunk Accent. RGB biru-magenta latar meja gaming.',
+  'Gaya teks: Polaroid Frame Memory. Nuansa nostalgia storytime lembut.',
+  'Gaya teks: Live Commerce Price Ticker. Terang jernih, fokus detail barang.'
 ];
