@@ -2008,9 +2008,9 @@ export default function HomePage() {
             sc.visualAction && sc.visualAction !== sc.choreographyMove ? ` — ${sc.visualAction}` : ''
           }`
         : sc.visualAction,
-      popupText: sc.popupText,
+      popupText: '',
       soundEffect: sc.soundEffect,
-      dialogVO: sc.dialogVO,
+      dialogVO: '',
       notesMood: `${sc.beatCue ? `${sc.beatCue} | ` : ''}${sc.notesMood || ''}`.trim(),
       duration: Math.max(1, Number(sc.duration) || 3),
       googleFlowPrompt: sc.googleFlowPrompt,
@@ -2042,13 +2042,7 @@ export default function HomePage() {
       caption: danceResult.caption,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      hookVariants: buildInitialHookVariants(
-        mappedScenes,
-        currentProject.productName || danceResult.danceStyle,
-        danceResult.choreoConcept,
-        matchedCat.name,
-        currentProject.persona || ''
-      ),
+      hookVariants: [],
       scenes: mappedScenes,
     };
 
@@ -2064,7 +2058,7 @@ export default function HomePage() {
       `Project TikTok Dance "${newProj.title}" disimpan ke Local Storage.`
     );
     setViewMode('cards');
-    showToast(`💃 Project "${newProj.title}" dibuat & dibuka di Editor Adegan!`);
+    showToast(`💃 Project "${newProj.title}" dibuat (tanpa floating text & VO)!`);
   };
 
   const handleApplyDanceToCurrentProject = (danceResult: DanceStoryboardResult) => {
@@ -2076,17 +2070,11 @@ export default function HomePage() {
       caption: danceResult.caption || p.caption,
       targetDuration: totalDur,
       scenes: mappedScenes,
-      hookVariants: buildInitialHookVariants(
-        mappedScenes,
-        p.productName || danceResult.danceStyle,
-        p.keySellingPoints || danceResult.choreoConcept,
-        activeCategory.name,
-        p.persona || ''
-      ),
+      hookVariants: [],
     }));
     setActiveHookIndex(0);
     setViewMode('cards');
-    showToast(`💃 Storyboard TikTok Dance dipasang ke naskah aktif & Motion Control!`);
+    showToast(`💃 Storyboard TikTok Dance dipasang ke naskah aktif (tanpa floating text & VO)!`);
   };
 
   // If not authenticated or not mounted yet, show PasswordGate

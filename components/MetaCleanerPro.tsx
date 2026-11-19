@@ -802,13 +802,13 @@ export const MetaCleanerPro: React.FC = () => {
     {
       id: 'init-1',
       time: '--:--:--',
-      text: "[MetaCleaner V 2.0 Organic Mobile Capture] Ready: Native 30fps (Zero-Ghost) + Quasi-Aperiodic Sub-Pixel Drift + Gaussian CMOS Grain + Zero-Silence Audio + Zero-Tombstone MP4.",
+      text: "[MetaCleaner V 2.0 Organic Mobile Capture] Ready: Zero-Pulldown 30fps Motion Interp (0% Duplicate) + Per-Job Organic Warp & ISP cas + Gaussian CMOS Grain + Unique Audio Seeds + Zero-Tombstone MP4.",
       color: 'indigo',
     },
     {
       id: 'init-2',
       time: '--:--:--',
-      text: 'Membersihkan 4 lapisan jejak AI & editan: Zero-Tombstone udta/meta/free MP4, Zero-SEI Type 6, Native 30fps + Gaussian Sensor Grain, & Zero-Silence Pink/Brown Voice.',
+      text: 'Membersihkan 4 lapisan jejak AI & editan: Zero-Tombstone udta/meta/free MP4, Zero-SEI Type 6, Zero-Pulldown 30fps + Per-Job Warp/CAS + Gaussian Grain, & Unique Pink/Brown Voice.',
       color: 'slate',
     },
   ]);
@@ -1244,7 +1244,7 @@ export const MetaCleanerPro: React.FC = () => {
         'indigo'
       );
       appendLog(
-        `-> Chained Pipeline: Safe Mode Temporal CFR + Deep 5-Layer Anti-SynthID + Lossless Zero-SEI & Faststart OEM (${cameraProfile.toUpperCase()})`,
+        `-> Chained Pipeline: Zero-Pulldown 30fps Repair + Per-Job Anti-SynthID Warp/CAS + Unique Audio Seeds + Adaptive b-adapt=2 GOP (${cameraProfile.toUpperCase()})`,
         'amber'
       );
 
@@ -1555,11 +1555,11 @@ export const MetaCleanerPro: React.FC = () => {
             <h2 className="font-bold text-base sm:text-lg leading-tight text-white flex items-center gap-2 flex-wrap">
               <span>MetaCleaner V 2.0</span>
               <span className="text-xs font-mono text-indigo-300 tabular-nums">
-                · Organic Mobile Capture (30fps + Gaussian CMOS)
+                · Zero-Pulldown 30fps + Organic Mobile Capture
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Anti-AI &amp; Anti-Edit 4 Lapisan: Native 30fps (Bebas Frame-Blend Ghost), Sub-Pixel Quasi-Aperiodic Drift + Gaussian Sensor Grain, Audio Zero-Silence (-51dB), &amp; Zero-Tombstone MP4
+              Anti-AI &amp; Anti-Edit 4 Lapisan: Zero-Pulldown 30fps (0% Duplikat Frame), Per-Job Organic Warp + ISP Contrast (CAS) + Gaussian Grain, Unique Pink/Brown Audio (-51dB), &amp; Adaptive GOP MP4
             </p>
           </div>
         </div>
@@ -1640,15 +1640,15 @@ export const MetaCleanerPro: React.FC = () => {
                 <div className="space-y-1.5 text-[10px] font-mono">
                   <div className="flex items-center gap-2 text-cyan-300 bg-cyan-950/25 border border-cyan-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-                    <span>1. Native 30fps (0% Ghost) + Quasi-Aperiodic Sub-Pixel Drift + Gaussian Grain</span>
+                    <span>1. Zero-Pulldown 30fps Repair (0% Duplikat) + Per-Job Organic Warp &amp; ISP CAS</span>
                   </div>
                   <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/25 border border-emerald-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-                    <span>2. Zero-Silence Indoor Pink/Brown Room (-51dB) + Natural 160k AAC Voice</span>
+                    <span>2. Unique Pink/Brown Audio Seeds (-51dB) + Synced 160k AAC Anti-TTS</span>
                   </div>
                   <div className="flex items-center gap-2 text-indigo-300 bg-indigo-950/25 border border-indigo-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
-                    <span>3. Zero-SEI + Zero-Free + Zero-Tombstone udta/meta/ilst (2-Ref 60-GOP)</span>
+                    <span>3. Zero-SEI + Zero-Free + Zero-Tombstone MP4 (Adaptive b-adapt=2 GOP)</span>
                   </div>
                 </div>
               </div>
@@ -2886,7 +2886,7 @@ export const MetaCleanerPro: React.FC = () => {
                 <span>Pembersihan 4 Lapisan Tanpa Glitch</span>
               </div>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                MetaCleaner V 2.0 menulis ulang paket dengan <code className="text-emerald-300">-bsf:v filter_units=remove_types=6</code> (0% SEI, 0% atom <code>free</code>, 0% <code>udta/meta/mdta</code> spoofing), <strong>sub-pixel quasi-aperiodic drift</strong> per-frame + CMOS sensor grain pada <strong>Native 30fps 1080p BT.709</strong>, &amp; GOP 2-ref kamera native.
+                MetaCleaner V 2.0 menghapus SEI (<code className="text-emerald-300">filter_units=remove_types=6</code>), mengompaksi atom <code>free/udta/meta</code>, memperbaiki duplikasi cadence 24→30fps (<code>0%</code> pulldown duplicate), serta menyuntikkan warp optik + ISP <code>cas</code> acak per-job pada <strong>30fps 1080p BT.709</strong> dengan struktur GOP adaptif (<code>b-adapt=2</code>).
               </p>
             </div>
 
@@ -2896,7 +2896,7 @@ export const MetaCleanerPro: React.FC = () => {
                 <span>Penetralan Audio TTS &amp; Vocoder AI</span>
               </div>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Detektor platform modern memindai jeda hening digital (&lt;-55dB), hiss sintetik, dan cliff spektrum. MetaCleaner V 2.0 menyuntikkan 1/f pink+brown indoor room floor (-52dB), harmonik suara <code>aexciter</code>, &amp; AAC 160kbps alami.
+                Detektor platform modern memindai jeda hening digital (&lt;-55dB), hiss sintetik, dan cliff spektrum. MetaCleaner V 2.0 menyuntikkan 1/f pink+brown indoor room floor dengan seed acak unik per-video (-51dB), harmonik suara <code>aexciter</code>, &amp; AAC 160kbps alami.
               </p>
             </div>
           </div>

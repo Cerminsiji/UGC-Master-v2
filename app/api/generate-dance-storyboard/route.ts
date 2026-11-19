@@ -73,11 +73,13 @@ function buildDanceFallback(params: {
   const beatTempo = mapTempoToMotionEnum(musicVibe);
   const intensity = mapIntensityToMotionEnum(danceStyle, musicVibe);
   const isShopee = (targetPlatform || '').toLowerCase().includes('shopee');
-  const isTikTokShop = (targetPlatform || '').toLowerCase().includes('tiktok');
 
   const physicsSnippet = physicsConsistencyCheck
     ? 'strict physical laws, realistic mass inertia, natural human joint biomechanics, solid ground contact and weight transfer, consistent directional lighting with cast shadows, zero morphing'
     : 'natural dancer motion, crisp focus, consistent lighting';
+
+  const pureVisualToken =
+    'no floating text, no on-screen text overlay, no subtitles, no voiceover dialogue, pure visual choreography and camera motion';
 
   const baseSegments: Array<{
     beatLabel: string;
@@ -85,32 +87,22 @@ function buildDanceFallback(params: {
     cam: string;
     cameraAngle: string;
     visual: string;
-    popup: string;
     sfx: string;
-    vo: string;
     mood: string;
   }> = [
     {
       beatLabel: 'Intro 1x8 (Ketukan 1–4) • Hook Pose',
       choreo: pickRandom([
         'Head-tilt tajam ke kiri lalu point dua jari mengarah langsung ke lensa tepat di ketukan ke-3, bahu bounce ringan mengikuti intro bass.',
-        'Langkah masuk 2 ketukan dari samping frame, snap jari di depan wajah lalu senyum percaya diri dengan tangan memegang prop.',
+        'Langkah masuk 2 ketukan dari samping frame, snap jari di depan wajah lalu senyum percaya diri dengan gerak ritmis bahu.',
       ]),
       cam: '0.5x Ultra-Wide Snap Push-In mengikuti gerakan tangan ke kamera.',
       cameraAngle: '0.5x Ultra-Wide Gen-Z Selfie (Ekspresif & Dekat)',
       visual: isProductMode
-        ? `${talentPersona} masuk frame dengan pose pembuka enerjik sambil memegang ${safeProd} di tangan kiri secara solid, langsung menatap lensa di bawah cahaya natural.`
+        ? `${talentPersona} masuk frame dengan pose pembuka enerjik sambil memegang ${safeProd} secara solid, menatap lensa di bawah cahaya natural.`
         : `${talentPersona} membuka frame dengan pose siap dance penuh energi, tatapan tajam ke kamera dan gerakan bahu sinkron ketukan intro.`,
-      popup: pickRandom([
-        'WAIT FOR THE BEAT DROP 🎧🔥',
-        'SYNC CHECK DETIK KE-1 ⚡',
-        isProductMode ? `DANCE + SPILL ${safeProd.toUpperCase().slice(0, 16)} 💃` : 'COBAIN TREND INI YUK! 🕺',
-      ]),
       sfx: 'Intro riser whoosh & Finger snap click',
-      vo: isProductMode
-        ? `(Lip-sync beat intro) "Ketukan ke-4 langsung masuk—sekalian spill ${safeProd} favoritku!"`
-        : `(Lip-sync lirik intro + senyum) "Siap-siap di hitungan empat..."`,
-      mood: 'Gaya teks: Bold Beat-Synced Kinetic. Tempo intro membangun antisipasi.',
+      mood: 'Pure visual dance intro. Pencahayaan natural stabil, tempo intro membangun antisipasi.',
     },
     {
       beatLabel: 'Verse 1x8 (Ketukan 5–8) • Hand-Sync Groove',
@@ -123,14 +115,8 @@ function buildDanceFallback(params: {
       visual: isProductMode
         ? `Penari menari sinkron ${danceStyle} sambil mengarahkan fokus gerakan tangan ke arah ${safeProd} dengan kontak genggaman nyata dan bayangan serasi.`
         : `Penari mengeksekusi kombinasi gerakan tangan ${danceStyle} dengan artikulasi jari jelas dan postur tegak di ${outfitWardrobe}.`,
-      popup: pickRandom([
-        'KETUKAN 5-8: HAND SYNC ✋⚡',
-        'IKUTIN GERAKAN TANGANNYA 👀',
-        'ON BEAT TERUS TANPA MISS 🎯',
-      ]),
       sfx: 'Crisp snare clap & Sub-bass groove',
-      vo: `(Lip-sync lirik utama mengikuti ritme snare)`,
-      mood: 'Gaya teks: Clean Floating Beat Tag. Ekspresi ceria & eye-contact kuat.',
+      mood: 'Pure visual groove. Ekspresi ceria & eye-contact kuat tanpa teks layar.',
     },
     {
       beatLabel: 'Pre-Chorus • Match-Cut Hand Cover',
@@ -138,79 +124,46 @@ function buildDanceFallback(params: {
       cam: 'Match-Cut Lens Cover Zoom-Out diikuti Whip Pan cepat searah putaran bahu.',
       cameraAngle: 'Match-Cut Hand Transition (Tutup Lensa & Reveal)',
       visual: isProductMode
-        ? `Transisi tutup lensa mengungkap ${talentPersona} sudah tampil dengan vibe baru dan menunjukkan ${safeProd} dengan jelas di depan dada.`
+        ? `Transisi tutup lensa mengungkap ${talentPersona} tampil dengan pose baru sambil memamerkan detail ${safeProd} dengan jelas.`
         : `Transisi tutup lensa mulus mengubah sudut framing dan posisi pose penari tepat saat musik naik menuju beat drop.`,
-      popup: pickRandom([
-        'TRANSISI MATCH-CUT! ✨🔄',
-        'SIAP-SIAP BEAT DROP... 3, 2, 1 💥',
-      ]),
       sfx: 'Match-cut hand slap whoosh & Risers swell',
-      vo: `(Cut cepat tanpa dialog / nafas beat naik)`,
-      mood: 'Gaya teks: Speed-Ramp Transition Flash. Potongan tepat di frame tutup lensa.',
+      mood: 'Speed-ramp transition tepat di frame tutup lensa. Pure visual.',
     },
     {
       beatLabel: 'CHORUS BEAT DROP! (1x8 Ketukan Utama)',
       choreo: pickRandom([
         'Drop lutut rendah di hitungan 1, lanjut footwork side-step cepat + double shoulder pop kanan-kiri dan pointing ke kamera di ketukan 5-6.',
-        'Chest pop bertenaga tepat di bass drop, ayunan lengan membentuk framing wajah/produk, lalu spin setengah badan dengan ekspresi hype.',
+        'Chest pop bertenaga tepat di bass drop, ayunan lengan membentuk framing tubuh/produk, lalu spin setengah badan dengan ekspresi hype.',
       ]),
       cam: 'Crash Zoom / Beat Drop Punch-In tepat setiap pukulan kick drum (ketukan 1, 3, 5, 7).',
       cameraAngle: 'Snap-Zoom Product Punch (Zoom Cepat Beat Drop)',
       visual: isProductMode
-        ? `Puncak koreografi ${danceStyle}: ${talentPersona} menari enerjik memamerkan kelenturan & fungsi ${safeProd} di tengah gerakan chorus berenergi tinggi.`
+        ? `Puncak koreografi ${danceStyle}: ${talentPersona} menari enerjik memamerkan kelenturan & siluet ${safeProd} di tengah gerakan chorus berenergi tinggi.`
         : `Puncak koreografi ${danceStyle} penuh energi di ruang terbuka/studio dengan gerakan kaki dan tangan serempak bersama irama bass drop.`,
-      popup: pickRandom([
-        'BOOM! BEAT DROP MODE 🔥💃',
-        'BAGIAN PALING NAGIH DI FYP 🚀',
-        'AUTO REPLAY PART INI 🔁⚡',
-      ]),
       sfx: 'Heavy sub-bass beat drop hit & Crowd cheer shimmer',
-      vo: isProductMode
-        ? `(Lip-sync chorus + tunjuk produk) "Lihat sendiri kan nyamannya buat gerak seaktif ini!"`
-        : `(Lip-sync full energi bagian chorus viral)`,
-      mood: 'Gaya teks: Flashing Neon Beat Pulse. Dynamic micro-zoom di tiap bass hit.',
+      mood: 'Dynamic micro-zoom di tiap bass hit. Tanpa teks overlay & tanpa VO.',
     },
     {
       beatLabel: 'Post-Chorus • Detail Groove / Fit-Check',
-      choreo: 'Gerakan groove santai langkah mundur dua kali (step-back bounce), memutar pinggul ringan sambil memperlihatkan detail outfit/produk.',
+      choreo: 'Gerakan groove santai langkah mundur dua kali (step-back bounce), memutar pinggul ringan sambil memperlihatkan detail siluet outfit/produk.',
       cam: 'Low-Angle Tracking Follow dari pinggang mendongak sedikit agar siluet penari terlihat jenjang.',
       cameraAngle: 'Low Angle (Hero / Powerful)',
       visual: isProductMode
         ? `${talentPersona} tetap bergoyang ringan mengikuti tempo sambil mendekatkan ${safeProd} ke jarak close-up natural tanpa berhenti menari.`
         : `${talentPersona} melangkah santai mengikuti groove sambil memamerkan detail ${outfitWardrobe} di pencahayaan hangat konsisten.`,
-      popup: pickRandom([
-        'FIT-CHECK & VIBE CHECK ✅',
-        'GERAK BEBAS TANPA KAKU 😎',
-        isProductMode ? 'REAL DETAIL ON CAM 🔍' : 'SMOOTH FOOTWORK STEP 👟',
-      ]),
       sfx: 'Hi-hat groove & Camera shutter click',
-      vo: isProductMode
-        ? `(VO santai di atas beat) "Dipakai joget atau aktivitas seharian juga tetep aman pol."`
-        : `(Senyum ke kamera mengikuti groove penutup)`,
-      mood: 'Gaya teks: Editorial Minimal Subtitle. Fokus ke proporsi gerakan & detail visual.',
+      mood: 'Fokus proporsi gerakan tubuh & detail visual jernih.',
     },
     {
-      beatLabel: 'Outro • Freeze Pose & CTA Loop',
-      choreo: 'Freeze pose ikonik (peace sign / heart / tunjuk bawah mengikuti irama ketukan terakhir) dengan kedipan mata atau anggukan ringan.',
-      cam: 'Smooth Pull-Back Reveal perlahan memberi ruang untuk tombol UI TikTok/Reels.',
-      cameraAngle: 'Front Camera / Selfie Mode (Curhat Langsung)',
+      beatLabel: 'Outro • Freeze Pose & Seamless Loop',
+      choreo: 'Freeze pose ikonik (peace sign / heart / pose stylish) mengikuti irama ketukan terakhir sebelum kembali ke posisi pembuka.',
+      cam: 'Smooth Pull-Back Reveal perlahan dengan framing bersih vertikal 9:16.',
+      cameraAngle: 'Front Camera / Selfie Mode (Clean Framing)',
       visual: isProductMode
-        ? `${talentPersona} melakukan pose penutup manis sambil mengarahkan jari ke arah ${isShopee ? 'keranjang oren' : isTikTokShop ? 'keranjang kuning' : 'keranjang di bawah'} memegang ${safeProd}.`
+        ? `${talentPersona} melakukan pose penutup elegan sambil menampilkan ${safeProd} secara utuh di bawah cahaya terarah konsisten.`
         : `${talentPersona} menahan pose ikonik penutup selama 1 detik agar video bisa looping mulus ke detik pertama.`,
-      popup: isProductMode
-        ? isShopee
-          ? 'CEK KERANJANG OREN SEKARANG! 🛒💃'
-          : isTikTokShop
-          ? 'SPILL ADA DI KERANJANG KUNING! 🛒🔥'
-          : 'KLIK LINK / KERANJANG DI BAWAH 👇🛒'
-        : 'DUET / STITCH TREND INI YUK! 💃🔥',
       sfx: 'Final beat chime & Sparkle magic ting',
-      vo: isProductMode
-        ? isShopee
-          ? `Kalau mau kembaran, langsung cek di keranjang oren sebelum ludes ya!`
-          : `Yang nanya beli di mana, langsung klik keranjang di bawah sebelum kehabisan!`
-        : `Save sound-nya & tag temen duet dance kamu di kolom komentar!`,
-      mood: 'Gaya teks: Loop-Ready End Card & CTA Glow.',
+      mood: 'Loop-ready end frame tanpa teks layar maupun voice over.',
     },
     {
       beatLabel: 'Bridge Breakdown • Slow-Mo Wave',
@@ -218,26 +171,20 @@ function buildDanceFallback(params: {
       cam: '360° Orbital Arc mengitari 45 derajat di sisi kiri penari.',
       cameraAngle: '360° Product Orbit / Spin (Putaran Produk)',
       visual: `Gerakan slow-motion halus menonjolkan kontrol tubuh ${talentPersona} dengan ${outfitWardrobe} di bawah rim light lembut.`,
-      popup: 'CONTROL THE TEMPO 🌊✨',
       sfx: 'Slow-motion bass sweep & Synth shimmer',
-      vo: `(Ekspresi intens lip-sync tempo lambat)`,
-      mood: 'Gaya teks: Soft Motion Blur. Speed ramp 0.5x ke 1x.',
+      mood: 'Speed ramp 0.5x ke 1x, pencahayaan rim light bersih.',
     },
     {
       beatLabel: 'Encore Pose • Quick Turn Loop',
       choreo: 'Putar badan cepat menghadap belakang lalu menoleh balik ke kamera siap menyambung ke ketukan pertama.',
       cam: 'Whip Pan kiri ke kanan untuk menciptakan seamless loop.',
       cameraAngle: 'Panning & Whip Pan (Transisi Cepat)',
-      visual: `${talentPersona} berputar mulus kembali ke posisi awal pembuka agar penonton memutar ulang video secara otomatis.`,
-      popup: 'SEAMLESS LOOP 🔁🔥',
+      visual: `${talentPersona} berputar mulus kembali ke posisi awal pembuka agar video terputar ulang mulus.`,
       sfx: 'Whip pan whoosh & Beat restart tick',
-      vo: `(Loop mulus ke awal musik)`,
-      mood: 'Gaya teks: Clean Corner Badge. Loop continuity frame.',
+      mood: 'Loop continuity frame, tanpa floating text.',
     },
   ];
 
-  // Pick requested sceneCount keeping Intro first & Outro last
-  const middlePool = baseSegments.slice(1, -3);
   const extraPool = baseSegments.slice(-2);
   let chosen: typeof baseSegments = [];
 
@@ -262,15 +209,15 @@ function buildDanceFallback(params: {
       cameraChoreo: seg.cam,
       cameraAngle: seg.cameraAngle,
       visualAction: seg.visual,
-      popupText: seg.popup,
+      popupText: '',
       soundEffect: seg.sfx,
-      dialogVO: seg.vo,
+      dialogVO: '',
       notesMood: seg.mood,
       duration: dur,
       imageReferenceNote: isProductMode
         ? 'Pastikan Produk & Outfit sesuai Gambar referensi yang sudah di attached'
         : 'Pastikan karakter & outfit penari konsisten dengan referensi visual',
-      googleFlowPrompt: `[TikTok Dance Ref: ${danceStyle}] Scene ${idx + 1} (${seg.beatLabel}) - ${seg.cameraAngle}, ${seg.cam} - Dancer Action: ${seg.choreo}. ${seg.visual} - On-Screen Pop-up Text Overlay: "${seg.popup}" - Tempo: ${beatTempo}, Intensity: ${intensity}, ${physicsSnippet}, 9:16 vertical 60fps crisp smartphone video.`,
+      googleFlowPrompt: `[TikTok Dance Ref: ${danceStyle}] Scene ${idx + 1} (${seg.beatLabel}) - ${seg.cameraAngle}, ${seg.cam} - Dancer Action: ${seg.choreo}. ${seg.visual} - Tempo: ${beatTempo}, Intensity: ${intensity}, ${pureVisualToken}, ${physicsSnippet}, 9:16 vertical 60fps crisp smartphone video.`,
       motionControl: {
         danceStyle,
         cameraMovement: seg.cam,
@@ -293,7 +240,7 @@ function buildDanceFallback(params: {
 
   const captionBody = isProductMode
     ? pickRandom([
-        `Ikutan trend ${danceStyle.split('&')[0].trim()} sambil spill ${safeProd.slice(0, 22)}! Cek ${isShopee ? 'keranjang oren' : 'keranjang bawah'} 💃`,
+        `Ikutan trend ${danceStyle.split('&')[0].trim()} bareng ${safeProd.slice(0, 22)}! Cek ${isShopee ? 'keranjang oren' : 'keranjang bawah'} 💃`,
         `Gerak seaktif ini tetep nyaman pake ${safeProd.slice(0, 22)} 🔥 Yang mau kembaran cek keranjang!`,
       ])
     : pickRandom([
@@ -307,7 +254,7 @@ function buildDanceFallback(params: {
       : `TikTok Dance Storyboard - ${danceStyle}`,
     danceStyle,
     bpmRange: beatTempo,
-    choreoConcept: `Koreografi ${danceStyle} bergaya ${danceMode} dengan tempo ${musicVibe}, dirancang khusus agar gerakan tangan, footwork, dan transisi match-cut menyatu dengan algoritma retensi & loop ${targetPlatform}.`,
+    choreoConcept: `Koreografi ${danceStyle} bergaya ${danceMode} dengan tempo ${musicVibe} (pure visual dance tanpa floating text & tanpa voice over).`,
     soundRecommendation: `Gunakan sound trending kategori "${musicVibe}" (${beatTempo}) dengan ketukan bass drop jelas di detik ke-3 sampai ke-5.`,
     outfitNotes: outfitWardrobe || 'OOTD kasual streetwear/clean aesthetic dengan kontras warna mencolok terhadap latar agar gerakan tangan terbaca jelas.',
     caption: fitCaptionWithHashtags(captionBody, nicheTags, 150),
@@ -341,8 +288,6 @@ export async function POST(req: NextRequest) {
   } = body || {};
 
   const isProductMode = danceMode !== 'Pure Viral Dance Trend';
-  const isShopee = String(targetPlatform).toLowerCase().includes('shopee');
-  const isTikTokShop = String(targetPlatform).toLowerCase().includes('tiktok');
   const sceneTarget = Math.max(4, Math.min(8, Number(targetSceneCount) || 6));
   const durationTarget = Math.max(10, Math.min(60, Number(targetDuration) || 20));
   const beatTempo = mapTempoToMotionEnum(musicVibe);
@@ -364,17 +309,18 @@ ${isProductMode ? `- Produk yang Terintegrasi ke Dance: "${productName || 'Produ
 - Total Durasi: ${durationTarget} detik
 - Jumlah Segmen Beat/Adegan: WAJIB TEPAT ${sceneTarget} segmen (jumlah integer durasi mendekati ${durationTarget}s)
 
-ATURAN KHUSUS TIKTOK DANCE STORYBOARD:
-1. Adegan 1 WAJIB menjadi Hook 2-3 detik (pose pembuka, tatapan kamera, hand-snap atau teaser menuju beat drop) — DILARANG pakai kata klise "Stop scrolling!" atau "3 alasan!".
-2. Setiap segmen WAJIB memiliki:
+ATURAN MUTLAK TIKTOK DANCE STORYBOARD (TANPA FLOATING TEXT & TANPA VOICE OVER):
+1. DILARANG KERAS MEMBUAT NARASI FLOATING TEXT / POP-UP TEXT DI LAYAR! Video dance ini 100% bersih tanpa teks stiker melayang atau subtitle overlay.
+2. DILARANG KERAS MEMBUAT NARASI VOICE OVER (VO) ATAU DIALOG UCAPAN! Fokus penuh hanya pada gerakan fisik koreografi, sinkronisasi ketukan musik, ekspresi visual, pergerakan kamera, pencahayaan, dan cue SFX beat.
+3. Adegan 1 WAJIB menjadi Hook Visual 2-3 detik (pose pembuka, tatapan kamera, hand-snap atau gerakan antisipasi menuju beat drop).
+4. Setiap segmen WAJIB memiliki:
    - \`beatCue\`: Penanda musik & hitungan tari yang jelas (misal: "Intro 1x8 (Ketukan 1-4)", "Pre-Chorus Match-Cut", "CHORUS BEAT DROP! (Ketukan 1-8)", "Outro Seamless Loop").
    - \`choreographyMove\`: Instruksi detail gerakan badan, koordinasi tangan/jari, bahu, pinggul, dan footwork agar mudah ditiru.
    - \`cameraChoreo\`: Instruksi spesifik gerakan kamera mengikuti ketukan (misal: "0.5x Ultra-Wide push-in di ketukan 4", "Crash zoom tiap kick drum", "Match-cut hand cover + whip pan").
-   - \`popupText\`: Stiker teks/lirik pendek di layar yang variatif dan punchy di setiap segmen (JANGAN diulang!).
-   - \`soundEffect\`: Cue SFX/Foley beat yang hidup (misal: "Finger snap & Sub-bass drop", "Match-cut whoosh & Snare clap").
-   - \`dialogVO\`: Lip-sync lirik atau teks VO singkat yang menyambung alur${isProductMode ? ` serta CTA alami pada segmen akhir (${isShopee ? 'WAJIB keranjang oren / klik keranjang di bawah, DILARANG keranjang kuning' : isTikTokShop ? 'keranjang kuning / klik keranjang di bawah' : 'klik keranjang di bawah'})` : ' dan ajakan duet/stitch pada segmen akhir'}.
-3. ${physicsConsistencyCheck ? 'PHYSICS & ANATOMY MANDATE: Semua gerakan tari wajib mematuhi batas biomekanika sendi manusia, kontak kaki dengan lantai yang solid, inersia tubuh realistis, genggaman 5 jari normal bila memegang barang, tanpa clipping/melayang di visualAction & googleFlowPrompt.' : ''}
-4. \`caption\`: Buatkan 1 caption viral ala TikTok Dance lengkap dengan 3-4 hashtag relevan (WAJIB <= 150 karakter total!).
+   - \`soundEffect\`: Cue SFX/Foley beat musik yang hidup (misal: "Finger snap & Sub-bass drop", "Match-cut whoosh & Snare clap").
+   - \`googleFlowPrompt\`: Prompt siap video AI yang WAJIB menyertakan "no floating text, no on-screen text overlay, no subtitles, no voiceover dialogue" dan dilarang menyebut overlay teks.
+5. ${physicsConsistencyCheck ? 'PHYSICS & ANATOMY MANDATE: Semua gerakan tari wajib mematuhi batas biomekanika sendi manusia, kontak kaki dengan lantai yang solid, inersia tubuh realistis, genggaman 5 jari normal bila memegang barang, tanpa clipping/melayang di visualAction & googleFlowPrompt.' : ''}
+6. \`caption\`: Buatkan 1 caption postingan media sosial ala TikTok Dance lengkap dengan 3-4 hashtag relevan (WAJIB <= 150 karakter total!).
 
 Kembalikan JSON sesuai skema.`;
 
@@ -399,9 +345,7 @@ Kembalikan JSON sesuai skema.`;
                 cameraChoreo: { type: Type.STRING },
                 cameraAngle: { type: Type.STRING },
                 visualAction: { type: Type.STRING },
-                popupText: { type: Type.STRING },
                 soundEffect: { type: Type.STRING },
-                dialogVO: { type: Type.STRING },
                 notesMood: { type: Type.STRING },
                 duration: { type: Type.INTEGER },
                 googleFlowPrompt: { type: Type.STRING },
@@ -412,9 +356,7 @@ Kembalikan JSON sesuai skema.`;
                 'cameraChoreo',
                 'cameraAngle',
                 'visualAction',
-                'popupText',
                 'soundEffect',
-                'dialogVO',
                 'notesMood',
                 'duration',
                 'googleFlowPrompt',
@@ -429,41 +371,51 @@ Kembalikan JSON sesuai skema.`;
     const raw = await generateWithFallback(
       prompt,
       config,
-      'You are an elite TikTok Viral Dance Choreographer & Video Director. Create energetic, beat-synced, easy-to-follow dance storyboards in natural Indonesian with varied pop-ups, camera choreography, and strict human biomechanics/physics.',
+      'You are an elite TikTok Viral Dance Choreographer & Video Director. Create energetic, beat-synced pure visual dance storyboards with ZERO floating text overlays and ZERO voiceover dialogue. Enforce strict human biomechanics and physics in every scene.',
       20000
     );
 
     const parsed = parseSafeJson<any>(raw);
     if (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
-      const normalizedScenes: DanceStoryboardScene[] = parsed.scenes.map((sc: any, idx: number) => ({
-        id: `dance_sc_${Date.now()}_${idx + 1}`,
-        order: idx + 1,
-        beatCue: sc.beatCue || `Bar ${idx + 1} • Ketukan 1–8`,
-        choreographyMove: sc.choreographyMove || sc.visualAction || '',
-        cameraChoreo: sc.cameraChoreo || cameraDynamic,
-        cameraAngle: sc.cameraAngle || 'Medium Shot (Setengah Badan)',
-        visualAction: sc.visualAction || sc.choreographyMove || '',
-        popupText: sc.popupText || `BEAT PART ${idx + 1} ⚡`,
-        soundEffect: sc.soundEffect || 'Sub-bass beat drop hit',
-        dialogVO: sc.dialogVO || '(Lip-sync on beat)',
-        notesMood: sc.notesMood || 'Gaya teks: Beat-Synced Kinetic.',
-        duration: Math.max(1, Number(sc.duration) || 3),
-        googleFlowPrompt:
+      const normalizedScenes: DanceStoryboardScene[] = parsed.scenes.map((sc: any, idx: number) => {
+        const baseFlow =
           sc.googleFlowPrompt ||
-          `[TikTok Dance Ref: ${danceStyle}] Scene ${idx + 1} (${sc.beatCue || ''}) - ${sc.visualAction || sc.choreographyMove} - Camera: ${sc.cameraChoreo || cameraDynamic} - On-Screen Pop-up Text Overlay: "${sc.popupText || ''}" - natural human biomechanics, realistic inertia, 9:16 vertical 60fps.`,
-        imageReferenceNote: isProductMode
-          ? 'Pastikan Produk & Outfit sesuai Gambar referensi yang sudah di attached'
-          : 'Pastikan karakter & outfit penari konsisten dengan referensi visual',
-        motionControl: {
-          danceStyle,
-          cameraMovement: sc.cameraChoreo || cameraDynamic,
-          aestheticEffect: 'Raw iPhone Handheld 2026 Aesthetic',
-          motionIntensity: intensity,
-          beatTempo,
-          aspectRatio: '9:16',
-          customMotionNotes: `${sc.beatCue || ''} | ${sc.choreographyMove || ''}`,
-        },
-      }));
+          `[TikTok Dance Ref: ${danceStyle}] Scene ${idx + 1} (${sc.beatCue || ''}) - ${sc.visualAction || sc.choreographyMove} - Camera: ${sc.cameraChoreo || cameraDynamic} - natural human biomechanics, realistic inertia, 9:16 vertical 60fps.`;
+        const cleanedFlow = baseFlow
+          .replace(/\s*-?\s*On-Screen Pop-up Text Overlay:\s*["']?[^"'\-]+["']?/gi, '')
+          .trim();
+        const finalFlow = /no floating text|no on-screen text/i.test(cleanedFlow)
+          ? cleanedFlow
+          : `${cleanedFlow} - no floating text, no on-screen text overlay, no subtitles, no voiceover dialogue, pure visual dance & camera motion`;
+
+        return {
+          id: `dance_sc_${Date.now()}_${idx + 1}`,
+          order: idx + 1,
+          beatCue: sc.beatCue || `Bar ${idx + 1} • Ketukan 1–8`,
+          choreographyMove: sc.choreographyMove || sc.visualAction || '',
+          cameraChoreo: sc.cameraChoreo || cameraDynamic,
+          cameraAngle: sc.cameraAngle || 'Medium Shot (Setengah Badan)',
+          visualAction: sc.visualAction || sc.choreographyMove || '',
+          popupText: '',
+          soundEffect: sc.soundEffect || 'Sub-bass beat drop hit',
+          dialogVO: '',
+          notesMood: sc.notesMood || 'Pure visual beat-synced choreography.',
+          duration: Math.max(1, Number(sc.duration) || 3),
+          googleFlowPrompt: finalFlow,
+          imageReferenceNote: isProductMode
+            ? 'Pastikan Produk & Outfit sesuai Gambar referensi yang sudah di attached'
+            : 'Pastikan karakter & outfit penari konsisten dengan referensi visual',
+          motionControl: {
+            danceStyle,
+            cameraMovement: sc.cameraChoreo || cameraDynamic,
+            aestheticEffect: 'Raw iPhone Handheld 2026 Aesthetic',
+            motionIntensity: intensity,
+            beatTempo,
+            aspectRatio: '9:16',
+            customMotionNotes: `${sc.beatCue || ''} | ${sc.choreographyMove || ''}`,
+          },
+        };
+      });
 
       const fallbackTags = buildNicheHashtags(
         isProductMode ? productName : danceStyle,

@@ -15,11 +15,11 @@ import {
   ArrowRightCircle,
   Loader2,
   Volume2,
-  Type,
   Zap,
   Users,
   CheckCircle2,
   Layers,
+  EyeOff,
 } from 'lucide-react';
 import type { DanceStoryboardResult, DanceStoryboardScene } from '@/types';
 import { copyToClipboard, postJsonWithRetry } from '@/utils/helpers';
@@ -40,17 +40,17 @@ const DANCE_MODES = [
   {
     id: 'Dance + Soft-Sell Produk',
     label: 'Dance + Soft-Sell Produk',
-    desc: 'Koreografi viral sambil menonjolkan produk secara natural & closing CTA.',
+    desc: 'Koreografi viral sambil memamerkan produk secara visual tanpa teks layar maupun voice over.',
   },
   {
     id: 'Outfit / Fit-Check Transition',
     label: 'Outfit / Fit-Check Transition',
-    desc: 'Dance ringan + transisi match-cut ganti gaya/OOTD tepat di beat drop.',
+    desc: 'Dance ringan + transisi match-cut ganti gaya/OOTD tepat di beat drop (100% visual).',
   },
   {
     id: 'Pure Viral Dance Trend',
     label: 'Pure Viral Dance Trend',
-    desc: 'Fokus 100% koreografi FYP untuk awareness, engagement, duet & stitch.',
+    desc: 'Fokus 100% koreografi FYP, gerak tubuh & kamera murni untuk duet/stitch tanpa VO.',
   },
 ];
 
@@ -196,7 +196,7 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
       if (response?.success && response.data) {
         setResult(response.data);
         setSourceTag(response.source || 'ai');
-        onNotify?.(`💃 Storyboard TikTok Dance (${response.data.scenes.length} segmen beat) berhasil dibuat!`);
+        onNotify?.(`💃 Storyboard TikTok Dance (${response.data.scenes.length} segmen beat, tanpa floating text & VO) berhasil dibuat!`);
       }
     } catch (err) {
       console.error('Dance storyboard error:', err);
@@ -231,6 +231,7 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
     if (!result) return '';
     let out = `# ${result.title.toUpperCase()}\n`;
     out += `Gaya: ${result.danceStyle} | Tempo: ${result.bpmRange}\n`;
+    out += `Mode Visual: Pure Visual Dance (Tanpa Floating Text & Tanpa Voice Over)\n`;
     out += `Sound: ${result.soundRecommendation}\n`;
     out += `OOTD & Setting: ${result.outfitNotes}\n\n`;
     let acc = 0;
@@ -241,9 +242,9 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
       out += `[00:${String(s).padStart(2, '0')} - 00:${String(e).padStart(2, '0')}] SEGMEN ${i + 1} (${sc.beatCue || ''})\n`;
       out += `  • Koreo Tubuh: ${sc.choreographyMove || sc.visualAction}\n`;
       out += `  • Kamera: ${sc.cameraChoreo || sc.cameraAngle}\n`;
-      out += `  • Pop-up Teks: ${sc.popupText}\n`;
-      out += `  • Lip-Sync/VO: ${sc.dialogVO}\n`;
-      out += `  • SFX/Beat Cue: ${sc.soundEffect}\n\n`;
+      out += `  • SFX/Beat Cue: ${sc.soundEffect}\n`;
+      if (sc.notesMood) out += `  • Mood/Lighting: ${sc.notesMood}\n`;
+      out += `\n`;
     });
     if (result.caption) {
       out += `CAPTION: ${result.caption}\n`;
@@ -283,9 +284,13 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
                 <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-pink-950 text-pink-300 border border-pink-700/50">
                   Beat-Synced Studio
                 </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-700/50 flex items-center gap-1">
+                  <EyeOff className="w-3 h-3" />
+                  <span>Tanpa Floating Text &amp; VO</span>
+                </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Buat naskah koreografi dance ala TikTok per bar/ketukan (1–8 count), gerakan kamera, transisi match-cut, pop-up lirik, &amp; integrasi produk siap kirim ke Storyboard Utama atau Motion Control.
+                Buat naskah koreografi dance ala TikTok per bar/ketukan (1–8 count), gerakan kamera, transisi match-cut, dan prompt video AI murni tanpa narasi floating text maupun voice over.
               </p>
             </div>
           </div>
@@ -390,7 +395,7 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
-                    Produk / Outfit yang Di-Spill
+                    Produk / Outfit yang Ditampilkan
                   </label>
                   <button
                     type="button"
@@ -554,7 +559,7 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
             Siap Merancang Koreografi Dance TikTok Style?
           </h3>
           <p className="text-xs text-slate-400 max-w-xl mx-auto leading-relaxed">
-            Pilih mode konten dan gaya dance di atas lalu klik <strong className="text-pink-300">Generate Storyboard Dance</strong>. Hasilnya langsung terpecah rapi per ketukan musik (1–8 count), lengkap dengan arahan kamera, transisi match-cut, pop-up lirik, serta prompt Google Flow &amp; Motion Control.
+            Pilih mode konten dan gaya dance di atas lalu klik <strong className="text-pink-300">Generate Storyboard Dance</strong>. Hasilnya murni visual koreografi per ketukan musik (tanpa narasi floating text maupun narasi voice over) lengkap dengan arahan kamera, transisi match-cut, serta prompt Google Flow &amp; Motion Control.
           </p>
         </div>
       )}
@@ -577,6 +582,9 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
                   </span>
                   <span className="text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/50 px-2 py-0.5 rounded">
                     {result.scenes.length} Segmen • {totalResultDuration}s
+                  </span>
+                  <span className="text-[10px] font-bold bg-slate-900 text-slate-300 border border-slate-700 px-2 py-0.5 rounded">
+                    No Floating Text • No VO
                   </span>
                   {sourceTag === 'gemini' && (
                     <span className="text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-700/50 px-2 py-0.5 rounded">
@@ -691,7 +699,7 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
             </div>
           </div>
 
-          {/* Per-Segment Choreo Cards */}
+          {/* Per-Segment Choreo Cards (Pure Visual — Zero Floating Text & Zero VO) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {result.scenes.map((sc, idx) => (
               <div
@@ -747,33 +755,6 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
                     </div>
 
                     <div>
-                      <label className="text-[10px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1 mb-1">
-                        <Type className="w-3 h-3" />
-                        <span>Pop-up Teks / Stiker Beat</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={sc.popupText}
-                        onChange={(e) => handleEditSceneField(idx, 'popupText', e.target.value)}
-                        className="w-full bg-[#090d17] border border-[#1d273e] focus:border-amber-500 rounded-xl px-2.5 py-1.5 text-xs font-bold text-amber-200 outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider mb-1 block">
-                        Lip-Sync / VO Cue
-                      </label>
-                      <input
-                        type="text"
-                        value={sc.dialogVO}
-                        onChange={(e) => handleEditSceneField(idx, 'dialogVO', e.target.value)}
-                        className="w-full bg-[#090d17] border border-[#1d273e] focus:border-purple-500 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 outline-none"
-                      />
-                    </div>
-
-                    <div>
                       <label className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider mb-1 block">
                         SFX &amp; Beat Drop Cue
                       </label>
@@ -786,10 +767,19 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
                     </div>
                   </div>
 
-                  <div className="pt-1 border-t border-[#182135] flex items-center justify-between gap-2">
-                    <span className="text-[10px] text-slate-400 truncate">
-                      {sc.notesMood}
-                    </span>
+                  <div>
+                    <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider mb-1 block">
+                      Mood, Pencahayaan &amp; Timing Cut
+                    </label>
+                    <input
+                      type="text"
+                      value={sc.notesMood}
+                      onChange={(e) => handleEditSceneField(idx, 'notesMood', e.target.value)}
+                      className="w-full bg-[#090d17] border border-[#1d273e] focus:border-purple-500 rounded-xl px-2.5 py-1.5 text-xs text-slate-300 outline-none"
+                    />
+                  </div>
+
+                  <div className="pt-1 border-t border-[#182135] flex items-center justify-end gap-2">
                     <button
                       type="button"
                       onClick={() =>
@@ -799,14 +789,14 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
                           `Prompt Flow Segmen ${idx + 1}`
                         )
                       }
-                      className="flex items-center gap-1 text-[10px] font-bold text-cyan-300 hover:text-white bg-cyan-950/50 border border-cyan-800/50 px-2 py-1 rounded-lg shrink-0 cursor-pointer"
+                      className="flex items-center gap-1 text-[10px] font-bold text-cyan-300 hover:text-white bg-cyan-950/50 border border-cyan-800/50 px-2.5 py-1 rounded-lg shrink-0 cursor-pointer"
                     >
                       {copiedId === `flow_${sc.id}` ? (
                         <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                       ) : (
                         <Copy className="w-3 h-3" />
                       )}
-                      <span>Salin Prompt AI Video</span>
+                      <span>Salin Prompt AI Video (Pure Visual)</span>
                     </button>
                   </div>
                 </div>

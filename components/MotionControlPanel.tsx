@@ -126,6 +126,7 @@ export function buildMotionControlPrompt(
     scene.visualAction ? `Action: ${scene.visualAction}` : '',
     persona ? `Talent Persona: ${persona}` : '',
     mc.customMotionNotes ? `Notes: ${mc.customMotionNotes}` : '',
+    `No floating text, no on-screen text overlay, no subtitles, no voiceover dialogue, pure visual choreography and camera motion.`,
     `Strict physics consistency: realistic mass inertia, biomechanical constraint adherence, solid contact, zero morphing.`,
   ].filter(Boolean);
 
@@ -208,6 +209,8 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
       onBatchUpdateScenes((list) =>
         list.map((sc) => ({
           ...sc,
+          popupText: '',
+          dialogVO: '',
           motionControl: {
             ...sc.motionControl,
             danceStyle: batchDance,
@@ -221,14 +224,20 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
       );
     } else {
       scenes.forEach((sc) => {
-        updateSceneMotion(sc, {
-          danceStyle: batchDance,
-          cameraMovement: batchCamera,
-          aestheticEffect: batchAesthetic,
+        onUpdateScene({
+          ...sc,
+          popupText: '',
+          dialogVO: '',
+          motionControl: {
+            ...sc.motionControl,
+            danceStyle: batchDance,
+            cameraMovement: batchCamera,
+            aestheticEffect: batchAesthetic,
+          },
         });
       });
     }
-    onNotify?.(`Preset Motion Control diterapkan ke semua ${scenes.length} adegan!`);
+    onNotify?.(`Preset Motion Control (tanpa floating text & VO) diterapkan ke semua ${scenes.length} adegan!`);
   };
 
   const handleCopyPrompt = async (scene: Scene) => {
@@ -257,10 +266,12 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
     );
     onUpdateScene({
       ...scene,
+      popupText: '',
+      dialogVO: '',
       googleFlowPrompt: prompt,
     });
     setSyncedSceneId(scene.id);
-    onNotify?.(`Motion Control Adegan ${scene.order} disinkronkan ke Google Flow Prompt!`);
+    onNotify?.(`Motion Control Adegan ${scene.order} disinkronkan ke Google Flow (tanpa floating text & VO)!`);
     setTimeout(() => setSyncedSceneId((prev) => (prev === scene.id ? null : prev)), 2000);
   };
 
@@ -293,7 +304,7 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
-                Atur gaya dance, pergerakan kamera, efek estetika, intensitas gerakan, serta lampirkan referensi produk, karakter, dan video untuk tiap adegan storyboard.
+                Atur gaya dance, pergerakan kamera, efek estetika, intensitas gerakan, serta lampirkan referensi produk, karakter, dan video untuk tiap adegan (pure visual motion — tanpa narasi floating text maupun voice over).
               </p>
             </div>
           </div>
@@ -582,17 +593,15 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
                 </button>
               </div>
 
-              {/* Scene Context Snippet */}
+              {/* Scene Context Snippet (Pure Visual — No Floating Text or VO) */}
               <div className="bg-[#090d17] border border-[#192236] rounded-xl px-3.5 py-2.5 text-xs text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <p className="line-clamp-2">
                   <span className="font-bold text-slate-400 uppercase text-[10px] mr-1.5">Aksi Visual:</span>
                   {scene.visualAction || 'Belum ada deskripsi aksi visual.'}
                 </p>
-                {scene.popupText && (
-                  <span className="text-[10px] font-bold text-sky-300 bg-sky-950/60 border border-sky-700/40 px-2 py-0.5 rounded shrink-0">
-                    {scene.popupText}
-                  </span>
-                )}
+                <span className="text-[10px] font-bold text-emerald-300 bg-emerald-950/50 border border-emerald-700/40 px-2 py-0.5 rounded shrink-0">
+                  Pure Visual • No Text/VO
+                </span>
               </div>
 
               {/* Controls Grid */}

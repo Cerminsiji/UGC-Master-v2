@@ -93,6 +93,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     return output;
   };
 
+  const isPureVisualMotionScene = (sc: Scene) =>
+    Boolean(sc.motionControl) ||
+    /no floating text|no on-screen text|\[TikTok Dance Ref:/i.test(sc.googleFlowPrompt || '') ||
+    (!sc.popupText?.trim() && !sc.dialogVO?.trim());
+
   // Generate CapCut subtitle and sticker cue
   const getCapCutCueText = () => {
     let output = `🎬 FORMAT CAPCUT & TIKTOK VIDEO EDITOR: ${title.toUpperCase()}\n`;
@@ -105,8 +110,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       accumulatedTime = end;
       const startStr = `00:${String(start).padStart(2, '0')}`;
       const endStr = `00:${String(end).padStart(2, '0')}`;
+      const pureVisual = isPureVisualMotionScene(sc);
       const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
         ? sc.popupText.trim()
+        : pureVisual
+        ? '(Tanpa Floating Text — Pure Visual Motion)'
         : (i === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨');
       output += `[${startStr} - ${endStr}] Adegan ${i + 1}: ${popupText}\n`;
     });
@@ -119,7 +127,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       accumulatedTime = end;
       const startStr = `00:${String(start).padStart(2, '0')}`;
       const endStr = `00:${String(end).padStart(2, '0')}`;
-      output += `[${startStr} - ${endStr}] Adegan ${i + 1}: "${sc.dialogVO || ''}"\n`;
+      const pureVisual = isPureVisualMotionScene(sc);
+      output += `[${startStr} - ${endStr}] Adegan ${i + 1}: ${
+        sc.dialogVO ? `"${sc.dialogVO}"` : pureVisual ? '(Tanpa Voice Over)' : '""'
+      }\n`;
       if (sc.soundEffect) {
         output += `  ↳ SFX: ${sc.soundEffect}\n`;
       }
@@ -137,8 +148,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     output += `--------------------------------------------------------\n\n`;
 
     scenes.forEach((sc, i) => {
+      const pureVisual = isPureVisualMotionScene(sc);
       const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
         ? sc.popupText.trim()
+        : pureVisual
+        ? ''
         : (() => {
             const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
             if (match && match[1]) return match[1].trim();
@@ -147,17 +161,19 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
       let flowPrompt = sc.googleFlowPrompt && sc.googleFlowPrompt.trim() ? sc.googleFlowPrompt.trim() : '';
       if (!flowPrompt) {
-        flowPrompt = `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`;
-      } else if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
+        flowPrompt = pureVisual
+          ? `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - no floating text, no on-screen text overlay, no voiceover dialogue, vertical 9:16 4k 60fps.`
+          : `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`;
+      } else if (!pureVisual && !/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
         flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
       }
 
       output += `=== ADEGAN ${i + 1} (${sc.duration}s | ${sc.cameraAngle || 'Shot'}) ===\n`;
       output += `Prompt Google Flow (Image-to-Video):\n`;
       output += `${flowPrompt}\n`;
-      output += `Teks Pop-up Layar: "${popupText}"\n`;
+      output += `Teks Pop-up Layar: ${popupText ? `"${popupText}"` : '(Tanpa Floating Text)'}\n`;
       output += `Kepatuhan Referensi Image: ${sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached'}\n`;
-      output += `Dialog VO: "${sc.dialogVO}"\n`;
+      output += `Dialog VO: ${sc.dialogVO ? `"${sc.dialogVO}"` : '(Tanpa Voice Over)'}\n`;
       output += `SFX: ${sc.soundEffect || '-'}\n\n`;
     });
 
@@ -172,8 +188,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         referenceImage: referenceImage || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
         totalDuration,
         googleFlowPipeline: scenes.map((sc, i) => {
+          const pureVisual = isPureVisualMotionScene(sc);
           const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
             ? sc.popupText.trim()
+            : pureVisual
+            ? ''
             : (() => {
                 const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
                 if (match && match[1]) return match[1].trim();
@@ -182,8 +201,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
           let flowPrompt = sc.googleFlowPrompt && sc.googleFlowPrompt.trim() ? sc.googleFlowPrompt.trim() : '';
           if (!flowPrompt) {
-            flowPrompt = `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow reference image packaging, vertical 9:16 smartphone UGC video, 4k 60fps.`;
-          } else if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
+            flowPrompt = pureVisual
+              ? `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - no floating text, no on-screen text overlay, no voiceover dialogue, vertical 9:16 4k 60fps.`
+              : `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow reference image packaging, vertical 9:16 smartphone UGC video, 4k 60fps.`;
+          } else if (!pureVisual && !/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
             flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
           }
 
@@ -195,7 +216,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             googleFlowPrompt: flowPrompt,
             imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
             visualAction: sc.visualAction,
-            dialogVO: sc.dialogVO,
+            dialogVO: sc.dialogVO || '',
             soundEffect: sc.soundEffect || '-',
           };
         }),
@@ -238,8 +259,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         caption,
         hookVariants,
         scenes: scenes.map((sc, i) => {
+          const pureVisual = isPureVisualMotionScene(sc);
           const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
             ? sc.popupText.trim()
+            : pureVisual
+            ? ''
             : (() => {
                 const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
                 if (match && match[1]) return match[1].trim();
@@ -248,8 +272,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
           let flowPrompt = sc.googleFlowPrompt && sc.googleFlowPrompt.trim() ? sc.googleFlowPrompt.trim() : '';
           if (!flowPrompt) {
-            flowPrompt = `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`;
-          } else if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
+            flowPrompt = pureVisual
+              ? `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - no floating text, no on-screen text overlay, no voiceover dialogue, vertical 9:16 4k 60fps.`
+              : `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`;
+          } else if (!pureVisual && !/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
             flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
           }
 
