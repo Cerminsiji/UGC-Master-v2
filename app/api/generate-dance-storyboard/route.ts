@@ -47,6 +47,7 @@ function buildDanceFallback(params: {
   cameraDynamic: string;
   productName: string;
   outfitWardrobe: string;
+  backgroundSetting: string;
   talentPersona: string;
   targetDuration: number;
   targetSceneCount: number;
@@ -60,6 +61,7 @@ function buildDanceFallback(params: {
     cameraDynamic,
     productName,
     outfitWardrobe,
+    backgroundSetting,
     talentPersona,
     targetDuration,
     targetSceneCount,
@@ -280,6 +282,7 @@ export async function POST(req: NextRequest) {
     brandName = '',
     keySellingPoints = '',
     outfitWardrobe = 'Outfit kasual stylish warna kontras & latar kamar/studio estetik',
+    backgroundSetting = 'Kamar Estetik Lampu Sunset & RGB Neon',
     talentPersona = 'Wanita Muda / Gen Z',
     targetDuration = 20,
     targetSceneCount = 6,
@@ -303,8 +306,9 @@ PARAMETER KOREOGRAFI & PRODUKSI:
 - Vibe Musik & Tempo: "${musicVibe}" (Estimasi: ${beatTempo})
 - Gaya Kamera Utama: "${cameraDynamic}"
 - Persona Penari: "${talentPersona}"
-- Wardrobe / OOTD & Latar: "${outfitWardrobe}"
-${isProductMode ? `- Produk yang Terintegrasi ke Dance: "${productName || 'Produk Utama'}" ${brandName ? `(Brand: ${brandName})` : ''} | USP: "${keySellingPoints || 'Nyaman, estetik, layak spill'}"` : '- Fokus: Murni tarian/koreografi viral & transisi tanpa jualan keras.'}
+- Wardrobe / OOTD: "${outfitWardrobe}"
+- Latar Belakang / Background: "${backgroundSetting}"
+${isProductMode ? `- Produk yang Terintegrasi ke Dance: "${productName || 'Product Utama'}" ${brandName ? `(Brand: ${brandName})` : ''} | USP: "${keySellingPoints || 'Nyaman, estetik, layak spill'}"` : '- Fokus: Murni tarian/koreografi viral & transisi tanpa jualan keras.'}
 - Target Platform: "${targetPlatform}"
 - Total Durasi: ${durationTarget} detik
 - Jumlah Segmen Beat/Adegan: WAJIB TEPAT ${sceneTarget} segmen (jumlah integer durasi mendekati ${durationTarget}s)
@@ -464,6 +468,7 @@ Kembalikan JSON sesuai skema.`;
       cameraDynamic,
       productName,
       outfitWardrobe,
+      backgroundSetting,
       talentPersona,
       targetDuration: durationTarget,
       targetSceneCount: sceneTarget,
@@ -480,6 +485,7 @@ Kembalikan JSON sesuai skema.`;
       cameraDynamic,
       productName,
       outfitWardrobe,
+      backgroundSetting,
       talentPersona,
       targetDuration: durationTarget,
       targetSceneCount: sceneTarget,

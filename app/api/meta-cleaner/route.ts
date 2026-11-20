@@ -347,6 +347,7 @@ interface OrganicJobProfile {
   lensCy: number;
   lensK1: number;
   lensK2: number;
+  rotBias: number;
   rotA1: number;
   rotA2: number;
   rotA3: number;
@@ -357,6 +358,7 @@ interface OrganicJobProfile {
   casStrength: number;
   noiseY: number;
   noiseC: number;
+  postNoiseY: number;
   contrast: number;
   saturation: number;
   gamma: number;
@@ -368,6 +370,7 @@ interface OrganicJobProfile {
   seedL: number;
   seedR: number;
   seedB: number;
+  seedAir: number;
 }
 
 function randFloat(min: number, max: number, decimals: number): number {
@@ -376,34 +379,40 @@ function randFloat(min: number, max: number, decimals: number): number {
 }
 
 function generateOrganicJobProfile(): OrganicJobProfile {
+  const rotSign = crypto.randomInt(0, 2) === 0 ? -1 : 1;
+  const pitchChoice =
+    crypto.randomInt(0, 100) < 65 ? randFloat(0.976, 0.985, 4) : randFloat(1.014, 1.022, 4);
   return {
     trimStart: randFloat(0.03, 0.07, 3),
-    speedPts: randFloat(0.984, 0.992, 4),
-    lensCx: randFloat(0.495, 0.505, 3),
-    lensCy: randFloat(0.495, 0.505, 3),
-    lensK1: randFloat(-0.019, -0.013, 4),
-    lensK2: randFloat(0.003, 0.006, 4),
-    rotA1: randFloat(0.0022, 0.0029, 4),
-    rotA2: randFloat(0.0012, 0.0017, 4),
-    rotA3: randFloat(0.0006, 0.0009, 4),
-    freq1: randFloat(1.07, 1.31, 2),
-    freq2: randFloat(2.51, 2.97, 2),
-    freq3: randFloat(4.19, 4.79, 2),
-    cropRatio: randFloat(0.948, 0.958, 3),
-    casStrength: randFloat(0.15, 0.21, 2),
-    noiseY: randFloat(1.45, 1.80, 2),
-    noiseC: randFloat(0.60, 0.80, 2),
-    contrast: randFloat(1.012, 1.019, 3),
-    saturation: randFloat(1.010, 1.020, 3),
-    gamma: randFloat(1.004, 1.010, 3),
+    speedPts: randFloat(0.970, 0.985, 4),
+    lensCx: randFloat(0.494, 0.506, 3),
+    lensCy: randFloat(0.494, 0.506, 3),
+    lensK1: randFloat(-0.026, -0.018, 4),
+    lensK2: randFloat(0.005, 0.009, 4),
+    rotBias: Number((rotSign * randFloat(0.0028, 0.0044, 4)).toFixed(4)),
+    rotA1: randFloat(0.0026, 0.0035, 4),
+    rotA2: randFloat(0.0014, 0.0021, 4),
+    rotA3: randFloat(0.0007, 0.0011, 4),
+    freq1: randFloat(1.03, 1.37, 2),
+    freq2: randFloat(2.47, 2.99, 2),
+    freq3: randFloat(4.13, 4.87, 2),
+    cropRatio: randFloat(0.940, 0.948, 3),
+    casStrength: randFloat(0.17, 0.24, 2),
+    noiseY: randFloat(2.65, 3.15, 2),
+    noiseC: randFloat(1.00, 1.25, 2),
+    postNoiseY: randFloat(1.05, 1.30, 2),
+    contrast: randFloat(1.014, 1.022, 3),
+    saturation: randFloat(1.012, 1.024, 3),
+    gamma: randFloat(1.004, 1.012, 3),
     wbR: randFloat(1.006, 1.012, 3),
     wbG: randFloat(1.004, 1.009, 3),
     wbB: randFloat(1.005, 1.011, 3),
-    crf: crypto.randomInt(0, 3) === 2 ? '19' : '18',
-    pitchRatio: randFloat(0.989, 0.995, 4),
+    crf: '18',
+    pitchRatio: pitchChoice,
     seedL: crypto.randomInt(100000, 999999),
     seedR: crypto.randomInt(100000, 999999),
     seedB: crypto.randomInt(100000, 999999),
+    seedAir: crypto.randomInt(100000, 999999),
   };
 }
 
@@ -446,8 +455,8 @@ function buildSynthIdVideoFilter(
   const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
   const scaleStep =
     targetW >= 64 && targetH >= 64
-      ? `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
-      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
+      ? `scale=${targetW}:${targetH}:flags=bicubic+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
+      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=bicubic+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
 
   const prep = buildCadencePrep(pulldownDetected, effectiveFps);
   const finish = buildCadenceFinish(srcFps, pulldownDetected);
@@ -457,15 +466,17 @@ function buildSynthIdVideoFilter(
     'setpts=0.961538*(PTS-STARTPTS)',
     finish,
     'format=yuv420p',
+    'hqdn3d=1.1:0.9:1.6:1.2',
     `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${p.lensK1}:k2=${p.lensK2}`,
-    `rotate=a='${p.rotA1}*sin(t*${p.freq1})+${p.rotA2}*cos(t*${p.freq2})+${p.rotA3}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
-    `crop=w=trunc(iw*${p.cropRatio}/2)*2:h=trunc(ih*${p.cropRatio}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.78).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.75).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.75).toFixed(4)}*sin(t*${p.freq3}))':y='(ih-oh)/2+ih*(${(p.rotA1 * 0.65).toFixed(4)}*cos(t*0.93)+${(p.rotA2 * 0.65).toFixed(4)}*sin(t*2.41)+${(p.rotA3 * 0.65).toFixed(4)}*cos(t*3.97))'`,
+    `rotate=a='${p.rotBias}+${p.rotA1}*sin(t*${p.freq1})+${p.rotA2}*cos(t*${p.freq2})+${p.rotA3}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
+    `crop=w=trunc(iw*${p.cropRatio}/2)*2:h=trunc(ih*${p.cropRatio}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.78).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.75).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.75).toFixed(4)}*sin(t*${p.freq3}))':y='(ih-oh)*0.54+ih*(${(p.rotA1 * 0.65).toFixed(4)}*cos(t*0.93)+${(p.rotA2 * 0.65).toFixed(4)}*sin(t*2.41)+${(p.rotA3 * 0.65).toFixed(4)}*cos(t*3.97))'`,
+    `noise=c0s=${p.noiseY}:c1s=${p.noiseC}:c2s=${p.noiseC}:allf=t`,
     scaleStep,
     'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
     `colorchannelmixer=rr=${p.wbR}:rg=-0.006:rb=-0.002:gr=-0.003:gg=${p.wbG}:gb=-0.002:br=-0.003:bg=-0.004:bb=${p.wbB}`,
     `eq=contrast=${p.contrast}:brightness='0.0016*sin(t*0.83)+0.0010*cos(t*1.97)':saturation=${p.saturation}:gamma=${p.gamma}:eval=frame`,
     `cas=strength=${p.casStrength}`,
-    `noise=c0s=${p.noiseY}:c1s=${p.noiseC}:c2s=${p.noiseC}:allf=t`,
+    `noise=c0s=${p.postNoiseY}:c1s=0:c2s=0:allf=t`,
     'setsar=1',
   ].join(',');
 }
@@ -483,8 +494,8 @@ function buildSafeModeVideoFilter(
   const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
   const scaleStep =
     targetW >= 64 && targetH >= 64
-      ? `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
-      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
+      ? `scale=${targetW}:${targetH}:flags=bicubic+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
+      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=bicubic+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
 
   const prep = buildCadencePrep(pulldownDetected, effectiveFps);
   const finish = buildCadenceFinish(srcFps, pulldownDetected);
@@ -494,15 +505,17 @@ function buildSafeModeVideoFilter(
     'setpts=PTS-STARTPTS',
     finish,
     'format=yuv420p',
-    `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${(p.lensK1 * 0.8).toFixed(4)}:k2=${p.lensK2}`,
-    `rotate=a='${(p.rotA1 * 0.85).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.85).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.85).toFixed(4)}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
-    `crop=w=trunc(iw*${(p.cropRatio + 0.005).toFixed(3)}/2)*2:h=trunc(ih*${(p.cropRatio + 0.005).toFixed(3)}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.65).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.65).toFixed(4)}*cos(t*${p.freq2}))':y='(ih-oh)/2+ih*(${(p.rotA1 * 0.55).toFixed(4)}*cos(t*0.89)+${(p.rotA2 * 0.55).toFixed(4)}*sin(t*2.11))'`,
+    'hqdn3d=1.0:0.8:1.5:1.1',
+    `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${(p.lensK1 * 0.85).toFixed(4)}:k2=${p.lensK2}`,
+    `rotate=a='${(p.rotBias * 0.85).toFixed(4)}+${(p.rotA1 * 0.85).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.85).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.85).toFixed(4)}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
+    `crop=w=trunc(iw*${(p.cropRatio + 0.004).toFixed(3)}/2)*2:h=trunc(ih*${(p.cropRatio + 0.004).toFixed(3)}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.65).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.65).toFixed(4)}*cos(t*${p.freq2}))':y='(ih-oh)*0.54+ih*(${(p.rotA1 * 0.55).toFixed(4)}*cos(t*0.89)+${(p.rotA2 * 0.55).toFixed(4)}*sin(t*2.11))'`,
+    `noise=c0s=${p.noiseY}:c1s=${p.noiseC}:c2s=${p.noiseC}:allf=t`,
     scaleStep,
     'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
     `colorchannelmixer=rr=${p.wbR}:rg=-0.005:rb=-0.002:gr=-0.003:gg=${p.wbG}:gb=-0.002:br=-0.002:bg=-0.003:bb=${p.wbB}`,
     `eq=contrast=${p.contrast}:brightness='0.0014*sin(t*0.79)+0.0009*cos(t*1.81)':saturation=${p.saturation}:gamma=${p.gamma}:eval=frame`,
     `cas=strength=${p.casStrength}`,
-    `noise=c0s=${p.noiseY}:c1s=${p.noiseC}:c2s=${p.noiseC}:allf=t`,
+    `noise=c0s=${p.postNoiseY}:c1s=0:c2s=0:allf=t`,
     'setsar=1',
   ].join(',');
 }
@@ -525,8 +538,8 @@ function buildUnifiedVideoFilter(
   const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
   const scaleStep =
     targetW >= 64 && targetH >= 64
-      ? `scale=${targetW}:${targetH}:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
-      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
+      ? `scale=${targetW}:${targetH}:flags=bicubic+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
+      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=bicubic+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
 
   const prep = buildCadencePrep(pulldownDetected, effectiveFps);
   const finish = buildCadenceFinish(srcFps, pulldownDetected);
@@ -536,23 +549,25 @@ function buildUnifiedVideoFilter(
     trimPrefix,
     finish,
     'format=yuv420p',
+    'hqdn3d=1.1:0.9:1.6:1.2',
     `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${p.lensK1}:k2=${p.lensK2}`,
-    `rotate=a='${p.rotA1}*sin(t*${p.freq1})+${p.rotA2}*cos(t*${p.freq2})+${p.rotA3}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
-    `crop=w=trunc(iw*${p.cropRatio}/2)*2:h=trunc(ih*${p.cropRatio}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.78).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.75).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.75).toFixed(4)}*sin(t*${p.freq3}))':y='(ih-oh)/2+ih*(${(p.rotA1 * 0.65).toFixed(4)}*cos(t*0.93)+${(p.rotA2 * 0.65).toFixed(4)}*sin(t*2.41)+${(p.rotA3 * 0.65).toFixed(4)}*cos(t*3.97))'`,
+    `rotate=a='${p.rotBias}+${p.rotA1}*sin(t*${p.freq1})+${p.rotA2}*cos(t*${p.freq2})+${p.rotA3}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
+    `crop=w=trunc(iw*${p.cropRatio}/2)*2:h=trunc(ih*${p.cropRatio}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.78).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.75).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.75).toFixed(4)}*sin(t*${p.freq3}))':y='(ih-oh)*0.54+ih*(${(p.rotA1 * 0.65).toFixed(4)}*cos(t*0.93)+${(p.rotA2 * 0.65).toFixed(4)}*sin(t*2.41)+${(p.rotA3 * 0.65).toFixed(4)}*cos(t*3.97))'`,
+    `noise=c0s=${p.noiseY}:c1s=${p.noiseC}:c2s=${p.noiseC}:allf=t`,
     scaleStep,
     'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
     `colorchannelmixer=rr=${p.wbR}:rg=-0.006:rb=-0.002:gr=-0.003:gg=${p.wbG}:gb=-0.002:br=-0.003:bg=-0.004:bb=${p.wbB}`,
     `eq=contrast=${p.contrast}:brightness='0.0017*sin(t*0.85)+0.0010*cos(t*2.01)':saturation=${p.saturation}:gamma=${p.gamma}:eval=frame`,
     `cas=strength=${p.casStrength}`,
-    `noise=c0s=${p.noiseY}:c1s=${p.noiseC}:c2s=${p.noiseC}:allf=t`,
+    `noise=c0s=${p.postNoiseY}:c1s=0:c2s=0:allf=t`,
     'setsar=1',
   ].join(',');
 }
 
 /**
- * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph V 2.1:
- * - Per-job randomized pink+brown indoor room seeds (-51dB) with zero leading/trailing digital silence cliffs
- * - Pitch/tempo variation locked 1:1 to video trim & speed_pts cadence
+ * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph V 2.2:
+ * - Per-job randomized pink/brown/17-20.8kHz thermal mic air bed (zero 16kHz brickwall cutoff)
+ * - Nonlinear all-pass phase dispersion (aphaser) + dual-tap acoustic early reflections + 0.89 anti-clipping ceiling
  */
 function buildSynthIdAudioFilterComplex(
   voiceLabel = '[0:a]',
@@ -562,14 +577,16 @@ function buildSynthIdAudioFilterComplex(
   const p = jobProfile || generateOrganicJobProfile();
   const atempoVal = (1.04 / p.pitchRatio).toFixed(5);
   return [
-    `anoisesrc=color=pink:amplitude=0.0040:sample_rate=48000:seed=${p.seedL}[pL]`,
-    `anoisesrc=color=pink:amplitude=0.0040:sample_rate=48000:seed=${p.seedR}[pR]`,
-    `anoisesrc=color=brown:amplitude=0.0025:sample_rate=48000:seed=${p.seedB}[bRoom]`,
+    `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedL}[pL]`,
+    `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedR}[pR]`,
+    `anoisesrc=color=brown:amplitude=0.0015:sample_rate=48000:seed=${p.seedB}[bRoom]`,
+    `anoisesrc=color=white:amplitude=0.0114:sample_rate=48000:seed=${p.seedAir}[wAir]`,
     '[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt]',
+    '[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt]',
     '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
-    '[pinkSt][bSt]amix=inputs=2:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
-    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=0.85:drive=1.8:blend=0:freq=8200:ceil=18800,aecho=0.96:0.94:11:0.018,extrastereo=m=1.12,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
-    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
+    '[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
+    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.12,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
+    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
 
@@ -581,14 +598,16 @@ function buildSafeModeAudioFilterComplex(
   const p = jobProfile || generateOrganicJobProfile();
   const atempoVal = (1.0 / p.pitchRatio).toFixed(5);
   return [
-    `anoisesrc=color=pink:amplitude=0.0040:sample_rate=48000:seed=${p.seedL}[pL]`,
-    `anoisesrc=color=pink:amplitude=0.0040:sample_rate=48000:seed=${p.seedR}[pR]`,
-    `anoisesrc=color=brown:amplitude=0.0025:sample_rate=48000:seed=${p.seedB}[bRoom]`,
+    `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedL}[pL]`,
+    `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedR}[pR]`,
+    `anoisesrc=color=brown:amplitude=0.0015:sample_rate=48000:seed=${p.seedB}[bRoom]`,
+    `anoisesrc=color=white:amplitude=0.0114:sample_rate=48000:seed=${p.seedAir}[wAir]`,
     '[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt]',
+    '[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt]',
     '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
-    '[pinkSt][bSt]amix=inputs=2:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
-    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=0.85:drive=1.8:blend=0:freq=8200:ceil=18800,aecho=0.96:0.94:11:0.018,extrastereo=m=1.10,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
-    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
+    '[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
+    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.10,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
+    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
 
@@ -606,14 +625,16 @@ function buildUnifiedAudioFilterComplex(
       : 'asetpts=PTS-STARTPTS,';
   const atempoVal = ((1.0 / p.speedPts) / p.pitchRatio).toFixed(5);
   return [
-    `anoisesrc=color=pink:amplitude=0.0040:sample_rate=48000:seed=${p.seedL}[pL]`,
-    `anoisesrc=color=pink:amplitude=0.0040:sample_rate=48000:seed=${p.seedR}[pR]`,
-    `anoisesrc=color=brown:amplitude=0.0025:sample_rate=48000:seed=${p.seedB}[bRoom]`,
+    `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedL}[pL]`,
+    `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedR}[pR]`,
+    `anoisesrc=color=brown:amplitude=0.0015:sample_rate=48000:seed=${p.seedB}[bRoom]`,
+    `anoisesrc=color=white:amplitude=0.0114:sample_rate=48000:seed=${p.seedAir}[wAir]`,
     '[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt]',
+    '[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt]',
     '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
-    '[pinkSt][bSt]amix=inputs=2:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
-    `${voiceLabel}${atrimPrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=0.85:drive=1.8:blend=0:freq=8200:ceil=18800,aecho=0.96:0.94:11:0.018,extrastereo=m=1.12,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
-    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
+    '[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
+    `${voiceLabel}${atrimPrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.12,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
+    `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
 
@@ -1200,6 +1221,8 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       '40',
       '-refs',
       '2',
+      '-chroma_sample_location',
+      'left',
       '-color_primaries',
       'bt709',
       '-color_trc',
@@ -1211,7 +1234,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     ];
 
     const x264ParamString =
-      'ref=2:bframes=2:b-adapt=2:b-pyramid=normal:weightp=1:psy-rd=1.05,0.08:aq-mode=2:nal-hrd=none:force-cfr=1:deblock=-1,-1:open-gop=0:scenecut=40:keyint=60:min-keyint=15';
+      'ref=2:bframes=2:b-adapt=2:b-pyramid=normal:weightp=1:psy-rd=1.10,0.12:aq-mode=2:aq-strength=1.15:deblock=-2,-2:no-dct-decimate=1:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=60:min-keyint=15';
 
     const movflagsStr = '+faststart';
 
@@ -1228,7 +1251,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
       if (isAllInOne) {
         serverLogs.push(
-          `[ALL-IN-ONE SINGLE PIPELINE V 2.1] ${pulldownDetected ? `Pulldown Repair (${effectiveFps}fps->30fps)` : srcFps > 0 && srcFps < 28.5 ? `Zero-Dup Motion Interp (${srcFps}fps->30fps)` : `Native ${srcFps || 30}fps`} + Per-Job Organic Warp + Adaptive ISP cas + Gaussian Grain + Unique Audio (${cameraProfileField.toUpperCase()})...`
+          `[ALL-IN-ONE SINGLE PIPELINE V 2.2] ${pulldownDetected ? `Pulldown Repair (${effectiveFps}fps->30fps)` : srcFps > 0 && srcFps < 28.5 ? `Zero-Dup Motion Interp (${srcFps}fps->30fps)` : `Native ${srcFps || 30}fps`} + Anti-Diffusion hqdn3d + Asymmetric Warp + Dual-Scale Bayer CMOS Grain + AAC 224k 22.5kHz Air (${cameraProfileField.toUpperCase()})...`
         );
 
         const langTag = cameraProfileField === 'neutral' ? 'und' : 'eng';
@@ -1303,9 +1326,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-c:a',
           'aac',
           '-b:a',
-          '160k',
+          '224k',
           '-ar',
           '48000',
+          '-cutoff',
+          '22500',
           ...aioCommonTail,
           '-metadata:s:a:0',
           `handler_name=${audioHandlerName}`,
@@ -1520,9 +1545,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
               '-c:a',
               'aac',
               '-b:a',
-              '160k',
+              '224k',
               '-ar',
               '48000',
+              '-cutoff',
+              '22500',
               ...cameraMetadataArgs,
               '-metadata:s:v:0',
               `handler_name=${videoHandlerName}`,

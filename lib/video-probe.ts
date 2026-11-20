@@ -57,6 +57,8 @@ export interface VisualAiForensics {
   hasFfmpegMuxerBrand: boolean;
   hasSpoofedMdtaBox: boolean;
   hasEmptyMetaTombstone: boolean;
+  staticPatchTemporalDiff: number;
+  isPlasticZeroGrain: boolean;
   visualAiFlags: string[];
   visualClean: boolean;
 }
@@ -1096,13 +1098,45 @@ async function analyzeAudioVisualForensics(
 
   const hasPulldownDuplicates = totalDeltaFrames >= 30 && nearDuplicateFrameRatio >= 0.10;
 
+  // Measure micro-grain temporal delta on static top-left 160x160 region (catches hyper-smooth diffusion backgrounds)
+  let staticPatchTemporalDiff = -1;
+  try {
+    const { stdout: bgOut, stderr: bgErr } = await execFileAsync(
+      ffmpegBin,
+      [
+        '-hide_banner',
+        '-t',
+        '2.5',
+        '-i',
+        filePath,
+        '-vf',
+        'crop=min(iw/4\\,160):min(ih/4\\,160):16:16,tblend=all_mode=difference,signalstats,metadata=mode=print:file=-',
+        '-an',
+        '-f',
+        'null',
+        '-',
+      ],
+      { env: EXEC_ENV, timeout: 10000, maxBuffer: 4 * 1024 * 1024 }
+    ).catch((e) => ({ stdout: e?.stdout || '', stderr: e?.stderr || '' }));
+    const bgCombined = `${String(bgOut || '')}\n${String(bgErr || '')}`;
+    const bgVals = Array.from(bgCombined.matchAll(/lavfi\.signalstats\.YAVG=([\d.]+)/g)).map((m) =>
+      Number(m[1])
+    );
+    if (bgVals.length >= 12) {
+      const sortedBg = [...bgVals].sort((a, b) => a - b);
+      // Use 25th percentile to ignore occasional subject/camera-pan intrusion in corner
+      staticPatchTemporalDiff = Number(sortedBg[Math.floor(sortedBg.length * 0.25)].toFixed(3));
+    }
+  } catch {}
+  const isPlasticZeroGrain = staticPatchTemporalDiff >= 0 && staticPatchTemporalDiff < 0.22;
+
   if (hasAudio) {
     try {
       const filterBranches = [
         '[0:a]silencedetect=noise=-55dB:d=0.05,astats=measure_perchannel=0[raw]',
         '[0:a]lowpass=f=4000,astats=measure_perchannel=0:measure_overall=RMS_level[low]',
-        '[0:a]highpass=f=14000,astats=measure_perchannel=0:measure_overall=RMS_level[hi14]',
-        '[0:a]highpass=f=17000,astats=measure_perchannel=0:measure_overall=RMS_level[hi17]',
+        '[0:a]highpass=f=14500,highpass=f=14500,astats=measure_perchannel=0:measure_overall=RMS_level[hi14]',
+        '[0:a]highpass=f=17500,highpass=f=17500,astats=measure_perchannel=0:measure_overall=RMS_level[hi17]',
       ];
       const mapArgs = [
         '-map', '[raw]', '-f', 'null', '-',
@@ -1142,45 +1176,48 @@ async function analyzeAudioVisualForensics(
       digitalSilenceCount = Math.max(silenceStarts, silenceDurs.length);
       digitalSilenceSec = Number(silenceDurs.reduce((a, b) => a + b, 0).toFixed(2));
 
-      const rmsMatches = Array.from(errText.matchAll(/Parsed_astats_(\d+)[^\n]*\n(?:[^\n]*\n){0,8}?[^\n]*RMS level dB:\s*([-\d.]+|-inf)/gi));
+      // Parse each Parsed_astats_<idx> block safely regardless of line count between Overall and RMS level dB
       const branchRms = new Map<number, number>();
-      for (const rm of rmsMatches) {
-        const idx = Number(rm[1]);
-        const val = rm[2] === '-inf' ? -96 : Number(rm[2]);
-        if (Number.isFinite(val)) {
-          branchRms.set(idx, val);
+      const linesA = errText.split(/\r?\n/);
+      let currentBlockIdx: number | null = null;
+      for (const line of linesA) {
+        const hdrMatch = line.match(/\[Parsed_astats_(\d+)\s+@/);
+        if (hdrMatch) {
+          currentBlockIdx = Number(hdrMatch[1]);
         }
-      }
-      if (branchRms.size === 0) {
-        const allRms = Array.from(errText.matchAll(/RMS level dB:\s*([-\d.]+|-inf)/gi)).map((m) =>
-          m[1] === '-inf' ? -96 : Number(m[1])
-        );
-        if (allRms.length >= 6 && channels >= 2) {
-          sideRmsDb = Number(allRms[0].toFixed(2));
-          midRmsDb = Number(allRms[1].toFixed(2));
-          highBand17kDb = Number(allRms[2].toFixed(2));
-          highBand14kDb = Number(allRms[3].toFixed(2));
-          lowBandRmsDb = Number(allRms[4].toFixed(2));
-          overallRmsDb = Number(allRms[5].toFixed(2));
-        } else if (allRms.length >= 4) {
-          highBand17kDb = Number(allRms[0].toFixed(2));
-          highBand14kDb = Number(allRms[1].toFixed(2));
-          lowBandRmsDb = Number(allRms[2].toFixed(2));
-          overallRmsDb = Number(allRms[3].toFixed(2));
+        if (currentBlockIdx !== null) {
+          const rmsMatch = line.match(/RMS level dB:\s*([-\d.]+|-inf)/i);
+          if (rmsMatch) {
+            const val = rmsMatch[1] === '-inf' ? -96 : Number(rmsMatch[1]);
+            if (Number.isFinite(val)) {
+              branchRms.set(currentBlockIdx, val);
+            }
+          }
+          const nfBlockMatch = line.match(/Noise floor dB:\s*([-\d.]+|-inf)/i);
+          if (nfBlockMatch && currentBlockIdx === 1) {
+            const nfVal = nfBlockMatch[1] === '-inf' ? -96 : Number(nfBlockMatch[1]);
+            if (Number.isFinite(nfVal)) {
+              noiseFloorDb = Number(nfVal.toFixed(2));
+            }
+          }
         }
-      } else {
-        // Filter node indices: 1=raw, 3=low, 5=hi14, 7=hi17, 9=mid, 11=side
-        if (branchRms.has(1)) overallRmsDb = Number(branchRms.get(1)!.toFixed(2));
-        if (branchRms.has(3)) lowBandRmsDb = Number(branchRms.get(3)!.toFixed(2));
-        if (branchRms.has(5)) highBand14kDb = Number(branchRms.get(5)!.toFixed(2));
-        if (branchRms.has(7)) highBand17kDb = Number(branchRms.get(7)!.toFixed(2));
-        if (branchRms.has(9)) midRmsDb = Number(branchRms.get(9)!.toFixed(2));
-        if (branchRms.has(11)) sideRmsDb = Number(branchRms.get(11)!.toFixed(2));
       }
 
-      const nfMatch = errText.match(/Noise floor dB:\s*([-\d.]+|-inf)/i);
-      if (nfMatch) {
-        noiseFloorDb = nfMatch[1] === '-inf' ? -96 : Number(Number(nfMatch[1]).toFixed(2));
+      // Filter node indices in filterBranches:
+      // 0:silencedetect, 1:astats(raw), 2:lowpass, 3:astats(low), 4:hp14a, 5:hp14b, 6:astats(hi14),
+      // 7:hp17a, 8:hp17b, 9:astats(hi17), 10:pan(mid), 11:astats(mid), 12:pan(side), 13:astats(side)
+      if (branchRms.has(1)) overallRmsDb = Number(branchRms.get(1)!.toFixed(2));
+      if (branchRms.has(3)) lowBandRmsDb = Number(branchRms.get(3)!.toFixed(2));
+      if (branchRms.has(6)) highBand14kDb = Number(branchRms.get(6)!.toFixed(2));
+      if (branchRms.has(9)) highBand17kDb = Number(branchRms.get(9)!.toFixed(2));
+      if (branchRms.has(11)) midRmsDb = Number(branchRms.get(11)!.toFixed(2));
+      if (branchRms.has(13)) sideRmsDb = Number(branchRms.get(13)!.toFixed(2));
+
+      if (noiseFloorDb === -80) {
+        const nfMatch = errText.match(/Noise floor dB:\s*([-\d.]+|-inf)/i);
+        if (nfMatch) {
+          noiseFloorDb = nfMatch[1] === '-inf' ? -96 : Number(Number(nfMatch[1]).toFixed(2));
+        }
       }
     } catch {}
   }
@@ -1204,6 +1241,9 @@ async function analyzeAudioVisualForensics(
   }
   if (hasPulldownDuplicates) {
     visualAiFlags.push(`Anomali Cadence Pulldown / Duplikat Frame Periodik (${nearDuplicateFrameCount}/${totalDeltaFrames} = ${(nearDuplicateFrameRatio * 100).toFixed(1)}%)`);
+  }
+  if (isPlasticZeroGrain) {
+    visualAiFlags.push(`Latar Belakang Tanpa Sensor Grain CMOS (Static Delta=${staticPatchTemporalDiff} < 0.22 • Ciri Diffusion/Over-Smooth)`);
   }
   if (hasColorMatrixMismatch) {
     visualAiFlags.push(`Color Space/Transfer Tidak Sinkron (${colorPrimaries || 'unset'}/${colorTransfer || 'unset'}/${colorSpace || 'unset'} • Non-Kamera)`);
@@ -1261,6 +1301,7 @@ async function analyzeAudioVisualForensics(
   if (isAiFramerate) riskScore += 28;
   if (isZeroBFrames) riskScore += 18;
   if (hasPulldownDuplicates) riskScore += 18;
+  if (isPlasticZeroGrain) riskScore += 16;
   if (hasColorMatrixMismatch) riskScore += 14;
   if (isSub1080pDiffusionRes) riskScore += 10;
   if (hasMoovFreeTombstone) riskScore += 14;
@@ -1315,6 +1356,8 @@ async function analyzeAudioVisualForensics(
       hasFfmpegMuxerBrand,
       hasSpoofedMdtaBox,
       hasEmptyMetaTombstone,
+      staticPatchTemporalDiff,
+      isPlasticZeroGrain,
       visualAiFlags,
       visualClean,
     },

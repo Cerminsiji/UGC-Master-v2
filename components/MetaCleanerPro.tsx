@@ -802,13 +802,13 @@ export const MetaCleanerPro: React.FC = () => {
     {
       id: 'init-1',
       time: '--:--:--',
-      text: "[MetaCleaner V 2.0 Organic Mobile Capture] Ready: Zero-Pulldown 30fps Motion Interp (0% Duplicate) + Per-Job Organic Warp & ISP cas + Gaussian CMOS Grain + Unique Audio Seeds + Zero-Tombstone MP4.",
+      text: "[MetaCleaner V 2.0 Organic Mobile Capture] Ready: Zero-Pulldown 30fps + Anti-Diffusion hqdn3d + Asymmetric Warp + Dual-Scale Bayer CMOS Grain + AAC 224k 22.5kHz Air + Zero-Tombstone MP4.",
       color: 'indigo',
     },
     {
       id: 'init-2',
       time: '--:--:--',
-      text: 'Membersihkan 4 lapisan jejak AI & editan: Zero-Tombstone udta/meta/free MP4, Zero-SEI Type 6, Zero-Pulldown 30fps + Per-Job Warp/CAS + Gaussian Grain, & Unique Pink/Brown Voice.',
+      text: 'Membersihkan 4 lapisan jejak AI & editan: Zero-Tombstone udta/meta/free MP4, Zero-SEI Type 6, Scrubbing Permukaan Diffusion + Dual-Scale Bayer Grain, & Phase-Dispersed 22.5kHz Audio.',
       color: 'slate',
     },
   ]);
@@ -1559,7 +1559,7 @@ export const MetaCleanerPro: React.FC = () => {
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Anti-AI &amp; Anti-Edit 4 Lapisan: Zero-Pulldown 30fps (0% Duplikat Frame), Per-Job Organic Warp + ISP Contrast (CAS) + Gaussian Grain, Unique Pink/Brown Audio (-51dB), &amp; Adaptive GOP MP4
+              Anti-AI &amp; Anti-Edit 4 Lapisan: Zero-Pulldown 30fps, Anti-Diffusion hqdn3d + Asymmetric Warp + Dual-Scale Bayer CMOS Grain, Phase-Dispersed 22.5kHz Air Audio (AAC 224k), &amp; Adaptive GOP MP4
             </p>
           </div>
         </div>
@@ -2366,6 +2366,26 @@ export const MetaCleanerPro: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex justify-between">
+                        <span className="text-slate-400">CMOS Sensor Grain (Static Δ):</span>
+                        <span
+                          className={`tabular-nums font-bold ${
+                            col.probe.audioVisualForensics.visual.isPlasticZeroGrain
+                              ? 'text-rose-400'
+                              : (col.probe.audioVisualForensics.visual.staticPatchTemporalDiff ?? -1) >= 0
+                                ? 'text-emerald-400'
+                                : 'text-slate-400'
+                          }`}
+                        >
+                          {(col.probe.audioVisualForensics.visual.staticPatchTemporalDiff ?? -1) >= 0
+                            ? `${col.probe.audioVisualForensics.visual.staticPatchTemporalDiff} ${
+                                col.probe.audioVisualForensics.visual.isPlasticZeroGrain
+                                  ? '(Plastik/Zero-Grain!)'
+                                  : '(Sensor Kamera Alami)'
+                              }`
+                            : '-'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
                         <span className="text-slate-400">Resolusi &amp; Color Matrix:</span>
                         <span
                           className={`tabular-nums font-bold ${
@@ -2886,7 +2906,7 @@ export const MetaCleanerPro: React.FC = () => {
                 <span>Pembersihan 4 Lapisan Tanpa Glitch</span>
               </div>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                MetaCleaner V 2.0 menghapus SEI (<code className="text-emerald-300">filter_units=remove_types=6</code>), mengompaksi atom <code>free/udta/meta</code>, memperbaiki duplikasi cadence 24→30fps (<code>0%</code> pulldown duplicate), serta menyuntikkan warp optik + ISP <code>cas</code> acak per-job pada <strong>30fps 1080p BT.709</strong> dengan struktur GOP adaptif (<code>b-adapt=2</code>).
+                MetaCleaner V 2.0 menghapus SEI (<code className="text-emerald-300">filter_units=remove_types=6</code>), mengompaksi atom <code>free/udta/meta</code>, menyapu residu laten via <code>hqdn3d</code>, melakukan warp optik asimetris, serta menyuntikkan dual-scale Bayer CMOS grain (<code>no-dct-decimate=1</code>) pada <strong>30fps 1080p BT.709</strong>.
               </p>
             </div>
 
@@ -2896,7 +2916,7 @@ export const MetaCleanerPro: React.FC = () => {
                 <span>Penetralan Audio TTS &amp; Vocoder AI</span>
               </div>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Detektor platform modern memindai jeda hening digital (&lt;-55dB), hiss sintetik, dan cliff spektrum. MetaCleaner V 2.0 menyuntikkan 1/f pink+brown indoor room floor dengan seed acak unik per-video (-51dB), harmonik suara <code>aexciter</code>, &amp; AAC 160kbps alami.
+                Detektor platform modern memindai tebing spektrum 16.5kHz dan jeda hening digital. MetaCleaner V 2.0 menyuntikkan 1/f pink+brown + udara mik 17–20.8kHz, dispersi fase <code>aphaser</code>, early-reflection <code>aecho</code>, harmonik <code>aexciter</code>, &amp; AAC 224kbps (<code>-cutoff 22500</code>) bebas clipping.
               </p>
             </div>
           </div>

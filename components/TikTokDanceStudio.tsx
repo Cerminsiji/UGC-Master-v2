@@ -54,7 +54,27 @@ const DANCE_MODES = [
   },
 ];
 
+const BACKGROUND_OPTIONS = [
+  'Kamar Estetik Lampu Sunset & RGB Neon',
+  'Studio Minimalis Modern (White/Grey Clean)',
+  'Panggung LED / Concert Stage Club Neon',
+  'Kamar Mandi / Vanity Mirror TikTok Style',
+  'Kafe / Outdoor Sunset Aesthetic',
+];
+
 const TIKTOK_DANCE_PRESETS = [
+  {
+    name: 'Sexy Hip-Sway & Body Wave Vibe',
+    bpm: '95-110 BPM',
+    level: 'Sensual & Groovy',
+    desc: 'Alunan pinggul lembut (hip-sway), body wave memukau, dan tatapan percaya diri menawan.',
+  },
+  {
+    name: 'Twerk & Bounce Hype Beat',
+    bpm: '125-138 BPM',
+    level: 'High Energy Body',
+    desc: 'Bounce pinggul bertenaga, footwork lincah, dan gerakan tubuh dinamis menonjolkan lekuk tubuh.',
+  },
   {
     name: 'Viral TikTok Hand-Sync & Bounce',
     bpm: '105-120 BPM',
@@ -108,12 +128,15 @@ const TIKTOK_DANCE_PRESETS = [
 const MUSIC_VIBES = [
   'Upbeat Viral FYP (120-130 BPM)',
   'Jedag-Jedug Remix / Bass Drop (135-145 BPM)',
+  'Sensual R&B / Slow Jam Groovy (85-105 BPM)',
+  'Latin / Reggaeton Hype Beat (115-128 BPM)',
   'Groovy Pop / R&B Chill (95-115 BPM)',
   'Slow Aesthetic / Acoustic Groove (75-90 BPM)',
 ];
 
 const CAMERA_CHOREO_OPTIONS = [
   '0.5x Ultra-Wide Dynamic Follow',
+  'Low-Angle Curve Tracking (Hero / Curvy Focus)',
   'Crash Zoom / Beat Drop Punch-In',
   'Match-Cut Lens Cover & Whip Pan',
   'Static Tripod Clean Full-Body',
@@ -121,6 +144,7 @@ const CAMERA_CHOREO_OPTIONS = [
 ];
 
 const DANCER_PERSONAS = [
+  'Wanita Sexy & Curvy / Montok (Confident & Body Goals)',
   'Wanita Muda / Gen Z (Lincah & Ekspresif)',
   'Hijaber Trendy / Modis (Anggun & Enerjik)',
   'Cowok Streetwear / Gen Z Bro (Cool & Santai)',
@@ -145,8 +169,9 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
   const [cameraDynamic, setCameraDynamic] = useState<string>(CAMERA_CHOREO_OPTIONS[0]);
   const [productName, setProductName] = useState<string>(currentProductName || '');
   const [outfitWardrobe, setOutfitWardrobe] = useState<string>(
-    'Streetwear kasual cerah / clean aesthetic di kamar terang atau studio minimalis'
+    'Streetwear kasual cerah / clean aesthetic'
   );
+  const [backgroundSetting, setBackgroundSetting] = useState<string>(BACKGROUND_OPTIONS[0]);
   const [talentPersona, setTalentPersona] = useState<string>(
     currentPersona || DANCER_PERSONAS[0]
   );
@@ -186,6 +211,7 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
         brandName: currentBrandName,
         keySellingPoints: currentKeySellingPoints,
         outfitWardrobe,
+        backgroundSetting,
         talentPersona,
         targetPlatform,
         targetDuration,
@@ -471,13 +497,33 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
 
             <div>
               <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1 block">
-                OOTD / Latar Ruangan
+                Latar Belakang / Background Studio
+              </label>
+              <select
+                value={backgroundSetting}
+                onChange={(e) => setBackgroundSetting(e.target.value)}
+                className="w-full bg-[#131a2b] border border-[#23304d] focus:border-pink-500 rounded-xl px-3 py-2 text-xs text-white outline-none"
+              >
+                {!BACKGROUND_OPTIONS.includes(backgroundSetting) && (
+                  <option value={backgroundSetting}>{backgroundSetting}</option>
+                )}
+                {BACKGROUND_OPTIONS.map((bg) => (
+                  <option key={bg} value={bg}>
+                    {bg}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1 block">
+                OOTD / Outfit Talent
               </label>
               <input
                 type="text"
                 value={outfitWardrobe}
                 onChange={(e) => setOutfitWardrobe(e.target.value)}
-                placeholder="Misal: Hoodie oversize + lampu sunset kamar"
+                placeholder="Misal: Crop top & high-waist jeans / Oversized hoodie"
                 className="w-full bg-[#131a2b] border border-[#23304d] focus:border-pink-500 rounded-xl px-3 py-2 text-xs text-white outline-none"
               />
             </div>
