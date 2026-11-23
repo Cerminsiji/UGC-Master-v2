@@ -1,20 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
-import { getResultFilePath, sanitizeJobId } from '@/lib/meta-cleaner-progress';
+import {
+  META_CLEANER_AUTO_CLEAN_MS,
+  cleanupJobArtifacts,
+  cleanupUploadArtifacts,
+  getResultFilePath,
+  readProgressSafe,
+  sanitizeJobId,
+  sweepExpiredMetaCleanerFiles,
+} from '@/lib/meta-cleaner-progress';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function sanitizeDownloadFilename(raw: string | null): string {
   const cleaned = (raw || 'video_output_bersih.mp4')
-    .replace(/[/\\?%*:|"<>]/g, '_')
+    .replace(/[\x00-\x1f\x7f/\\?%*:|"<>]/g, '_')
     .replace(/\s+/g, '_')
     .slice(0, 120);
   return cleaned.toLowerCase().endsWith('.mp4') ? cleaned : `${cleaned}.mp4`;
 }
 
 export async function GET(req: NextRequest) {
+  await sweepExpiredMetaCleanerFiles();
+
   const url = new URL(req.url);
   const jobId = sanitizeJobId(url.searchParams.get('jobId'));
   if (!jobId) {
@@ -24,12 +34,32 @@ export async function GET(req: NextRequest) {
   const filePath = getResultFilePath(jobId);
   if (!fsSync.existsSync(filePath)) {
     return NextResponse.json(
-      { error: 'File video hasil tidak ditemukan atau masa simpan sementara telah habis.' },
+      {
+        error:
+          'File video hasil sudah dihapus otomatis (Auto-Clean 5 Menit) atau tidak ditemukan.',
+      },
       { status: 404 }
     );
   }
 
   const stat = await fs.stat(filePath);
+  const progress = await readProgressSafe(jobId);
+  const expiresMs = progress?.expiresAt ? Date.parse(progress.expiresAt) : NaN;
+  const isExpired = Number.isFinite(expiresMs)
+    ? Date.now() >= expiresMs
+    : Date.now() - stat.mtimeMs >= META_CLEANER_AUTO_CLEAN_MS;
+
+  if (isExpired) {
+    await cleanupJobArtifacts(jobId);
+    return NextResponse.json(
+      {
+        error:
+          'Masa simpan 5 menit berakhir — file video telah dibersihkan otomatis (Auto-Clean) dari server.',
+      },
+      { status: 410 }
+    );
+  }
+
   const totalSize = stat.size;
   const isInline = url.searchParams.get('inline') === '1';
   const safeFilename = sanitizeDownloadFilename(url.searchParams.get('filename'));
@@ -58,7 +88,6 @@ export async function GET(req: NextRequest) {
               'Content-Length': String(chunkLen),
               'Content-Disposition': disposition,
               'Cache-Control': 'no-store',
-              'Access-Control-Allow-Origin': '*',
             },
           });
         } finally {
@@ -77,7 +106,33 @@ export async function GET(req: NextRequest) {
       'Accept-Ranges': 'bytes',
       'Content-Disposition': disposition,
       'Cache-Control': 'no-store',
-      'Access-Control-Allow-Origin': '*',
     },
   });
+}
+
+export async function DELETE(req: NextRequest) {
+  const url = new URL(req.url);
+  const jobId = sanitizeJobId(url.searchParams.get('jobId'));
+  const uploadId = sanitizeJobId(url.searchParams.get('uploadId'));
+
+  if (!jobId && !uploadId) {
+    return NextResponse.json(
+      { error: 'Parameter jobId atau uploadId diperlukan.' },
+      { status: 400 }
+    );
+  }
+
+  if (jobId) {
+    await cleanupJobArtifacts(jobId, {
+      reasonMessage: 'File video dibersihkan manual dari server oleh pengguna.',
+    });
+  }
+  if (uploadId) {
+    await cleanupUploadArtifacts(uploadId);
+  }
+
+  return NextResponse.json(
+    { success: true, cleaned: true },
+    { status: 200, headers: { 'Cache-Control': 'no-store' } }
+  );
 }

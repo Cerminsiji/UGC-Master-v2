@@ -9,10 +9,16 @@ import * as crypto from 'crypto';
 import {
   CleanerProgressState,
   CleanerStage,
+  META_CLEANER_AUTO_CLEAN_MS,
+  cleanupJobArtifacts,
+  findUploadedFile,
   getProgressFilePath,
   getResultFilePath,
   readProgressSafe,
   sanitizeJobId,
+  sanitizeVideoExtension,
+  setUploadAutoCleanDeadline,
+  sweepExpiredMetaCleanerFiles,
   writeProgressAtomic,
   writeProgressAtomicSync,
 } from '@/lib/meta-cleaner-progress';
@@ -985,6 +991,8 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
 
 interface CleanerJobParams {
   activeJobId: string;
+  uploadId?: string;
+  keepInputPath?: boolean;
   inputPath: string;
   intermediatePath: string;
   pass1Path: string;
@@ -1009,20 +1017,47 @@ interface CleanerJobResult {
   appliedFilter: string;
   encodedLogs: string;
   downloadUrl: string;
+  expiresAt: string;
+  ttlSeconds: number;
 }
 
-async function persistCleanedResultForDownload(jobId: string, cleanedBuffer: Buffer): Promise<string> {
+async function persistCleanedResultForDownload(
+  jobId: string,
+  cleanedBuffer: Buffer,
+  uploadId?: string
+): Promise<{ downloadUrl: string; completedAt: string; expiresAt: string; ttlSeconds: number }> {
   const resultPath = getResultFilePath(jobId);
   await fs.writeFile(resultPath, cleanedBuffer);
+
+  const now = Date.now();
+  const completedAt = new Date(now).toISOString();
+  const expiresAt = new Date(now + META_CLEANER_AUTO_CLEAN_MS).toISOString();
+  const ttlSeconds = Math.round(META_CLEANER_AUTO_CLEAN_MS / 1000);
+
+  if (uploadId) {
+    await setUploadAutoCleanDeadline(uploadId, META_CLEANER_AUTO_CLEAN_MS);
+  }
+
   setTimeout(() => {
-    fs.unlink(resultPath).catch(() => {});
-  }, 20 * 60 * 1000);
-  return `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}`;
+    cleanupJobArtifacts(jobId, {
+      reasonMessage:
+        'Auto-Clean 5 Menit: File video input & output telah dihapus otomatis dari server.',
+    }).catch(() => {});
+  }, META_CLEANER_AUTO_CLEAN_MS);
+
+  return {
+    downloadUrl: `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}`,
+    completedAt,
+    expiresAt,
+    ttlSeconds,
+  };
 }
 
 async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobResult> {
   const {
     activeJobId,
+    uploadId,
+    keepInputPath,
     inputPath,
     intermediatePath,
     pass1Path,
@@ -1063,19 +1098,29 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         if (statPy && statPy.size > 16384) {
           const rawCleanedBuffer = await fs.readFile(outputPath);
           const cleanedBuffer = neutralizeContainerMetadataInPlace(rawCleanedBuffer);
-          const downloadUrl = await persistCleanedResultForDownload(activeJobId, cleanedBuffer);
+          const persisted = await persistCleanedResultForDownload(
+            activeJobId,
+            cleanedBuffer,
+            uploadId
+          );
           const appliedFilter = 'strict_frame_by_frame_synthid_scrub + zero_sei';
 
           const existingPyProgress = await readProgressSafe(activeJobId);
           await writeProgressAtomic({
             ...(existingPyProgress || nodeProgressState),
+            uploadId,
             stage: 'completed',
             percent: 100,
+            resultReady: true,
+            completedAt: persisted.completedAt,
+            expiresAt: persisted.expiresAt,
+            ttlSeconds: persisted.ttlSeconds,
+            expired: false,
             outputSizeBytes: cleanedBuffer.byteLength,
-            downloadUrl,
+            downloadUrl: persisted.downloadUrl,
             appliedFilter,
             logs: Array.isArray(pyResult.logs) ? pyResult.logs : existingPyProgress?.logs || [],
-            message: `Selesai 100% (${(cleanedBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB) via Cloud Python FFmpeg`,
+            message: `Selesai 100% (${(cleanedBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB) • Auto-Clean server dalam 5 menit`,
           });
 
           const encodedLogs = Buffer.from(
@@ -1094,7 +1139,9 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             engineHeader: 'Cloud-Python-FFmpeg-FrameFilter',
             appliedFilter,
             encodedLogs,
-            downloadUrl,
+            downloadUrl: persisted.downloadUrl,
+            expiresAt: persisted.expiresAt,
+            ttlSeconds: persisted.ttlSeconds,
           };
         }
       }
@@ -1880,15 +1927,25 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     await writeProgressAtomic(nodeProgressState);
 
     const cleanedBuffer = neutralizeContainerMetadataInPlace(rawCleanedBuffer);
-    const downloadUrl = await persistCleanedResultForDownload(activeJobId, cleanedBuffer);
+    const persisted = await persistCleanedResultForDownload(
+      activeJobId,
+      cleanedBuffer,
+      uploadId
+    );
 
+    nodeProgressState.uploadId = uploadId;
     nodeProgressState.stage = 'completed';
     nodeProgressState.percent = 100;
+    nodeProgressState.resultReady = true;
+    nodeProgressState.completedAt = persisted.completedAt;
+    nodeProgressState.expiresAt = persisted.expiresAt;
+    nodeProgressState.ttlSeconds = persisted.ttlSeconds;
+    nodeProgressState.expired = false;
     nodeProgressState.outputSizeBytes = cleanedBuffer.byteLength;
-    nodeProgressState.downloadUrl = downloadUrl;
+    nodeProgressState.downloadUrl = persisted.downloadUrl;
     nodeProgressState.appliedFilter = appliedFilter;
     nodeProgressState.logs = serverLogs;
-    nodeProgressState.message = `Selesai 100% (${(cleanedBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB) via Cloud Node.js FFmpeg`;
+    nodeProgressState.message = `Selesai 100% (${(cleanedBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB) • Auto-Clean server dalam 5 menit`;
     await writeProgressAtomic(nodeProgressState);
 
     const encodedLogs = Buffer.from(
@@ -1910,12 +1967,15 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         : 'server-ffmpeg-synthid-scrub-bitexact',
       appliedFilter,
       encodedLogs,
-      downloadUrl,
+      downloadUrl: persisted.downloadUrl,
+      expiresAt: persisted.expiresAt,
+      ttlSeconds: persisted.ttlSeconds,
     };
   } catch (error: any) {
     if (progressFilePath) {
       writeProgressAtomicSync({
         jobId: activeJobId,
+        uploadId,
         stage: 'failed',
         message: `Gagal: ${error?.message || 'Error memproses video'}`,
         percent: nodeProgressState.percent || 0,
@@ -1933,7 +1993,9 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     }
     throw error;
   } finally {
-    await fs.unlink(inputPath).catch(() => {});
+    if (!keepInputPath) {
+      await fs.unlink(inputPath).catch(() => {});
+    }
     await fs.unlink(intermediatePath).catch(() => {});
     await fs.unlink(pass1Path).catch(() => {});
     await fs.unlink(outputPath).catch(() => {});
@@ -1941,12 +2003,47 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       const targetProgress = progressFilePath;
       setTimeout(() => {
         fs.unlink(targetProgress).catch(() => {});
-      }, 5 * 60 * 1000);
+      }, META_CLEANER_AUTO_CLEAN_MS + 3 * 60 * 1000);
     }
   }
 }
 
+function resolveCameraProfileSettings(profile: string): {
+  cameraBrand: string;
+  videoHandlerName: string;
+  audioHandlerName: string;
+} {
+  if (profile === 'apple') {
+    return {
+      cameraBrand: 'mp42',
+      videoHandlerName: 'Core Media Video',
+      audioHandlerName: 'Core Media Audio',
+    };
+  }
+  if (profile === 'xiaomi') {
+    return {
+      cameraBrand: 'mp42',
+      videoHandlerName: 'VideoHandler',
+      audioHandlerName: 'SoundHandler',
+    };
+  }
+  if (profile === 'neutral') {
+    return {
+      cameraBrand: 'isom',
+      videoHandlerName: 'VideoHandler',
+      audioHandlerName: 'SoundHandler',
+    };
+  }
+  return {
+    cameraBrand: 'mp42',
+    videoHandlerName: 'VideoHandle',
+    audioHandlerName: 'SoundHandle',
+  };
+}
+
 export async function POST(req: NextRequest) {
+  await sweepExpiredMetaCleanerFiles();
+
   const sessionId = crypto.randomUUID();
   const tmpDir = os.tmpdir();
   let inputPath = path.join(tmpDir, `metacleaner_in_${sessionId}.mp4`);
@@ -1957,10 +2054,12 @@ export async function POST(req: NextRequest) {
   const urlJobId = sanitizeJobId(req.nextUrl?.searchParams?.get('jobId'));
   let activeJobId = urlJobId || sanitizeJobId(sessionId);
   let progressFilePath: string | undefined;
+  let keepInputPath = false;
+  let uploadId: string | undefined;
 
   try {
     const contentType = req.headers.get('content-type') || '';
-    let inputBuffer: Buffer;
+    let inputBuffer: Buffer | null = null;
     let originalName = 'input.mp4';
     let cleanerMode: 'all_in_one' | 'unified' | 'deep_synthid' | 'safe_mode' | 'remux_only' = 'all_in_one';
     let deepMetaPurge = true;
@@ -1973,7 +2072,63 @@ export async function POST(req: NextRequest) {
     let audioHandlerName = 'SoundHandle';
     const cameraMetadataArgs: string[] = [];
 
-    if (contentType.includes('multipart/form-data')) {
+    if (contentType.includes('application/json')) {
+      const body = await req.json().catch(() => ({}));
+      const requestedUploadId = sanitizeJobId(body?.uploadId);
+      const bodyJobId = sanitizeJobId(body?.jobId);
+      if (bodyJobId) {
+        activeJobId = bodyJobId;
+      }
+
+      if (!requestedUploadId) {
+        return NextResponse.json(
+          { error: 'Parameter uploadId diperlukan untuk memproses video di server.' },
+          { status: 400 }
+        );
+      }
+
+      const uploaded = await findUploadedFile(requestedUploadId);
+      if (!uploaded) {
+        return NextResponse.json(
+          {
+            error:
+              'Berkas upload tidak ditemukan di server atau telah expired (auto-clean). Silakan unggah ulang video.',
+          },
+          { status: 404 }
+        );
+      }
+
+      uploadId = uploaded.uploadId;
+      inputPath = uploaded.filePath;
+      keepInputPath = true;
+      originalName = uploaded.filename || 'input.mp4';
+      asyncMode = true;
+
+      const modeField = body?.mode;
+      if (modeField === 'remux_only') cleanerMode = 'remux_only';
+      else if (modeField === 'safe_mode') cleanerMode = 'safe_mode';
+      else if (modeField === 'deep_synthid') cleanerMode = 'deep_synthid';
+      else if (modeField === 'unified') cleanerMode = 'unified';
+      else cleanerMode = 'all_in_one';
+
+      if (body?.deepMetaPurge === false || body?.deepMetaPurge === 'false') {
+        deepMetaPurge = false;
+      }
+      if (body?.forceKeyframeInsertion === false || body?.forceKeyframeInsertion === 'false') {
+        forceKeyframeInsertion = false;
+      }
+      if (body?.upscale1080p === false || body?.upscale1080p === 'false') {
+        upscale1080p = false;
+      }
+      cameraProfileField =
+        typeof body?.cameraProfile === 'string' && body.cameraProfile
+          ? body.cameraProfile
+          : 'samsung';
+      const cam = resolveCameraProfileSettings(cameraProfileField);
+      cameraBrand = cam.cameraBrand;
+      videoHandlerName = cam.videoHandlerName;
+      audioHandlerName = cam.audioHandlerName;
+    } else if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
       const file = formData.get('file') as File | null;
       const modeField = formData.get('mode');
@@ -2013,51 +2168,37 @@ export async function POST(req: NextRequest) {
         );
       }
       originalName = file.name || 'input.mp4';
-      const ext =
-        (originalName.split('.').pop() || 'mp4')
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '') || 'mp4';
+      const ext = sanitizeVideoExtension(originalName);
       inputPath = path.join(tmpDir, `metacleaner_in_${sessionId}.${ext}`);
       const arrayBuffer = await file.arrayBuffer();
       inputBuffer = Buffer.from(arrayBuffer);
 
-      if (cameraProfileField === 'apple') {
-        cameraBrand = 'mp42';
-        videoHandlerName = 'Core Media Video';
-        audioHandlerName = 'Core Media Audio';
-      } else if (cameraProfileField === 'xiaomi') {
-        cameraBrand = 'mp42';
-        videoHandlerName = 'VideoHandler';
-        audioHandlerName = 'SoundHandler';
-      } else if (cameraProfileField === 'neutral') {
-        cameraBrand = 'isom';
-        videoHandlerName = 'VideoHandler';
-        audioHandlerName = 'SoundHandler';
-      } else {
-        cameraBrand = 'mp42';
-        videoHandlerName = 'VideoHandle';
-        audioHandlerName = 'SoundHandle';
-      }
+      const cam = resolveCameraProfileSettings(cameraProfileField);
+      cameraBrand = cam.cameraBrand;
+      videoHandlerName = cam.videoHandlerName;
+      audioHandlerName = cam.audioHandlerName;
     } else {
       const arrayBuffer = await req.arrayBuffer();
       inputBuffer = Buffer.from(arrayBuffer);
     }
 
-    if (!inputBuffer || inputBuffer.byteLength < 1024) {
-      return NextResponse.json(
-        { error: 'Buffer video tidak valid atau terlalu kecil.' },
-        { status: 400 }
-      );
+    if (!keepInputPath) {
+      if (!inputBuffer || inputBuffer.byteLength < 1024) {
+        return NextResponse.json(
+          { error: 'Buffer video tidak valid atau terlalu kecil.' },
+          { status: 400 }
+        );
+      }
+      await fs.writeFile(inputPath, inputBuffer);
     }
-
-    await fs.writeFile(inputPath, inputBuffer);
 
     progressFilePath = getProgressFilePath(activeJobId);
     const initialProgressState: CleanerProgressState = {
       jobId: activeJobId,
+      uploadId,
       stage: 'probing',
-      message: 'Menginisialisasi Cloud Python FFmpeg Wrapper...',
-      percent: 3,
+      message: 'Menginisialisasi Cloud FFmpeg di server (tanpa streaming)...',
+      percent: 4,
       frame: 0,
       totalFrames: 0,
       fps: 0,
@@ -2067,11 +2208,14 @@ export async function POST(req: NextRequest) {
       engine: 'Cloud Python FFmpeg Wrapper',
       logs: [],
       updatedAt: new Date().toISOString(),
+      ttlSeconds: Math.round(META_CLEANER_AUTO_CLEAN_MS / 1000),
     };
     await writeProgressAtomic(initialProgressState);
 
     const jobParams: CleanerJobParams = {
       activeJobId,
+      uploadId,
+      keepInputPath,
       inputPath,
       intermediatePath,
       pass1Path,
@@ -2100,13 +2244,14 @@ export async function POST(req: NextRequest) {
           success: true,
           accepted: true,
           jobId: activeJobId,
+          uploadId: uploadId || null,
+          ttlSeconds: Math.round(META_CLEANER_AUTO_CLEAN_MS / 1000),
           downloadUrl: `/api/meta-cleaner/download?jobId=${encodeURIComponent(activeJobId)}`,
         },
         {
           status: 202,
           headers: {
             'Cache-Control': 'no-store',
-            'Access-Control-Allow-Origin': '*',
           },
         }
       );
@@ -2126,15 +2271,13 @@ export async function POST(req: NextRequest) {
         'X-MetaCleaner-DeepPurge': deepMetaPurge ? 'active' : 'standard',
         'X-MetaCleaner-Camera-Profile': cameraProfileField,
         'X-MetaCleaner-Logs': result.encodedLogs,
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Expose-Headers':
-          'Content-Length, Content-Type, X-MetaCleaner-JobId, X-MetaCleaner-Engine, X-MetaCleaner-Logs, X-MetaCleaner-Filter, X-MetaCleaner-SynthID, X-MetaCleaner-DeepPurge, X-MetaCleaner-Camera-Profile',
         'Cache-Control': 'no-store',
       },
     });
   } catch (error: any) {
-    await fs.unlink(inputPath).catch(() => {});
+    if (!keepInputPath) {
+      await fs.unlink(inputPath).catch(() => {});
+    }
     await fs.unlink(intermediatePath).catch(() => {});
     await fs.unlink(pass1Path).catch(() => {});
     await fs.unlink(outputPath).catch(() => {});
@@ -2142,6 +2285,7 @@ export async function POST(req: NextRequest) {
     if (progressFilePath) {
       writeProgressAtomicSync({
         jobId: activeJobId,
+        uploadId,
         stage: 'failed',
         message: `Gagal: ${error?.message || 'Error memproses video'}`,
         percent: 0,
