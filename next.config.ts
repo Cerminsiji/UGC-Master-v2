@@ -47,7 +47,7 @@ const nextConfig = (phase: string): NextConfig => ({
     '*': [
       '**/.next-dev/**',
       '**/.next/cache/**',
-      '**/public/assets/aistudio/**',
+      '**/public/assets/aistudio/file_0000000004dc82119cb1e14ad74b3554_8bc4c90f.png',
       '**/node_modules/@swc/core-linux-x64-musl/**',
       '**/node_modules/@swc/core-darwin-*/**',
       '**/node_modules/@swc/core-win32-*/**',

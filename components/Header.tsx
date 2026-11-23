@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import Image from 'next/image';
 import {
   Download,
   FolderOpen,
@@ -85,9 +86,15 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Left: Brand Identity & Active Storyboard Title */}
         <div className="flex items-center justify-between xl:justify-start gap-3.5">
           <div className="flex items-center gap-2.5 pr-3.5 border-r border-[#1e293f]">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-purple-600 flex items-center justify-center text-white font-black text-sm shadow-md shadow-purple-900/40">
-              U
-            </div>
+            <Image
+              src="/assets/aistudio/file_0000000004dc82119cb1e14ad74b3554_optimized_500-removebg-preview_92599332.png"
+              alt="UGC Master Studio"
+              width={40}
+              height={40}
+              priority
+              referrerPolicy="no-referrer"
+              className="w-10 h-10 object-contain drop-shadow-[0_2px_10px_rgba(168,85,247,0.35)] shrink-0"
+            />
             <div>
               <div className="text-white font-extrabold text-sm tracking-tight leading-none flex items-center gap-1.5">
                 <span>UGC Master Studio</span>

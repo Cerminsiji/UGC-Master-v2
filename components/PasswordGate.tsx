@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Image from 'next/image';
 import {
   Lock,
   Eye,
@@ -59,9 +60,15 @@ export const PasswordGate: React.FC<PasswordGateProps> = ({ onSuccess }) => {
       <div className="relative w-full max-w-md bg-[#0d1322]/95 backdrop-blur-xl border border-[#1f2b47] rounded-2xl p-6 sm:p-8 shadow-2xl shadow-purple-950/30 my-auto animate-fadeIn">
         {/* Brand Logo Header */}
         <div className="flex flex-col items-center text-center mb-6">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-purple-600 flex items-center justify-center text-white font-black text-2xl shadow-lg shadow-purple-900/50 mb-4 border border-purple-400/30">
-            U
-          </div>
+          <Image
+            src="/assets/aistudio/file_0000000004dc82119cb1e14ad74b3554_optimized_500-removebg-preview_92599332.png"
+            alt="UGC Master Studio"
+            width={112}
+            height={112}
+            priority
+            referrerPolicy="no-referrer"
+            className="w-28 h-28 object-contain drop-shadow-[0_6px_24px_rgba(168,85,247,0.35)] mb-3"
+          />
 
           <div className="flex items-center gap-2 mb-1">
             <span className="text-white font-extrabold text-lg tracking-tight">
