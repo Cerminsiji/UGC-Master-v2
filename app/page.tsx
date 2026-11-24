@@ -49,8 +49,85 @@ interface ConfirmDialogState {
   isProcessing?: boolean;
   onConfirm: () => void | Promise<void>;
 }
+function isChunkLoadFailure(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const record = err as { name?: unknown; message?: unknown };
+  const name = typeof record.name === 'string' ? record.name : '';
+  const msg = typeof record.message === 'string' ? record.message : '';
+  return (
+    name === 'ChunkLoadError' ||
+    /ChunkLoadError|Loading chunk .* failed|Failed to fetch dynamically imported module|Importing a module script failed/i.test(
+      msg
+    )
+  );
+}
+
+function loadDynamicWithRetry<P extends object>(
+  loader: () => Promise<React.ComponentType<P>>,
+  moduleLabel: string
+): () => Promise<React.ComponentType<P>> {
+  return async () => {
+    const retryDelays = [600, 1200, 2000];
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+      try {
+        return await loader();
+      } catch (err) {
+        lastError = err;
+        if (attempt < retryDelays.length && isChunkLoadFailure(err)) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+          continue;
+        }
+        break;
+      }
+    }
+
+    if (typeof window !== 'undefined' && isChunkLoadFailure(lastError)) {
+      try {
+        const key = 'ugc_chunk_reload_ts';
+        const lastReload = Number(window.sessionStorage.getItem(key) || '0');
+        const now = Date.now();
+        if (!Number.isFinite(lastReload) || now - lastReload > 15_000) {
+          window.sessionStorage.setItem(key, String(now));
+          window.location.reload();
+          return (() => (
+            <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-8 text-center text-xs text-slate-400 animate-pulse">
+              Menyinkronkan versi modul {moduleLabel}...
+            </div>
+          )) as React.ComponentType<P>;
+        }
+      } catch {
+        // Ignore storage restrictions and render fallback card
+      }
+    }
+
+    const ChunkFallback: React.ComponentType<P> = () => (
+      <div className="bg-[#0e1422] border border-rose-500/40 rounded-2xl p-8 text-center space-y-3">
+        <div className="text-sm font-bold text-rose-300">
+          Modul {moduleLabel} gagal dimuat
+        </div>
+        <div className="text-xs text-slate-400">
+          Koneksi terputus atau cache modul di browser perlu disegarkan setelah pembaruan server.
+        </div>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-xs font-semibold text-white transition"
+        >
+          Muat Ulang Halaman
+        </button>
+      </div>
+    );
+    return ChunkFallback;
+  };
+}
+
 const ScriptTableView = dynamic(
-  () => import('@/components/ScriptTableView').then((mod) => mod.ScriptTableView),
+  loadDynamicWithRetry(
+    () => import('@/components/ScriptTableView').then((mod) => mod.ScriptTableView),
+    'Script Table View'
+  ),
   {
     ssr: false,
     loading: () => (
@@ -61,7 +138,10 @@ const ScriptTableView = dynamic(
   }
 );
 const MotionControlPanel = dynamic(
-  () => import('@/components/MotionControlPanel').then((mod) => mod.MotionControlPanel),
+  loadDynamicWithRetry(
+    () => import('@/components/MotionControlPanel').then((mod) => mod.MotionControlPanel),
+    'Motion Control Studio'
+  ),
   {
     ssr: false,
     loading: () => (
@@ -72,7 +152,10 @@ const MotionControlPanel = dynamic(
   }
 );
 const TikTokDanceStudio = dynamic(
-  () => import('@/components/TikTokDanceStudio').then((mod) => mod.TikTokDanceStudio),
+  loadDynamicWithRetry(
+    () => import('@/components/TikTokDanceStudio').then((mod) => mod.TikTokDanceStudio),
+    'TikTok Dance Studio'
+  ),
   {
     ssr: false,
     loading: () => (
@@ -83,7 +166,10 @@ const TikTokDanceStudio = dynamic(
   }
 );
 const RateCardCalculator = dynamic(
-  () => import('@/components/RateCardCalculator').then((mod) => mod.RateCardCalculator),
+  loadDynamicWithRetry(
+    () => import('@/components/RateCardCalculator').then((mod) => mod.RateCardCalculator),
+    'Rate Card Calculator'
+  ),
   {
     ssr: false,
     loading: () => (
@@ -94,7 +180,10 @@ const RateCardCalculator = dynamic(
   }
 );
 const MetaCleanerPro = dynamic(
-  () => import('@/components/MetaCleanerPro').then((mod) => mod.MetaCleanerPro),
+  loadDynamicWithRetry(
+    () => import('@/components/MetaCleanerPro').then((mod) => mod.MetaCleanerPro),
+    'MetaCleaner V 2.0'
+  ),
   {
     ssr: false,
     loading: () => (
@@ -106,23 +195,38 @@ const MetaCleanerPro = dynamic(
   }
 );
 const AIGeneratorModal = dynamic(
-  () => import('@/components/AIGeneratorModal').then((mod) => mod.AIGeneratorModal),
+  loadDynamicWithRetry(
+    () => import('@/components/AIGeneratorModal').then((mod) => mod.AIGeneratorModal),
+    'AI Generator'
+  ),
   { ssr: false }
 );
 const HookGeneratorModal = dynamic(
-  () => import('@/components/HookGeneratorModal').then((mod) => mod.HookGeneratorModal),
+  loadDynamicWithRetry(
+    () => import('@/components/HookGeneratorModal').then((mod) => mod.HookGeneratorModal),
+    'Hook Generator'
+  ),
   { ssr: false }
 );
 const TeleprompterModal = dynamic(
-  () => import('@/components/TeleprompterModal').then((mod) => mod.TeleprompterModal),
+  loadDynamicWithRetry(
+    () => import('@/components/TeleprompterModal').then((mod) => mod.TeleprompterModal),
+    'Teleprompter'
+  ),
   { ssr: false }
 );
 const ExportModal = dynamic(
-  () => import('@/components/ExportModal').then((mod) => mod.ExportModal),
+  loadDynamicWithRetry(
+    () => import('@/components/ExportModal').then((mod) => mod.ExportModal),
+    'Export Modal'
+  ),
   { ssr: false }
 );
 const ProjectManagerModal = dynamic(
-  () => import('@/components/ProjectManagerModal').then((mod) => mod.ProjectManagerModal),
+  loadDynamicWithRetry(
+    () => import('@/components/ProjectManagerModal').then((mod) => mod.ProjectManagerModal),
+    'Project Manager'
+  ),
   { ssr: false }
 );
 import { UGC_CATEGORIES } from '@/data/categories';

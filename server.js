@@ -13,7 +13,13 @@ const rootNextServerPath = path.join(dir, '.next', 'server');
 if (!fs.existsSync(rootNextServerPath) && fs.existsSync(standaloneServerPath)) {
   require(standaloneServerPath);
 } else {
-  const currentPort = parseInt(process.env.PORT, 10) || 3000;
+  const effectivePortEnv =
+    process.env.NGINX_PORT &&
+    process.env.PORT === process.env.NGINX_PORT &&
+    process.env.DEFAULT_APP_PORT
+      ? process.env.DEFAULT_APP_PORT
+      : process.env.PORT;
+  const currentPort = parseInt(effectivePortEnv, 10) || 3000;
   const hostname = process.env.HOSTNAME || '0.0.0.0';
 
   let keepAliveTimeout = parseInt(process.env.KEEP_ALIVE_TIMEOUT, 10);

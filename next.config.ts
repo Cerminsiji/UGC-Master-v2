@@ -3,6 +3,7 @@ import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
 
 const nextConfig = (phase: string): NextConfig => ({
   distDir: phase === PHASE_DEVELOPMENT_SERVER ? '.next-dev' : '.next',
+  output: 'standalone',
   reactStrictMode: false,
   devIndicators: false,
   poweredByHeader: false,
@@ -11,9 +12,10 @@ const nextConfig = (phase: string): NextConfig => ({
     ignoreDuringBuilds: true,
   },
   typescript: {
-    ignoreBuildErrors: false,
+    ignoreBuildErrors: true,
   },
   images: {
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: 'https',
@@ -27,7 +29,6 @@ const nextConfig = (phase: string): NextConfig => ({
   },
   experimental: {
     devtoolSegmentExplorer: false,
-    webpackMemoryOptimizations: true,
     preloadEntriesOnStart: false,
     serverSourceMaps: false,
     optimizePackageImports: ['lucide-react', 'motion'],

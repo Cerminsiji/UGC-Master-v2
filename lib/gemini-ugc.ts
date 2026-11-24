@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import {
   detectKnownBrand,
   isGenericMarketplaceFallback,
@@ -8,13 +8,10 @@ import {
   inferProductBrandOrCollection,
 } from './link-extractor';
 
-// List of supported Gemini models with automatic cascading fallback
+// List of active supported Gemini models with automatic cascading fallback
 export const CANDIDATE_MODELS = [
   'gemini-4-hydrogen',
   'gemini-3.1-flash-lite',
-  'gemini-3-flash-preview',
-  'gemini-2.5-flash',
-  'gemini-flash-latest',
 ];
 
 // Lazy-safe Gemini AI client helper
@@ -41,21 +38,44 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage = '
   ]);
 }
 
-// High-speed multi-model generator with clean config, strict timeouts, and multimodal referenceImages support
+function buildModelConfig(model: string, baseConfig: any, systemInstruction?: string): Record<string, any> {
+  const cfg: Record<string, any> = {
+    ...(baseConfig || {}),
+    ...(systemInstruction ? { systemInstruction } : {}),
+  };
+
+  // Use LOW thinking level by default to prevent timeouts on structured JSON outputs
+  if (!cfg.thinkingConfig) {
+    cfg.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+  }
+
+  // Gemini 4 models reject deprecated sampling parameters and thinkingBudget
+  if (model.startsWith('gemini-4-')) {
+    delete cfg.temperature;
+    delete cfg.topP;
+    delete cfg.topK;
+    delete cfg.candidateCount;
+    if (cfg.thinkingConfig && 'thinkingBudget' in cfg.thinkingConfig) {
+      const { thinkingBudget: _ignored, ...restThinking } = cfg.thinkingConfig;
+      cfg.thinkingConfig = restThinking;
+    }
+  }
+
+  return cfg;
+}
+
+// High-speed multi-model generator with clean config, strict timeouts, backoff retry, and multimodal referenceImages support
 export async function generateWithFallback(
   prompt: string,
   config: any,
   systemInstruction?: string,
-  timeoutMs = 15000,
+  timeoutMs = 22000,
   referenceImages?: string[]
 ): Promise<string | null> {
   const ai = getGeminiClient();
   if (!ai) return null;
 
-  const requestConfig = {
-    ...config,
-    ...(systemInstruction ? { systemInstruction } : {}),
-  };
+  const effectiveTimeoutMs = Math.max(timeoutMs, 22000);
 
   // Extract valid base64 inlineData parts if referenceImages are provided
   const inlineImageParts: Array<{ inlineData: { mimeType: string; data: string } }> = [];
@@ -77,48 +97,65 @@ export async function generateWithFallback(
 
   const contentsPayload: any =
     inlineImageParts.length > 0
-      ? [
-          {
-            role: 'user',
-            parts: [...inlineImageParts, { text: prompt }],
-          },
-        ]
+      ? { parts: [...inlineImageParts, { text: prompt }] }
       : prompt;
 
   for (const model of CANDIDATE_MODELS) {
-    try {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: contentsPayload,
-          config: requestConfig,
-        }),
-        timeoutMs,
-        `Timeout on model ${model}`
-      );
+    const requestConfig = buildModelConfig(model, config, systemInstruction);
+    const maxAttempts = 2;
 
-      const text = response.text?.trim();
-      if (text) {
-        return text;
-      }
-    } catch (err: any) {
-      const isQuota =
-        err?.status === 429 ||
-        err?.message?.includes('429') ||
-        err?.message?.includes('Quota exceeded') ||
-        err?.message?.includes('RESOURCE_EXHAUSTED');
-      const isUnavailable =
-        err?.status === 503 ||
-        err?.message?.includes('503') ||
-        err?.message?.includes('UNAVAILABLE') ||
-        err?.message?.includes('high demand');
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await withTimeout(
+          ai.models.generateContent({
+            model,
+            contents: contentsPayload,
+            config: requestConfig,
+          }),
+          effectiveTimeoutMs,
+          `Timeout on model ${model}`
+        );
 
-      if (isQuota) {
-        console.log(`[Gemini AI] Quota limit reached for ${model}, switching to next candidate.`);
-      } else if (isUnavailable) {
-        console.log(`[Gemini AI] Model ${model} temporarily unavailable, switching to next candidate.`);
-      } else {
-        console.log(`[Gemini AI] Model ${model} fallback: ${err?.message || err}`);
+        const text = response.text?.trim();
+        if (text) {
+          return text;
+        }
+        break;
+      } catch (err: any) {
+        const msg = String(err?.message || err || '');
+        const isQuota =
+          err?.status === 429 ||
+          msg.includes('429') ||
+          msg.includes('Quota exceeded') ||
+          msg.includes('RESOURCE_EXHAUSTED');
+        const isUnavailable =
+          err?.status === 503 ||
+          msg.includes('503') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('high demand');
+        const isTimeout = msg.includes('Timeout on model');
+        const isNotFound = err?.status === 404 || msg.includes('NOT_FOUND') || msg.includes('404');
+
+        if (isNotFound) {
+          console.warn(`[Gemini AI] Model ${model} not found (404), switching to next candidate.`);
+          break;
+        }
+
+        const isTransient = isQuota || isUnavailable || isTimeout;
+        if (isTransient && attempt < maxAttempts) {
+          const backoffMs = 800 * attempt + Math.floor(Math.random() * 300);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+
+        if (isQuota) {
+          console.warn(`[Gemini AI] Quota limit reached for ${model}, switching to next candidate.`);
+        } else if (isUnavailable) {
+          console.warn(`[Gemini AI] Model ${model} temporarily unavailable, switching to next candidate.`);
+        } else {
+          console.warn(`[Gemini AI] Model ${model} fallback: ${msg}`);
+        }
+        break;
       }
     }
   }
