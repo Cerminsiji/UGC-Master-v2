@@ -983,7 +983,11 @@ export const MetaCleanerPro: React.FC = () => {
       try {
         const res = await fetch(
           `/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`,
-          { cache: 'no-store', credentials: 'include' }
+          {
+            cache: 'no-store',
+            credentials: 'include',
+            signal: AbortSignal.timeout(12000),
+          }
         );
         if (!res.ok || cancelled) return;
         const pData = (await res.json()) as CleanerProgressState;
@@ -998,6 +1002,7 @@ export const MetaCleanerPro: React.FC = () => {
           ? `${parsed.fileName.replace(/\.[^/.]+$/, '')}_output_bersih.mp4`
           : 'video_output_bersih.mp4';
 
+        let maxRestorePct = pData.percent || 0;
         setLastJobId(parsed.jobId);
         if (parsed.uploadId) setServerUploadId(parsed.uploadId);
         setCloudProgress(pData);
@@ -1022,7 +1027,7 @@ export const MetaCleanerPro: React.FC = () => {
           setIsProcessing(true);
           activeJobIdRef.current = parsed.jobId;
           abortPollingRef.current = false;
-          setProgressText(`${pData.percent || 5}%`);
+          setProgressText(`${maxRestorePct || 5}%`);
           appendLog(
             `[SESSION PULIH] Menyambung kembali pemantauan proses server Job ${parsed.jobId}...`,
             'indigo'
@@ -1034,7 +1039,11 @@ export const MetaCleanerPro: React.FC = () => {
             try {
               const pollRes = await fetch(
                 `/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`,
-                { cache: 'no-store', credentials: 'include' }
+                {
+                  cache: 'no-store',
+                  credentials: 'include',
+                  signal: AbortSignal.timeout(12000),
+                }
               );
               if (!pollRes.ok) {
                 setNetworkWarning(
@@ -1045,6 +1054,10 @@ export const MetaCleanerPro: React.FC = () => {
               setNetworkWarning(null);
               const nextData = (await pollRes.json()) as CleanerProgressState;
               if (cancelled || abortPollingRef.current) break;
+              if (nextData.stage !== 'failed') {
+                maxRestorePct = Math.max(maxRestorePct, nextData.percent || 0);
+                nextData.percent = maxRestorePct;
+              }
               setCloudProgress(nextData);
               setProgressText(`${nextData.percent}%`);
 
@@ -1120,6 +1133,7 @@ export const MetaCleanerPro: React.FC = () => {
                 }),
                 cache: 'no-store',
                 credentials: 'include',
+                signal: AbortSignal.timeout(45000),
               });
             } else if (source.blob) {
               const fd = new FormData();
@@ -1128,6 +1142,7 @@ export const MetaCleanerPro: React.FC = () => {
                 method: 'POST',
                 body: fd,
                 credentials: 'include',
+                signal: AbortSignal.timeout(60000),
               });
             } else {
               throw new Error('Sumber video untuk probe tidak tersedia.');
@@ -1257,9 +1272,19 @@ export const MetaCleanerPro: React.FC = () => {
       setUploadError(null);
       setIsServerCleanedUp(false);
 
-      const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB chunks for unreliable internet
+      const CHUNK_SIZE =
+        file.size > 12 * 1024 * 1024 ? 1 * 1024 * 1024 : 2 * 1024 * 1024;
       const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
       setUploadChunkInfo({ current: 0, total: totalChunks });
+
+      const buildVerifySignal = (ms: number): AbortSignal => {
+        const timeoutSig = AbortSignal.timeout(ms);
+        const abortSigAny = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+        if (typeof abortSigAny === 'function') {
+          return abortSigAny([abortCtrl.signal, timeoutSig]);
+        }
+        return timeoutSig;
+      };
 
       // Check if server already has partial/complete chunks (resume support)
       const alreadyReceived = new Set<number>();
@@ -1267,7 +1292,7 @@ export const MetaCleanerPro: React.FC = () => {
         try {
           const checkRes = await fetch(
             `/api/meta-cleaner/upload?uploadId=${encodeURIComponent(uploadId)}`,
-            { cache: 'no-store', credentials: 'include', signal: abortCtrl.signal }
+            { cache: 'no-store', credentials: 'include', signal: buildVerifySignal(10000) }
           );
           if (checkRes.ok) {
             const checkData = await checkRes.json();
@@ -1323,7 +1348,7 @@ export const MetaCleanerPro: React.FC = () => {
 
           xhr.open('POST', '/api/meta-cleaner/upload', true);
           xhr.withCredentials = true;
-          xhr.timeout = 45000;
+          xhr.timeout = 60000;
 
           xhr.upload.onprogress = (ev) => {
             if (ev.lengthComputable) {
@@ -1391,7 +1416,7 @@ export const MetaCleanerPro: React.FC = () => {
 
           let chunkUploaded = false;
           let lastChunkErr: Error | null = null;
-          const maxRetries = 5;
+          const maxRetries = 8;
 
           for (let attempt = 1; attempt <= maxRetries; attempt++) {
             if (abortCtrl.signal.aborted) {
@@ -1409,7 +1434,7 @@ export const MetaCleanerPro: React.FC = () => {
               try {
                 const verifyRes = await fetch(
                   `/api/meta-cleaner/upload?uploadId=${encodeURIComponent(uploadId)}`,
-                  { cache: 'no-store', credentials: 'include', signal: abortCtrl.signal }
+                  { cache: 'no-store', credentials: 'include', signal: buildVerifySignal(10000) }
                 );
                 if (verifyRes.ok) {
                   const vData = await verifyRes.json();
@@ -1424,7 +1449,7 @@ export const MetaCleanerPro: React.FC = () => {
               } catch {}
 
               if (attempt < maxRetries) {
-                const waitMs = Math.min(8000, attempt * 1500);
+                const waitMs = Math.min(10000, attempt * 1500);
                 setUploadError(
                   `Internet lambat pada bagian ${idx + 1}/${totalChunks} — mencoba ulang (${attempt}/${maxRetries})...`
                 );
@@ -1510,7 +1535,8 @@ export const MetaCleanerPro: React.FC = () => {
     setFileStatus({ text: 'Membaca ke RAM...', color: 'amber' });
 
     try {
-      const buffer = await file.arrayBuffer();
+      const inspectSlice = file.slice(0, 16 * 1024 * 1024);
+      const buffer = await inspectSlice.arrayBuffer();
       setFileArrayBuffer(buffer);
       setFileStatus({ text: 'Siap Upload ke Server', color: 'emerald' });
 
@@ -1543,7 +1569,7 @@ export const MetaCleanerPro: React.FC = () => {
   };
 
   const executeAutoSanitization = async () => {
-    if (!currentFile || !fileArrayBuffer) return;
+    if (!currentFile) return;
     if (isProcessing) return;
 
     abortPollingRef.current = false;
@@ -1563,16 +1589,24 @@ export const MetaCleanerPro: React.FC = () => {
 
     const baseName = currentFile.name.replace(/\.[^/.]+$/, '');
     const outputFileName = `${baseName}_output_bersih.mp4`;
-    const sourceByteLength = fileArrayBuffer.byteLength;
+    const sourceByteLength = currentFile.size;
+    let maxUiPercent = 0;
 
     const syncProgressSnapshot = (pData: CleanerProgressState) => {
       if (!pData || !pData.stage) return;
-      setCloudProgress(pData);
+      const clampedPct =
+        pData.stage === 'failed'
+          ? pData.percent
+          : Math.max(maxUiPercent, pData.percent || 0);
+      if (pData.stage !== 'failed') {
+        maxUiPercent = clampedPct;
+      }
+      setCloudProgress({ ...pData, percent: clampedPct });
       const framePart =
         pData.frame > 0
           ? ` • Frame ${pData.frame}${pData.totalFrames > 0 ? `/${pData.totalFrames}` : ''}`
           : '';
-      setProgressText(`${pData.percent}%${framePart}`);
+      setProgressText(`${clampedPct}%${framePart}`);
 
       if (Array.isArray(pData.logs)) {
         for (const line of pData.logs) {
@@ -1633,6 +1667,27 @@ export const MetaCleanerPro: React.FC = () => {
       let startAck: any = null;
       let startErr: Error | null = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
+        // Before retrying POST, check if server already accepted and started this jobId (prevents duplicate restart)
+        if (attempt > 1) {
+          try {
+            const verifyJobRes = await fetch(
+              `/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}`,
+              {
+                cache: 'no-store',
+                credentials: 'include',
+                signal: AbortSignal.timeout(10000),
+              }
+            );
+            if (verifyJobRes.ok) {
+              const existingState = (await verifyJobRes.json()) as CleanerProgressState;
+              if (existingState?.stage && existingState.stage !== 'queued' && existingState.stage !== 'failed') {
+                startAck = { accepted: true, resumedFromProgress: true };
+                break;
+              }
+            }
+          } catch {}
+        }
+
         try {
           const startRes = await fetch('/api/meta-cleaner', {
             method: 'POST',
@@ -1648,6 +1703,7 @@ export const MetaCleanerPro: React.FC = () => {
             }),
             cache: 'no-store',
             credentials: 'include',
+            signal: AbortSignal.timeout(25000),
           });
           const json = await startRes.json().catch(() => null);
           if (!startRes.ok || !json?.accepted) {
@@ -1687,7 +1743,7 @@ export const MetaCleanerPro: React.FC = () => {
 
       // 3. Gentle resilient polling — transient network errors wait patiently and NEVER restart the job!
       const startedAt = Date.now();
-      const maxWaitMs = 12 * 60 * 1000;
+      const maxWaitMs = 15 * 60 * 1000;
       let finalState: CleanerProgressState | null = null;
 
       while (Date.now() - startedAt < maxWaitMs) {
@@ -1701,6 +1757,7 @@ export const MetaCleanerPro: React.FC = () => {
             {
               cache: 'no-store',
               credentials: 'include',
+              signal: AbortSignal.timeout(12000),
             }
           );
           if (!pRes.ok) {
@@ -1733,11 +1790,13 @@ export const MetaCleanerPro: React.FC = () => {
         } catch (pollErr: any) {
           if (
             pollErr?.message?.includes('FFmpeg gagal') ||
-            pollErr?.message?.includes('Auto-Clean')
+            pollErr?.message?.includes('Auto-Clean') ||
+            pollErr?.message?.includes('Worker server berhenti') ||
+            pollErr?.message?.includes('batas waktu')
           ) {
             throw pollErr;
           }
-          // Network offline/drop during polling: stay calm, keep polling without aborting or restarting job!
+          // Network offline/drop/timeout during polling: stay calm, keep polling without aborting or restarting job!
           setNetworkWarning(
             'Koneksi internet terganggu — pekerjaan tetap berjalan di server, menunggu jaringan kembali...'
           );
@@ -1784,44 +1843,54 @@ export const MetaCleanerPro: React.FC = () => {
       // Run FFprobe directly on the server using jobId (0 MB extra upload!)
       await runExternalProbe({ jobId, filename: outputFileName }, 'after');
 
-      // Gently cache output into local browser RAM in the background with retries (optional, never fails job!)
+      // Gently cache output into local browser RAM only when output <= 25 MB (prevents OOM tab crashes on large videos)
       let cachedBlob: Blob | null = null;
-      for (let dlAttempt = 1; dlAttempt <= 3; dlAttempt++) {
-        if (abortPollingRef.current) return;
-        try {
-          const dlRes = await fetch(
-            `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&inline=1&t=${Date.now()}`,
-            { cache: 'no-store', credentials: 'include' }
-          );
-          if (dlRes.ok) {
-            const dlBuf = await dlRes.arrayBuffer();
-            const candidateUint8 = new Uint8Array(dlBuf);
-            const mp4Check = validateMp4Buffer(candidateUint8, sourceByteLength);
-            if (mp4Check.valid) {
-              neutralizeContainerBoxesInPlace(candidateUint8);
-              cachedBlob = new Blob([candidateUint8 as unknown as BlobPart], {
-                type: 'video/mp4',
-              });
-              setProcessedBlob(cachedBlob);
-              setPreviewUrlAfter(URL.createObjectURL(cachedBlob));
-              const inspectedAfter = await inspectVideoBuffer(
-                candidateUint8,
-                true,
-                cameraProfile
-              );
-              setAfterState((prev) => ({
-                ...inspectedAfter,
-                badgeText: prev.badgeClean === true ? prev.badgeText : inspectedAfter.badgeText,
-                badgeClean: prev.badgeClean !== null ? prev.badgeClean : inspectedAfter.badgeClean,
-                riskText: prev.riskClean !== null ? prev.riskText : inspectedAfter.riskText,
-                riskClean: prev.riskClean !== null ? prev.riskClean : inspectedAfter.riskClean,
-              }));
-              break;
+      const shouldCacheInBrowserRam =
+        typeof finalState.outputSizeBytes === 'number' &&
+        finalState.outputSizeBytes > 0 &&
+        finalState.outputSizeBytes <= 25 * 1024 * 1024;
+      if (shouldCacheInBrowserRam) {
+        for (let dlAttempt = 1; dlAttempt <= 3; dlAttempt++) {
+          if (abortPollingRef.current) return;
+          try {
+            const dlRes = await fetch(
+              `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&inline=1&t=${Date.now()}`,
+              {
+                cache: 'no-store',
+                credentials: 'include',
+                signal: AbortSignal.timeout(45000),
+              }
+            );
+            if (dlRes.ok) {
+              const dlBuf = await dlRes.arrayBuffer();
+              const candidateUint8 = new Uint8Array(dlBuf);
+              const mp4Check = validateMp4Buffer(candidateUint8, sourceByteLength);
+              if (mp4Check.valid) {
+                neutralizeContainerBoxesInPlace(candidateUint8);
+                cachedBlob = new Blob([candidateUint8 as unknown as BlobPart], {
+                  type: 'video/mp4',
+                });
+                setProcessedBlob(cachedBlob);
+                setPreviewUrlAfter(URL.createObjectURL(cachedBlob));
+                const inspectedAfter = await inspectVideoBuffer(
+                  candidateUint8,
+                  true,
+                  cameraProfile
+                );
+                setAfterState((prev) => ({
+                  ...inspectedAfter,
+                  badgeText: prev.badgeClean === true ? prev.badgeText : inspectedAfter.badgeText,
+                  badgeClean: prev.badgeClean !== null ? prev.badgeClean : inspectedAfter.badgeClean,
+                  riskText: prev.riskClean !== null ? prev.riskText : inspectedAfter.riskText,
+                  riskClean: prev.riskClean !== null ? prev.riskClean : inspectedAfter.riskClean,
+                }));
+                break;
+              }
             }
-          }
-        } catch {
-          if (dlAttempt < 3) {
-            await new Promise((r) => setTimeout(r, dlAttempt * 1500));
+          } catch {
+            if (dlAttempt < 3) {
+              await new Promise((r) => setTimeout(r, dlAttempt * 1500));
+            }
           }
         }
       }
@@ -2144,9 +2213,9 @@ export const MetaCleanerPro: React.FC = () => {
 
             <button
               onClick={() => executeAutoSanitization()}
-              disabled={!fileArrayBuffer || isProcessing || uploadStatus === 'uploading'}
+              disabled={!currentFile || isProcessing || uploadStatus === 'uploading'}
               className={
-                !fileArrayBuffer || isProcessing || uploadStatus === 'uploading'
+                !currentFile || isProcessing || uploadStatus === 'uploading'
                   ? 'w-full py-3.5 bg-slate-800 text-slate-500 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-not-allowed'
                   : 'w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-900/30 transition flex items-center justify-center gap-2 cursor-pointer'
               }
@@ -2244,7 +2313,7 @@ export const MetaCleanerPro: React.FC = () => {
               </div>
             )}
 
-            {cloudProgress.stage === 'failed' && fileArrayBuffer && currentFile && (
+            {cloudProgress.stage === 'failed' && currentFile && (
               <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5">
                 <span className="text-[11px] font-mono text-rose-300">
                   Proses gagal dijalankan di server — video input tetap tersimpan hingga auto-clean.

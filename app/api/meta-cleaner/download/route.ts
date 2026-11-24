@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
+import { Readable } from 'stream';
 import {
   META_CLEANER_AUTO_CLEAN_MS,
   cleanupJobArtifacts,
@@ -75,34 +76,28 @@ export async function GET(req: NextRequest) {
       const end = match[2] ? Math.min(totalSize - 1, parseInt(match[2], 10)) : totalSize - 1;
       if (start <= end && start < totalSize) {
         const chunkLen = end - start + 1;
-        const fh = await fs.open(filePath, 'r');
-        try {
-          const buf = Buffer.alloc(chunkLen);
-          await fh.read(buf, 0, chunkLen, start);
-          return new NextResponse(new Uint8Array(buf), {
-            status: 206,
-            headers: {
-              'Content-Type': 'video/mp4',
-              'Content-Range': `bytes ${start}-${end}/${totalSize}`,
-              'Accept-Ranges': 'bytes',
-              'Content-Length': String(chunkLen),
-              'Content-Disposition': disposition,
-              'Cache-Control': 'no-store',
-            },
-          });
-        } finally {
-          await fh.close();
-        }
+        const stream = Readable.toWeb(fsSync.createReadStream(filePath, { start, end })) as ReadableStream;
+        return new NextResponse(stream, {
+          status: 206,
+          headers: {
+            'Content-Type': 'video/mp4',
+            'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(chunkLen),
+            'Content-Disposition': disposition,
+            'Cache-Control': 'no-store',
+          },
+        });
       }
     }
   }
 
-  const fullBuffer = await fs.readFile(filePath);
-  return new NextResponse(new Uint8Array(fullBuffer), {
+  const fullStream = Readable.toWeb(fsSync.createReadStream(filePath)) as ReadableStream;
+  return new NextResponse(fullStream, {
     status: 200,
     headers: {
       'Content-Type': 'video/mp4',
-      'Content-Length': String(fullBuffer.byteLength),
+      'Content-Length': String(totalSize),
       'Accept-Ranges': 'bytes',
       'Content-Disposition': disposition,
       'Cache-Control': 'no-store',

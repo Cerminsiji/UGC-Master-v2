@@ -295,9 +295,11 @@ def build_synthid_audio_filter_complex(
     voice_label: str = "[0:a]",
     out_label: str = "[aout]",
     job_profile: dict | None = None,
+    pad_target_dur: float = 0.0,
 ) -> str:
     p = job_profile or generate_organic_job_profile()
     atempo_val = round(1.04 / p["pitch_ratio"], 5)
+    apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
     return (
         f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_l']}[pL];"
         f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_r']}[pR];"
@@ -318,7 +320,7 @@ def build_synthid_audio_filter_complex(
         "aecho=0.95:0.92:7|13:0.022|0.012,"
         "extrastereo=m=1.12,"
         "acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,"
-        "apad=pad_dur=0.25[voice];"
+        f"{apad_filter}[voice];"
         f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
         f"alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS{out_label}"
     )
@@ -328,6 +330,7 @@ def build_safe_mode_audio_filter_complex(
     voice_label: str = "[0:a]",
     out_label: str = "[aout]",
     job_profile: dict | None = None,
+    pad_target_dur: float = 0.0,
 ) -> str:
     """
     Safe Mode Temporal-Locked Audio Filtergraph V 2.2:
@@ -335,6 +338,7 @@ def build_safe_mode_audio_filter_complex(
     """
     p = job_profile or generate_organic_job_profile()
     atempo_val = round(1.0 / p["pitch_ratio"], 5)
+    apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
     return (
         f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_l']}[pL];"
         f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_r']}[pR];"
@@ -355,7 +359,7 @@ def build_safe_mode_audio_filter_complex(
         "aecho=0.95:0.92:7|13:0.022|0.012,"
         "extrastereo=m=1.10,"
         "acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,"
-        "apad=pad_dur=0.25[voice];"
+        f"{apad_filter}[voice];"
         f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
         f"alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS{out_label}"
     )
@@ -366,17 +370,25 @@ def build_unified_audio_filter_complex(
     out_label: str = "[aout]",
     duration_sec: float = 0.0,
     job_profile: dict | None = None,
+    audio_duration_sec: float = 0.0,
+    pad_target_dur: float = 0.0,
 ) -> str:
     """
     Unified Anti-TTS Audio Filtergraph V 2.2:
     - Randomized per-job pink/brown/air-band mic thermal bed (zero 16kHz brickwall cutoff)
     - Nonlinear all-pass phase dispersion (aphaser) + dual-tap acoustic early reflections + 0.89 peak ceiling
-    - Aligned 1:1 with video trim & speed_pts cadence
+    - Aligned 1:1 with video trim & speed_pts cadence + padded to full video duration
     """
     p = job_profile or generate_organic_job_profile()
     pre_trim = max(0.0, round(p["trim_start"] - 0.02, 3))
-    atrim_prefix = f"atrim=start={pre_trim},asetpts=PTS-STARTPTS," if (duration_sec > 2.0 and pre_trim > 0) else "asetpts=PTS-STARTPTS,"
+    can_trim_audio = (
+        duration_sec > 2.0
+        and pre_trim > 0
+        and (audio_duration_sec <= 0.0 or audio_duration_sec > pre_trim + 0.15)
+    )
+    atrim_prefix = f"atrim=start={pre_trim},asetpts=PTS-STARTPTS," if can_trim_audio else "asetpts=PTS-STARTPTS,"
     atempo_val = round((1.0 / p["speed_pts"]) / p["pitch_ratio"], 5)
+    apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
     return (
         f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_l']}[pL];"
         f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_r']}[pR];"
@@ -397,7 +409,7 @@ def build_unified_audio_filter_complex(
         "aecho=0.95:0.92:7|13:0.022|0.012,"
         "extrastereo=m=1.12,"
         "acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,"
-        "apad=pad_dur=0.25[voice];"
+        f"{apad_filter}[voice];"
         f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
         f"alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS{out_label}"
     )
@@ -407,6 +419,7 @@ class ProgressTracker:
         self.progress_file = progress_file
         self.job_id = job_id
         self.last_write_ts = 0.0
+        self.max_percent = 4
         self.state = {
             "jobId": job_id,
             "stage": "probing",
@@ -423,7 +436,25 @@ class ProgressTracker:
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
 
+    def load_existing_if_present(self):
+        if not self.progress_file or not os.path.isfile(self.progress_file):
+            return
+        try:
+            with open(self.progress_file, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, dict):
+                self.state.update(existing)
+                self.max_percent = max(self.max_percent, int(existing.get("percent") or 0))
+        except Exception:
+            pass
+
     def update(self, force: bool = False, **kwargs):
+        if "percent" in kwargs and kwargs["percent"] is not None:
+            requested_pct = int(kwargs["percent"])
+            if requested_pct < self.max_percent and self.state.get("stage") != "failed":
+                kwargs["percent"] = self.max_percent
+            else:
+                self.max_percent = max(self.max_percent, requested_pct)
         self.state.update(kwargs)
         self.state["updatedAt"] = datetime.now(timezone.utc).isoformat()
         if not self.progress_file:
@@ -482,6 +513,7 @@ def _parse_fps(rate_str: str) -> float:
 def probe_stream_metrics(input_file: str) -> dict:
     info = {
         "has_audio": False,
+        "audio_duration_sec": 0.0,
         "codec": "h264",
         "width": 0,
         "height": 0,
@@ -510,6 +542,12 @@ def probe_stream_metrics(input_file: str) -> dict:
                 ctype = st.get("codec_type")
                 if ctype == "audio":
                     info["has_audio"] = True
+                    try:
+                        adur = float(st.get("duration") or 0.0)
+                        if adur > info["audio_duration_sec"]:
+                            info["audio_duration_sec"] = adur
+                    except Exception:
+                        pass
                 elif ctype == "video" and info["width"] == 0:
                     info["codec"] = str(st.get("codec_name") or "h264").lower()
                     w = int(st.get("width") or 0)
@@ -525,10 +563,10 @@ def probe_stream_metrics(input_file: str) -> dict:
                     elif info["duration_sec"] > 0:
                         info["total_frames"] = max(1, int(info["duration_sec"] * 30.0))
 
-            # Fast 3s pulldown duplicate probe when src_fps >= 28 (catches already-reencoded 24->30 pulldown inputs)
+            # Fast 2s pulldown duplicate probe when src_fps >= 28 (catches already-reencoded 24->30 pulldown inputs)
             if info["src_fps"] >= 28.0 and info["duration_sec"] >= 1.5:
                 try:
-                    scan_dur = min(3.5, max(1.5, info["duration_sec"] * 0.85))
+                    scan_dur = min(2.0, max(1.2, info["duration_sec"] * 0.75))
                     dp = subprocess.run(
                         [
                             FFMPEG_BIN, "-hide_banner", "-t", f"{scan_dur:.2f}",
@@ -536,7 +574,7 @@ def probe_stream_metrics(input_file: str) -> dict:
                             "-vf", "mpdecimate=hi=64*6:lo=64*3:frac=0.33,showinfo",
                             "-an", "-f", "null", "-"
                         ],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8
                     )
                     kept = dp.stderr.count("pts_time:")
                     expected_in_window = info["src_fps"] * scan_dur
@@ -638,7 +676,8 @@ def run_ffmpeg_streaming(
         proc.stdout.read()
     returncode = proc.wait()
     full_stderr = b"".join(stderr_chunks).decode("utf-8", errors="replace")
-    tracker.update(force=True, percent=end_pct)
+    if returncode == 0:
+        tracker.update(force=True, percent=end_pct)
     return returncode, full_stderr
 
 def extract_ffmpeg_telemetry(stderr_text: str, prefix: str) -> list:
@@ -923,6 +962,7 @@ def process_video(
 
     metrics = probe_stream_metrics(input_path)
     has_audio = metrics["has_audio"]
+    audio_duration_sec = metrics["audio_duration_sec"]
     codec_name = metrics["codec"]
     vid_w, vid_h = metrics["width"], metrics["height"]
     duration_sec = metrics["duration_sec"]
@@ -933,13 +973,17 @@ def process_video(
     target_w, target_h = _compute_target_dimensions(vid_w, vid_h, upscale_1080p and camera_profile != "neutral")
 
     if mode == "deep_synthid" and duration_sec > 0:
-        expected_frames = max(1, int(duration_sec * 0.961538 * 30.0))
+        expected_out_dur = max(0.2, duration_sec * 0.961538)
+        expected_frames = max(1, int(expected_out_dur * 30.0))
     elif mode in ("all_in_one", "unified") and duration_sec > 0:
         eff_dur = max(0.2, duration_sec - (job_profile["trim_start"] if duration_sec > 2.0 else 0.0))
-        expected_frames = max(1, int(eff_dur * job_profile["speed_pts"] * 30.0))
+        expected_out_dur = max(0.2, eff_dur * job_profile["speed_pts"])
+        expected_frames = max(1, int(expected_out_dur * 30.0))
     elif mode == "safe_mode" and duration_sec > 0:
-        expected_frames = max(1, int(duration_sec * 30.0))
+        expected_out_dur = max(0.2, duration_sec)
+        expected_frames = max(1, int(expected_out_dur * 30.0))
     else:
+        expected_out_dur = max(0.0, duration_sec)
         expected_frames = metrics["total_frames"]
 
     use_upscale = upscale_1080p and camera_profile != "neutral"
@@ -997,7 +1041,8 @@ def process_video(
         a_handler = "SoundHandle"
 
     cam_meta: list[str] = []
-    encode_preset = "superfast" if duration_sec > 25 else "veryfast"
+    encode_preset = "superfast" if duration_sec > 10 else "veryfast"
+    b_adapt_mode = "1" if duration_sec > 10 else "2"
     movflags_str = "+faststart"
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -1018,7 +1063,7 @@ def process_video(
         ]
 
         x264_params = (
-            "ref=2:bframes=2:b-adapt=2:b-pyramid=normal:weightp=1:psy-rd=1.10,0.12:aq-mode=2:"
+            f"ref=2:bframes=2:b-adapt={b_adapt_mode}:b-pyramid=normal:weightp=1:psy-rd=1.10,0.12:aq-mode=2:"
             "aq-strength=1.15:deblock=-2,-2:no-dct-decimate=1:nal-hrd=none:force-cfr=1:open-gop=0:"
             "scenecut=40:keyint=60:min-keyint=15"
         )
@@ -1032,35 +1077,8 @@ def process_video(
             logs.append(aio_msg)
             tracker.push_log(aio_msg)
 
-            aio_cmd = [
-                FFMPEG_BIN,
-                "-y",
-                "-threads", "0",
-                "-filter_threads", "0",
-                "-i", input_path,
-            ]
-
-            if has_audio:
-                audio_fc = build_unified_audio_filter_complex("[0:a]", "[aout]", duration_sec, job_profile)
-                full_fc = f"[0:v]{video_filter_str}[vout];{audio_fc}"
-                aio_cmd.extend([
-                    "-filter_complex", full_fc,
-                    "-map", "[vout]",
-                    "-map", "[aout]",
-                    "-c:a", "aac",
-                    "-b:a", "224k",
-                    "-ar", "48000",
-                    "-cutoff", "22500",
-                ])
-            else:
-                aio_cmd.extend([
-                    "-map", "0:v:0",
-                    "-vf", video_filter_str,
-                    "-an",
-                ])
-
             lang_tag = "und" if camera_profile == "neutral" else "eng"
-            aio_cmd.extend([
+            aio_common_tail = [
                 "-dn",
                 "-sn",
                 "-r", "30",
@@ -1087,35 +1105,93 @@ def process_video(
                 *cam_meta,
                 "-metadata:s:v:0", f"handler_name={v_handler}",
                 "-metadata:s:v:0", f"language={lang_tag}",
-            ])
-            if has_audio:
-                aio_cmd.extend([
-                    "-metadata:s:a:0", f"handler_name={a_handler}",
-                    "-metadata:s:a:0", f"language={lang_tag}",
+            ]
+
+            def build_aio_cmd(include_audio: bool) -> list[str]:
+                cmd = [
+                    FFMPEG_BIN,
+                    "-y",
+                    "-threads", "0",
+                    "-filter_threads", "0",
+                    "-i", input_path,
+                ]
+                if include_audio:
+                    audio_fc = build_unified_audio_filter_complex(
+                        "[0:a]", "[aout]", duration_sec, job_profile, audio_duration_sec, expected_out_dur
+                    )
+                    full_fc = f"[0:v]{video_filter_str}[vout];{audio_fc}"
+                    cmd.extend([
+                        "-filter_complex", full_fc,
+                        "-map", "[vout]",
+                        "-map", "[aout]",
+                        "-c:a", "aac",
+                        "-b:a", "224k",
+                        "-ar", "48000",
+                        "-cutoff", "22500",
+                    ])
+                else:
+                    cmd.extend([
+                        "-map", "0:v:0",
+                        "-vf", video_filter_str,
+                        "-an",
+                    ])
+                cmd.extend(aio_common_tail)
+                if include_audio:
+                    cmd.extend([
+                        "-metadata:s:a:0", f"handler_name={a_handler}",
+                        "-metadata:s:a:0", f"language={lang_tag}",
+                    ])
+                cmd.extend([
+                    "-brand", camera_brand,
+                    "-fflags", "+genpts+bitexact",
+                    "-flags:v", "+bitexact",
+                    "-flags:a", "+bitexact",
+                    "-movflags", movflags_str,
+                    "-shortest",
+                    output_path,
                 ])
+                return cmd
 
-            aio_cmd.extend([
-                "-brand", camera_brand,
-                "-fflags", "+genpts+bitexact",
-                "-flags:v", "+bitexact",
-                "-flags:a", "+bitexact",
-                "-movflags", movflags_str,
-                "-shortest",
-                output_path,
-            ])
+            rc_aio, err_aio = (1, "")
+            aio_ok = False
+            if has_audio:
+                rc_aio, err_aio = run_ffmpeg_streaming(
+                    build_aio_cmd(True),
+                    tracker,
+                    stage="pass1_reencode",
+                    stage_label="All-in-One V 2.0 (30fps Native + Sub-Pixel Drift + Gaussian Grain + Zero-Silence Audio)",
+                    start_pct=10,
+                    end_pct=94,
+                    expected_duration=expected_out_dur,
+                    expected_frames=expected_frames,
+                    prefix="ffmpeg-all-in-one",
+                )
+                aio_ok = rc_aio == 0 and os.path.isfile(output_path) and os.path.getsize(output_path) > 16384
+                if not aio_ok:
+                    try:
+                        if os.path.isfile(output_path):
+                            os.unlink(output_path)
+                    except Exception:
+                        pass
+                    fb_msg = "[AUDIO FALLBACK PYTHON] Stream audio tidak standar — mencoba ulang All-in-One mode video-only (-an)..."
+                    logs.append(fb_msg)
+                    tracker.push_log(fb_msg)
 
-            rc_aio, err_aio = run_ffmpeg_streaming(
-                aio_cmd,
-                tracker,
-                stage="pass1_reencode",
-                stage_label="All-in-One V 2.0 (30fps Native + Sub-Pixel Drift + Gaussian Grain + Zero-Silence Audio)",
-                start_pct=10,
-                end_pct=94,
-                expected_duration=max(0.2, (duration_sec - (job_profile["trim_start"] if duration_sec > 2.0 else 0.0)) * job_profile["speed_pts"]) if duration_sec > 0 else 0,
-                expected_frames=expected_frames,
-                prefix="ffmpeg-all-in-one",
-            )
-            if rc_aio != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) <= 16384:
+            if not aio_ok:
+                rc_aio, err_aio = run_ffmpeg_streaming(
+                    build_aio_cmd(False),
+                    tracker,
+                    stage="pass1_reencode",
+                    stage_label="All-in-One V 2.0 (Video-Only Resilient Fallback)",
+                    start_pct=10,
+                    end_pct=94,
+                    expected_duration=expected_out_dur,
+                    expected_frames=expected_frames,
+                    prefix="ffmpeg-all-in-one-v",
+                )
+                aio_ok = rc_aio == 0 and os.path.isfile(output_path) and os.path.getsize(output_path) > 16384
+
+            if not aio_ok:
                 err_msg = err_aio.splitlines()[-1] if err_aio else "All-in-One FFmpeg pipeline failed"
                 raise RuntimeError(f"FFmpeg All-in-One Pipeline gagal: {err_msg}")
 
@@ -1150,83 +1226,121 @@ def process_video(
 
                 pass1_bsf = "filter_units=remove_types=39|40" if codec_name in ("hevc", "h265") else "filter_units=remove_types=6"
 
-                pass1_cmd = [
-                    FFMPEG_BIN,
-                    "-y",
-                    "-threads", "0",
-                    "-filter_threads", "0",
-                    "-i", input_path,
-                ]
-
-                if has_audio:
-                    if mode == "unified":
-                        audio_fc = build_unified_audio_filter_complex("[0:a]", "[aout]", duration_sec, job_profile)
-                    elif mode == "safe_mode":
-                        audio_fc = build_safe_mode_audio_filter_complex("[0:a]", "[aout]", job_profile)
+                def build_pass1_cmd(include_audio: bool) -> list[str]:
+                    cmd = [
+                        FFMPEG_BIN,
+                        "-y",
+                        "-threads", "0",
+                        "-filter_threads", "0",
+                        "-i", input_path,
+                    ]
+                    if include_audio:
+                        if mode == "unified":
+                            audio_fc = build_unified_audio_filter_complex(
+                                "[0:a]", "[aout]", duration_sec, job_profile, audio_duration_sec, expected_out_dur
+                            )
+                        elif mode == "safe_mode":
+                            audio_fc = build_safe_mode_audio_filter_complex(
+                                "[0:a]", "[aout]", job_profile, expected_out_dur
+                            )
+                        else:
+                            audio_fc = build_synthid_audio_filter_complex(
+                                "[0:a]", "[aout]", job_profile, expected_out_dur
+                            )
+                        full_fc = f"[0:v]{video_filter_str}[vout];{audio_fc}"
+                        cmd.extend([
+                            "-filter_complex", full_fc,
+                            "-map", "[vout]",
+                            "-map", "[aout]",
+                            "-c:a", "aac",
+                            "-b:a", "224k",
+                            "-ar", "48000",
+                            "-cutoff", "22500",
+                        ])
                     else:
-                        audio_fc = build_synthid_audio_filter_complex("[0:a]", "[aout]", job_profile)
-                    full_fc = f"[0:v]{video_filter_str}[vout];{audio_fc}"
-                    pass1_cmd.extend([
-                        "-filter_complex", full_fc,
-                        "-map", "[vout]",
-                        "-map", "[aout]",
-                        "-c:a", "aac",
-                        "-b:a", "224k",
-                        "-ar", "48000",
-                        "-cutoff", "22500",
-                    ])
-                else:
-                    pass1_cmd.extend([
-                        "-map", "0:v:0",
-                        "-vf", video_filter_str,
-                        "-an",
-                    ])
+                        cmd.extend([
+                            "-map", "0:v:0",
+                            "-vf", video_filter_str,
+                            "-an",
+                        ])
 
-                pass1_cmd.extend([
-                    "-r", "30",
-                    "-fps_mode", "cfr",
-                    "-video_track_timescale", "90000",
-                    "-c:v", "libx264",
-                    "-preset", encode_preset,
-                    "-profile:v", "high",
-                    "-level", "4.1",
-                    "-crf", job_profile["crf"],
-                    "-maxrate", "14M",
-                    "-bufsize", "28M",
-                    "-bf", "2",
-                    "-pix_fmt", "yuv420p",
-                    *keyframe_flags,
-                    "-x264-params", x264_params,
-                    "-bsf:v", pass1_bsf,
-                    "-fflags", "+genpts+bitexact" if is_temporal_cfr else "+bitexact",
-                    "-flags:v", "+bitexact",
-                    "-flags:a", "+bitexact",
-                    "-map_metadata", "-1",
-                    "-map_chapters", "-1",
-                    "-shortest",
-                    pass1_path
-                ])
+                    cmd.extend([
+                        "-r", "30",
+                        "-fps_mode", "cfr",
+                        "-video_track_timescale", "90000",
+                        "-c:v", "libx264",
+                        "-preset", encode_preset,
+                        "-profile:v", "high",
+                        "-level", "4.1",
+                        "-crf", job_profile["crf"],
+                        "-maxrate", "14M",
+                        "-bufsize", "28M",
+                        "-bf", "2",
+                        "-pix_fmt", "yuv420p",
+                        *keyframe_flags,
+                        "-x264-params", x264_params,
+                        "-bsf:v", pass1_bsf,
+                        "-fflags", "+genpts+bitexact" if is_temporal_cfr else "+bitexact",
+                        "-flags:v", "+bitexact",
+                        "-flags:a", "+bitexact",
+                        "-map_metadata", "-1",
+                        "-map_chapters", "-1",
+                        "-shortest",
+                        pass1_path
+                    ])
+                    return cmd
 
-                rc1, err1 = run_ffmpeg_streaming(
-                    pass1_cmd,
-                    tracker,
-                    stage="pass1_reencode",
-                    stage_label=(
-                        "Pass 1/2 (Unified Pipeline): Temporal CFR Anti-Glitch + Deep Anti-SynthID"
-                        if mode == "unified" else
-                        "Pass 1/2 (Safe Mode): Strict Temporal CFR Frame Re-Encoding (Anti-Glitch)"
-                        if mode == "safe_mode" else
-                        "Pass 1/2: Audio-Visual Anti-AI Filtering & B-Frame Synthesis"
-                    ),
-                    start_pct=10,
-                    end_pct=82,
-                    expected_duration=(duration_sec if is_temporal_cfr else duration_sec * 0.961538) if duration_sec > 0 else 0,
-                    expected_frames=expected_frames,
-                    prefix="ffmpeg-unified" if mode == "unified" else ("ffmpeg-safemode" if mode == "safe_mode" else "ffmpeg-reencode"),
+                p1_label = (
+                    "Pass 1/2 (Unified Pipeline): Temporal CFR Anti-Glitch + Deep Anti-SynthID"
+                    if mode == "unified" else
+                    "Pass 1/2 (Safe Mode): Strict Temporal CFR Frame Re-Encoding (Anti-Glitch)"
+                    if mode == "safe_mode" else
+                    "Pass 1/2: Audio-Visual Anti-AI Filtering & B-Frame Synthesis"
                 )
-                if rc1 == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384:
+                p1_prefix = "ffmpeg-unified" if mode == "unified" else ("ffmpeg-safemode" if mode == "safe_mode" else "ffmpeg-reencode")
+
+                rc1, err1 = (1, "")
+                p1_ok = False
+                if has_audio:
+                    rc1, err1 = run_ffmpeg_streaming(
+                        build_pass1_cmd(True),
+                        tracker,
+                        stage="pass1_reencode",
+                        stage_label=p1_label,
+                        start_pct=10,
+                        end_pct=82,
+                        expected_duration=expected_out_dur,
+                        expected_frames=expected_frames,
+                        prefix=p1_prefix,
+                    )
+                    p1_ok = rc1 == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384
+                    if not p1_ok:
+                        try:
+                            if os.path.isfile(pass1_path):
+                                os.unlink(pass1_path)
+                        except Exception:
+                            pass
+                        fb_msg1 = "[AUDIO FALLBACK PYTHON] Audio stream tidak kompatibel — mencoba ulang Pass 1 mode video-only..."
+                        logs.append(fb_msg1)
+                        tracker.push_log(fb_msg1)
+
+                if not p1_ok:
+                    rc1, err1 = run_ffmpeg_streaming(
+                        build_pass1_cmd(False),
+                        tracker,
+                        stage="pass1_reencode",
+                        stage_label=f"{p1_label} (Video-Only)",
+                        start_pct=10,
+                        end_pct=82,
+                        expected_duration=expected_out_dur,
+                        expected_frames=expected_frames,
+                        prefix=p1_prefix,
+                    )
+                    p1_ok = rc1 == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384
+
+                if p1_ok:
                     source_for_pass2 = pass1_path
-                    t_lines = extract_ffmpeg_telemetry(err1, "ffmpeg-unified" if mode == "unified" else ("ffmpeg-safemode" if mode == "safe_mode" else "ffmpeg-reencode"))
+                    t_lines = extract_ffmpeg_telemetry(err1, p1_prefix)
                     logs.extend(t_lines)
                     done1_msg = (
                         "✓ [PASS 1/2 UNIFIED] Temporal CFR anti-glitch + Optik CMOS Anti-SynthID + Audio Rubberband/Pink Air selesai mulus (0% stutter)."
@@ -1389,6 +1503,7 @@ def main():
     parser.add_argument("--upscale-1080p", default="true", choices=["true", "false"])
     parser.add_argument("--progress-file", default=None, help="Optional JSON progress file path")
     parser.add_argument("--job-id", default="", help="Job identifier for progress reporting")
+    parser.add_argument("--defer-fail-to-caller", default="false", choices=["true", "false"])
 
     args = parser.parse_args()
 
@@ -1409,12 +1524,19 @@ def main():
     except Exception as e:
         if args.progress_file:
             tracker = ProgressTracker(args.progress_file, args.job_id)
-            tracker.update(
-                force=True,
-                stage="failed",
-                message=f"Gagal: {str(e)}",
-                error=str(e),
-            )
+            tracker.load_existing_if_present()
+            if args.defer_fail_to_caller == "true":
+                tracker.push_log(
+                    f"[PYTHON PIPELINE FALLBACK] {str(e)} — beralih ke fallback Node FFmpeg...",
+                    force=True,
+                )
+            else:
+                tracker.update(
+                    force=True,
+                    stage="failed",
+                    message=f"Gagal: {str(e)}",
+                    error=str(e),
+                )
         sys.stderr.write(f"Error: {str(e)}\n")
         print(json.dumps({"success": False, "error": str(e)}))
         sys.exit(1)

@@ -10,6 +10,7 @@ import {
   CleanerProgressState,
   CleanerStage,
   META_CLEANER_AUTO_CLEAN_MS,
+  META_CLEANER_UPLOAD_IDLE_MS,
   cleanupJobArtifacts,
   findUploadedFile,
   getProgressFilePath,
@@ -21,6 +22,7 @@ import {
   sweepExpiredMetaCleanerFiles,
   writeProgressAtomic,
   writeProgressAtomicSync,
+  writeUploadMeta,
 } from '@/lib/meta-cleaner-progress';
 import { resolveMediaBinary } from '@/lib/video-probe';
 
@@ -29,6 +31,13 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const execFileAsync = promisify(execFile);
+
+const globalForActiveJobs = globalThis as typeof globalThis & {
+  __metaCleanerActiveJobs?: Set<string>;
+};
+const activeJobsSet: Set<string> =
+  globalForActiveJobs.__metaCleanerActiveJobs ??
+  (globalForActiveJobs.__metaCleanerActiveJobs = new Set<string>());
 
 function resolveBinary(name: 'ffmpeg' | 'ffprobe'): string {
   const resolved = resolveMediaBinary(name);
@@ -142,7 +151,7 @@ async function runFfmpegWithProgress(
     if (progressCtx?.state.jobId) {
       progressCtx.state.stage = progressCtx.stage;
       progressCtx.state.message = progressCtx.stageLabel;
-      progressCtx.state.percent = progressCtx.startPct;
+      progressCtx.state.percent = Math.max(progressCtx.state.percent || 0, progressCtx.startPct);
       writeProgressAtomicSync(progressCtx.state);
     }
 
@@ -195,6 +204,7 @@ async function runFfmpegWithProgress(
         const pct = Math.min(
           progressCtx.endPct,
           Math.max(
+            progressCtx.state.percent || 0,
             progressCtx.startPct,
             Math.round(progressCtx.startPct + ratio * (progressCtx.endPct - progressCtx.startPct))
           )
@@ -217,11 +227,11 @@ async function runFfmpegWithProgress(
 
     proc.on('close', (code) => {
       clearTimeout(timer);
-      if (progressCtx?.state.jobId) {
-        progressCtx.state.percent = progressCtx.endPct;
-        writeProgressAtomicSync(progressCtx.state);
-      }
       if (code === 0) {
+        if (progressCtx?.state.jobId) {
+          progressCtx.state.percent = Math.max(progressCtx.state.percent || 0, progressCtx.endPct);
+          writeProgressAtomicSync(progressCtx.state);
+        }
         resolve({ stdout, stderr });
       } else {
         reject(new Error(`FFmpeg exited with code ${code}: ${stderr.split('\n').slice(-3).join(' ')}`));
@@ -244,7 +254,7 @@ async function runPythonCleaner(
   upscale1080p: boolean,
   jobId: string,
   progressFilePath?: string
-): Promise<{ success: boolean; output_path?: string; size_bytes?: number; logs: string[]; error?: string }> {
+): Promise<{ success: boolean; timedOut?: boolean; output_path?: string; size_bytes?: number; logs: string[]; error?: string }> {
   const pythonBin = 'python3';
   const scriptPath = resolvePythonScriptPath();
 
@@ -264,6 +274,8 @@ async function runPythonCleaner(
     cameraProfile,
     '--upscale-1080p',
     upscale1080p ? 'true' : 'false',
+    '--defer-fail-to-caller',
+    'true',
   ];
   if (progressFilePath) {
     args.push('--progress-file', progressFilePath, '--job-id', jobId);
@@ -282,10 +294,11 @@ async function runPythonCleaner(
       } catch {}
       resolve({
         success: false,
-        logs: ['[PYTHON TIMEOUT] Proses FFmpeg Python melebihi batas waktu 240 detik.'],
-        error: 'Python FFmpeg cleaner timeout',
+        timedOut: true,
+        logs: ['[PYTHON TIMEOUT] Proses FFmpeg Python melebihi batas waktu 480 detik.'],
+        error: 'Proses FFmpeg Python di server melebihi batas waktu (8 menit).',
       });
-    }, 240000);
+    }, 480000);
 
     proc.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8');
@@ -578,10 +591,13 @@ function buildUnifiedVideoFilter(
 function buildSynthIdAudioFilterComplex(
   voiceLabel = '[0:a]',
   outLabel = '[aout]',
-  jobProfile?: OrganicJobProfile
+  jobProfile?: OrganicJobProfile,
+  padTargetDur = 0
 ): string {
   const p = jobProfile || generateOrganicJobProfile();
   const atempoVal = (1.04 / p.pitchRatio).toFixed(5);
+  const apadFilter =
+    padTargetDur > 0.2 ? `apad=whole_dur=${Math.max(padTargetDur + 0.35, 1.0).toFixed(3)}` : 'apad=pad_dur=0.35';
   return [
     `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedL}[pL]`,
     `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedR}[pR]`,
@@ -591,7 +607,7 @@ function buildSynthIdAudioFilterComplex(
     '[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt]',
     '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
     '[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
-    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.12,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
+    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.12,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,${apadFilter}[voice]`,
     `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
@@ -599,10 +615,13 @@ function buildSynthIdAudioFilterComplex(
 function buildSafeModeAudioFilterComplex(
   voiceLabel = '[0:a]',
   outLabel = '[aout]',
-  jobProfile?: OrganicJobProfile
+  jobProfile?: OrganicJobProfile,
+  padTargetDur = 0
 ): string {
   const p = jobProfile || generateOrganicJobProfile();
   const atempoVal = (1.0 / p.pitchRatio).toFixed(5);
+  const apadFilter =
+    padTargetDur > 0.2 ? `apad=whole_dur=${Math.max(padTargetDur + 0.35, 1.0).toFixed(3)}` : 'apad=pad_dur=0.35';
   return [
     `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedL}[pL]`,
     `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedR}[pR]`,
@@ -612,7 +631,7 @@ function buildSafeModeAudioFilterComplex(
     '[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt]',
     '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
     '[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
-    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.10,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
+    `${voiceLabel}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.10,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,${apadFilter}[voice]`,
     `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
@@ -621,15 +640,18 @@ function buildUnifiedAudioFilterComplex(
   voiceLabel = '[0:a]',
   outLabel = '[aout]',
   durationSec = 0,
-  jobProfile?: OrganicJobProfile
+  jobProfile?: OrganicJobProfile,
+  audioDurationSec = 0,
+  padTargetDur = 0
 ): string {
   const p = jobProfile || generateOrganicJobProfile();
   const preTrim = Math.max(0, Number((p.trimStart - 0.02).toFixed(3)));
-  const atrimPrefix =
-    durationSec > 2.0 && preTrim > 0
-      ? `atrim=start=${preTrim},asetpts=PTS-STARTPTS,`
-      : 'asetpts=PTS-STARTPTS,';
+  const canTrimAudio =
+    durationSec > 2.0 && preTrim > 0 && (audioDurationSec <= 0 || audioDurationSec > preTrim + 0.15);
+  const atrimPrefix = canTrimAudio ? `atrim=start=${preTrim},asetpts=PTS-STARTPTS,` : 'asetpts=PTS-STARTPTS,';
   const atempoVal = ((1.0 / p.speedPts) / p.pitchRatio).toFixed(5);
+  const apadFilter =
+    padTargetDur > 0.2 ? `apad=whole_dur=${Math.max(padTargetDur + 0.35, 1.0).toFixed(3)}` : 'apad=pad_dur=0.35';
   return [
     `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedL}[pL]`,
     `anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed=${p.seedR}[pR]`,
@@ -639,7 +661,7 @@ function buildUnifiedAudioFilterComplex(
     '[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt]',
     '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
     '[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
-    `${voiceLabel}${atrimPrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.12,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,apad=pad_dur=0.25[voice]`,
+    `${voiceLabel}${atrimPrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=1.12,acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,${apadFilter}[voice]`,
     `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
@@ -993,6 +1015,7 @@ interface CleanerJobParams {
   activeJobId: string;
   uploadId?: string;
   keepInputPath?: boolean;
+  returnBuffer?: boolean;
   inputPath: string;
   intermediatePath: string;
   pass1Path: string;
@@ -1021,21 +1044,19 @@ interface CleanerJobResult {
   ttlSeconds: number;
 }
 
-async function persistCleanedResultForDownload(
-  jobId: string,
-  cleanedBuffer: Buffer,
-  uploadId?: string
-): Promise<{ downloadUrl: string; completedAt: string; expiresAt: string; ttlSeconds: number }> {
-  const resultPath = getResultFilePath(jobId);
-  await fs.writeFile(resultPath, cleanedBuffer);
-
+function scheduleAutoCleanTimer(jobId: string, uploadId?: string): {
+  downloadUrl: string;
+  completedAt: string;
+  expiresAt: string;
+  ttlSeconds: number;
+} {
   const now = Date.now();
   const completedAt = new Date(now).toISOString();
   const expiresAt = new Date(now + META_CLEANER_AUTO_CLEAN_MS).toISOString();
   const ttlSeconds = Math.round(META_CLEANER_AUTO_CLEAN_MS / 1000);
 
   if (uploadId) {
-    await setUploadAutoCleanDeadline(uploadId, META_CLEANER_AUTO_CLEAN_MS);
+    void setUploadAutoCleanDeadline(uploadId, META_CLEANER_AUTO_CLEAN_MS);
   }
 
   setTimeout(() => {
@@ -1053,11 +1074,37 @@ async function persistCleanedResultForDownload(
   };
 }
 
+async function persistCleanedResultForDownload(
+  jobId: string,
+  cleanedBuffer: Buffer,
+  uploadId?: string
+): Promise<{ downloadUrl: string; completedAt: string; expiresAt: string; ttlSeconds: number }> {
+  const resultPath = getResultFilePath(jobId);
+  await fs.writeFile(resultPath, cleanedBuffer);
+  return scheduleAutoCleanTimer(jobId, uploadId);
+}
+
+async function persistCleanedFileForDownload(
+  jobId: string,
+  sourcePath: string,
+  uploadId?: string
+): Promise<{ downloadUrl: string; completedAt: string; expiresAt: string; ttlSeconds: number }> {
+  const resultPath = getResultFilePath(jobId);
+  try {
+    await fs.rename(sourcePath, resultPath);
+  } catch {
+    await fs.copyFile(sourcePath, resultPath);
+    await fs.unlink(sourcePath).catch(() => {});
+  }
+  return scheduleAutoCleanTimer(jobId, uploadId);
+}
+
 async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobResult> {
   const {
     activeJobId,
     uploadId,
     keepInputPath,
+    returnBuffer = true,
     inputPath,
     intermediatePath,
     pass1Path,
@@ -1093,16 +1140,37 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         progressFilePath
       );
 
+      if (pyResult?.timedOut) {
+        throw new Error(
+          pyResult.error || 'Proses FFmpeg Python di server melebihi batas waktu.'
+        );
+      }
+
       if (pyResult?.success && fsSync.existsSync(outputPath)) {
         const statPy = await fs.stat(outputPath).catch(() => null);
         if (statPy && statPy.size > 16384) {
-          const rawCleanedBuffer = await fs.readFile(outputPath);
-          const cleanedBuffer = neutralizeContainerMetadataInPlace(rawCleanedBuffer);
-          const persisted = await persistCleanedResultForDownload(
-            activeJobId,
-            cleanedBuffer,
-            uploadId
-          );
+          let cleanedBuffer: Buffer = Buffer.alloc(0);
+          let finalSizeBytes = statPy.size;
+          let persisted: {
+            downloadUrl: string;
+            completedAt: string;
+            expiresAt: string;
+            ttlSeconds: number;
+          };
+
+          if (!returnBuffer && statPy.size > 25 * 1024 * 1024) {
+            // Python already ran sanitize_binary_boxes_in_place(output_path); move file without loading huge MP4 into Node heap
+            persisted = await persistCleanedFileForDownload(activeJobId, outputPath, uploadId);
+          } else {
+            const rawCleanedBuffer = await fs.readFile(outputPath);
+            cleanedBuffer = neutralizeContainerMetadataInPlace(rawCleanedBuffer);
+            finalSizeBytes = cleanedBuffer.byteLength;
+            persisted = await persistCleanedResultForDownload(
+              activeJobId,
+              cleanedBuffer,
+              uploadId
+            );
+          }
           const appliedFilter = 'strict_frame_by_frame_synthid_scrub + zero_sei';
 
           const existingPyProgress = await readProgressSafe(activeJobId);
@@ -1116,11 +1184,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             expiresAt: persisted.expiresAt,
             ttlSeconds: persisted.ttlSeconds,
             expired: false,
-            outputSizeBytes: cleanedBuffer.byteLength,
+            outputSizeBytes: finalSizeBytes,
             downloadUrl: persisted.downloadUrl,
             appliedFilter,
             logs: Array.isArray(pyResult.logs) ? pyResult.logs : existingPyProgress?.logs || [],
-            message: `Selesai 100% (${(cleanedBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB) • Auto-Clean server dalam 5 menit`,
+            message: `Selesai 100% (${(finalSizeBytes / (1024 * 1024)).toFixed(2)} MB) • Auto-Clean server dalam 5 menit`,
           });
 
           const encodedLogs = Buffer.from(
@@ -1145,16 +1213,29 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           };
         }
       }
-    } catch (pyErr) {
+    } catch (pyErr: any) {
+      if (String(pyErr?.message || '').includes('batas waktu')) {
+        throw pyErr;
+      }
       console.warn('Cloud Python FFmpeg cleaner initial attempt error:', pyErr);
     }
 
-    const serverLogs: string[] = [];
+    await fs.unlink(outputPath).catch(() => {});
+    const existingAfterPy = await readProgressSafe(activeJobId);
+    if (existingAfterPy) {
+      nodeProgressState.percent = Math.max(8, existingAfterPy.percent || 8);
+      nodeProgressState.logs = existingAfterPy.logs || [];
+      nodeProgressState.frame = existingAfterPy.frame || 0;
+      nodeProgressState.totalFrames = existingAfterPy.totalFrames || 0;
+    } else {
+      nodeProgressState.percent = Math.max(8, nodeProgressState.percent || 8);
+    }
+
+    const serverLogs: string[] = [...(nodeProgressState.logs || [])];
     let sourceForSeiStrip = inputPath;
     let synthIdScrubbed = false;
     nodeProgressState.engine = 'Cloud Node.js FFmpeg Wrapper';
     nodeProgressState.stage = 'probing';
-    nodeProgressState.percent = 8;
     nodeProgressState.message = 'Beralih ke Cloud Node.js FFmpeg Wrapper & ffprobe...';
     await writeProgressAtomic(nodeProgressState);
 
@@ -1168,31 +1249,42 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
     const jobProfile = generateOrganicJobProfile();
     let probedDurationSec = 0;
+    let probedAudioDurationSec = 0;
     let probedFrames = 0;
     let vidW = 0;
     let vidH = 0;
     let srcFps = 0;
     let pulldownDetected = false;
     let effectiveFps = 0;
+    let hasAudio = false;
     try {
       const { stdout: probeJsonOut } = await runFfprobe([
         '-v',
         'error',
-        '-select_streams',
-        'v:0',
-        '-show_entries',
-        'format=duration:stream=width,height,avg_frame_rate,r_frame_rate',
+        '-show_format',
+        '-show_streams',
         '-of',
         'json',
         inputPath,
       ]);
       const parsed = JSON.parse(probeJsonOut || '{}');
       probedDurationSec = Number(parsed?.format?.duration) || 0;
-      const vStream = Array.isArray(parsed?.streams) ? parsed.streams[0] : null;
-      if (vStream) {
-        vidW = Math.floor(Number(vStream.width || 0) / 2) * 2;
-        vidH = Math.floor(Number(vStream.height || 0) / 2) * 2;
-        srcFps = Number((parseFpsString(String(vStream.avg_frame_rate || '')) || parseFpsString(String(vStream.r_frame_rate || ''))).toFixed(3));
+      const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
+      for (const st of streams) {
+        if (st?.codec_type === 'audio') {
+          hasAudio = true;
+          const adur = Number(st?.duration) || 0;
+          if (adur > probedAudioDurationSec) probedAudioDurationSec = adur;
+        } else if (st?.codec_type === 'video' && vidW === 0) {
+          vidW = Math.floor(Number(st.width || 0) / 2) * 2;
+          vidH = Math.floor(Number(st.height || 0) / 2) * 2;
+          srcFps = Number(
+            (
+              parseFpsString(String(st.avg_frame_rate || '')) ||
+              parseFpsString(String(st.r_frame_rate || ''))
+            ).toFixed(3)
+          );
+        }
       }
       if (probedDurationSec > 0) {
         const effDur = Math.max(0.2, probedDurationSec - (probedDurationSec > 2.0 ? jobProfile.trimStart : 0));
@@ -1203,7 +1295,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       }
       if (srcFps >= 28.0 && probedDurationSec >= 1.5) {
         try {
-          const scanDur = Math.min(3.5, Math.max(1.5, probedDurationSec * 0.85));
+          const scanDur = Math.min(2.0, Math.max(1.2, probedDurationSec * 0.75));
           const dpRes = await runFfmpeg(
             [
               '-hide_banner',
@@ -1218,7 +1310,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
               'null',
               '-',
             ],
-            12000
+            10000
           ).catch((e: any) => ({ stdout: e?.stdout || '', stderr: e?.stderr || '' }));
           const keptMatches = String(dpRes.stderr || '').match(/pts_time:/g);
           const kept = keptMatches ? keptMatches.length : 0;
@@ -1229,23 +1321,6 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           }
         } catch {}
       }
-    } catch {}
-
-    // Detect if input has an audio stream (dual ffprobe + ffmpeg header detection)
-    let hasAudio = false;
-    try {
-      const { stdout: audioProbeOut } = await runFfprobe([
-        '-v',
-        'error',
-        '-select_streams',
-        'a',
-        '-show_entries',
-        'stream=codec_name',
-        '-of',
-        'default=noprint_wrappers=1:nokey=1',
-        inputPath,
-      ]);
-      hasAudio = Boolean(audioProbeOut && audioProbeOut.trim().length > 0);
     } catch {}
 
     if (!hasAudio) {
@@ -1280,8 +1355,9 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       'tv',
     ];
 
+    const bAdaptMode = probedDurationSec > 10 ? '1' : '2';
     const x264ParamString =
-      'ref=2:bframes=2:b-adapt=2:b-pyramid=normal:weightp=1:psy-rd=1.10,0.12:aq-mode=2:aq-strength=1.15:deblock=-2,-2:no-dct-decimate=1:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=60:min-keyint=15';
+      `ref=2:bframes=2:b-adapt=${bAdaptMode}:b-pyramid=normal:weightp=1:psy-rd=1.10,0.12:aq-mode=2:aq-strength=1.15:deblock=-2,-2:no-dct-decimate=1:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=60:min-keyint=15`;
 
     const movflagsStr = '+faststart';
 
@@ -1294,7 +1370,15 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           : isSafeMode
             ? buildSafeModeVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
             : buildSynthIdVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile);
-      const encodePreset = probedDurationSec > 25 ? 'superfast' : 'veryfast';
+      const encodePreset = probedDurationSec > 10 ? 'superfast' : 'veryfast';
+      const expectedOutDur =
+        probedDurationSec > 0
+          ? isAllInOne || cleanerMode === 'unified'
+            ? Math.max(0.2, (probedDurationSec - (probedDurationSec > 2.0 ? jobProfile.trimStart : 0)) * jobProfile.speedPts)
+            : isSafeMode
+              ? Math.max(0.2, probedDurationSec)
+              : Math.max(0.2, probedDurationSec * 0.961538)
+          : 0;
 
       if (isAllInOne) {
         serverLogs.push(
@@ -1302,7 +1386,14 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         );
 
         const langTag = cameraProfileField === 'neutral' ? 'und' : 'eng';
-        const fullAudioVisualFilterComplex = `[0:v]${dynamicSynthIdVideoFilter}[vout];${buildUnifiedAudioFilterComplex('[0:a]', '[aout]', probedDurationSec, jobProfile)}`;
+        const fullAudioVisualFilterComplex = `[0:v]${dynamicSynthIdVideoFilter}[vout];${buildUnifiedAudioFilterComplex(
+          '[0:a]',
+          '[aout]',
+          probedDurationSec,
+          jobProfile,
+          probedAudioDurationSec,
+          expectedOutDur
+        )}`;
         const aioCommonTail = [
           '-dn',
           '-sn',
@@ -1425,14 +1516,14 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         let aioDone = false;
         if (hasAudio) {
           try {
-            await runFfmpegWithProgress(aioWithAudioArgs, 180000, {
+            await runFfmpegWithProgress(aioWithAudioArgs, 420000, {
               state: nodeProgressState,
               stage: 'pass1_reencode',
               stageLabel: 'All-in-One V 2.0 (Node): 30fps Native + Sub-Pixel Drift + Gaussian Grain + Zero-Silence Audio',
               startPct: 10,
               endPct: 94,
-              expectedDuration: probedDurationSec * 0.988,
-              expectedFrames: Math.max(1, Math.round(probedDurationSec * 0.988 * 30.0)),
+              expectedDuration: expectedOutDur,
+              expectedFrames: Math.max(1, Math.round(expectedOutDur * 30.0)),
             });
             const statAio = await fs.stat(outputPath).catch(() => null);
             if (statAio && statAio.size > 16384) {
@@ -1446,6 +1537,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
               );
             }
           } catch (audioErr: any) {
+            await fs.unlink(outputPath).catch(() => {});
             serverLogs.push(
               `[AUDIO ENCODE INFO] Audio stream layout tidak standar, beralih ke video-only All-in-One: ${audioErr?.message?.split('\n')[0] || ''}`
             );
@@ -1454,14 +1546,14 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
         if (!aioDone) {
           try {
-            await runFfmpegWithProgress(aioVideoOnlyArgs, 180000, {
+            await runFfmpegWithProgress(aioVideoOnlyArgs, 420000, {
               state: nodeProgressState,
               stage: 'pass1_reencode',
               stageLabel: 'All-in-One Pipeline (Node): Safe CFR + Anti-SynthID + Zero-SEI (Video)',
               startPct: 10,
               endPct: 94,
-              expectedDuration: probedDurationSec,
-              expectedFrames: Math.max(1, Math.round(probedDurationSec * 29.97)),
+              expectedDuration: expectedOutDur || probedDurationSec,
+              expectedFrames: Math.max(1, Math.round((expectedOutDur || probedDurationSec) * 30.0)),
             });
             const statAioV = await fs.stat(outputPath).catch(() => null);
             if (statAioV && statAioV.size > 16384) {
@@ -1475,6 +1567,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
               );
             }
           } catch (vErr: any) {
+            await fs.unlink(outputPath).catch(() => {});
             serverLogs.push(
               `[ALL-IN-ONE FALLBACK] Beralih ke 2-pass remux: ${vErr?.message?.split('\n')[0] || 'Direct stream'}`
             );
@@ -1540,10 +1633,10 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
         const fullAudioVisualFilterComplex = `[0:v]${dynamicSynthIdVideoFilter}[vout];${
           cleanerMode === 'unified'
-            ? buildUnifiedAudioFilterComplex('[0:a]', '[aout]', probedDurationSec, jobProfile)
+            ? buildUnifiedAudioFilterComplex('[0:a]', '[aout]', probedDurationSec, jobProfile, probedAudioDurationSec, expectedOutDur)
             : isSafeMode
-              ? buildSafeModeAudioFilterComplex('[0:a]', '[aout]', jobProfile)
-              : buildSynthIdAudioFilterComplex('[0:a]', '[aout]', jobProfile)
+              ? buildSafeModeAudioFilterComplex('[0:a]', '[aout]', jobProfile, expectedOutDur)
+              : buildSynthIdAudioFilterComplex('[0:a]', '[aout]', jobProfile, expectedOutDur)
         }`;
 
         const pass1WithAudioArgs = [
@@ -1622,7 +1715,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             const ptsScale = isTemporalCfrMode ? jobProfile.speedPts : 0.961538;
             if (hasAudio) {
               try {
-                await runFfmpegWithProgress(pass1WithAudioArgs, 180000, {
+                await runFfmpegWithProgress(pass1WithAudioArgs, 420000, {
                   state: nodeProgressState,
                   stage: 'pass1_reencode',
                   stageLabel:
@@ -1633,8 +1726,8 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
                         : 'Pass 1/2 (Node FFmpeg V 2.0): Audio-Visual Anti-AI Filtering',
                   startPct: 10,
                   endPct: 82,
-                  expectedDuration: probedDurationSec * ptsScale,
-                  expectedFrames: Math.max(1, Math.round(probedDurationSec * ptsScale * 30.0)),
+                  expectedDuration: expectedOutDur || probedDurationSec * ptsScale,
+                  expectedFrames: Math.max(1, Math.round((expectedOutDur || probedDurationSec * ptsScale) * 30.0)),
                 });
             const stat1 = await fs.stat(pass1Path).catch(() => null);
             if (stat1 && stat1.size > 16384) {
@@ -1650,6 +1743,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
               );
             }
           } catch (audioErr: any) {
+            await fs.unlink(pass1Path).catch(() => {});
             serverLogs.push(
               `[AUDIO ENCODE INFO] Audio stream layout tidak standar, beralih ke video-only re-encode: ${audioErr?.message?.split('\n')[0] || ''}`
             );
@@ -1658,7 +1752,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
         if (!reencodeDone) {
           try {
-            await runFfmpegWithProgress(pass1VideoOnlyArgs, 180000, {
+            await runFfmpegWithProgress(pass1VideoOnlyArgs, 420000, {
               state: nodeProgressState,
               stage: 'pass1_reencode',
               stageLabel:
@@ -1669,8 +1763,8 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
                     : 'Pass 1/2 (Node FFmpeg): Filtering Frame-by-Frame Video-Only',
               startPct: 10,
               endPct: 82,
-              expectedDuration: probedDurationSec * ptsScale,
-              expectedFrames: Math.max(1, Math.round(probedDurationSec * ptsScale * 29.97)),
+              expectedDuration: expectedOutDur || probedDurationSec * ptsScale,
+              expectedFrames: Math.max(1, Math.round((expectedOutDur || probedDurationSec * ptsScale) * 30.0)),
             });
             const stat1v = await fs.stat(pass1Path).catch(() => null);
             if (stat1v && stat1v.size > 16384) {
@@ -1681,6 +1775,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
               );
             }
           } catch (vErr: any) {
+            await fs.unlink(pass1Path).catch(() => {});
             serverLogs.push(
               `[RE-ENCODE INFO] Melanjutkan direct remux: ${vErr?.message?.split('\n')[0] || 'Direct stream'}`
             );
@@ -1742,7 +1837,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-1',
           pass1Path,
         ];
-        await runFfmpegWithProgress(keyframeArgs, 180000, {
+        await runFfmpegWithProgress(keyframeArgs, 420000, {
           state: nodeProgressState,
           stage: 'pass1_reencode',
           stageLabel: 'Pass 1/2 (Node FFmpeg): Menyuntikkan IDR Keyframes & B-Frames',
@@ -1836,7 +1931,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           : `-bsf:v ${dynamicBsfArg} -fflags +bitexact`;
 
       try {
-        const { stderr } = await runFfmpegWithProgress(primaryArgs, 60000, {
+        const { stderr } = await runFfmpegWithProgress(primaryArgs, 120000, {
           state: nodeProgressState,
           stage: 'pass2_remux',
           stageLabel: 'Pass 2/2 (Node FFmpeg): Zero-SEI Remux & Hardware OEM Stamping',
@@ -1865,6 +1960,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           }
         }
       } catch (err: any) {
+        await fs.unlink(outputPath).catch(() => {});
         serverLogs.push(
           `[SERVER FFMPEG] H.264 filter_units=remove_types=6 fallback check: ${err?.message?.split('\n')[0] || 'Non-H.264 codec'}`
         );
@@ -1909,29 +2005,43 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           outputPath,
         ]);
 
-        await runFfmpeg(fallbackArgs, 60000);
+        await runFfmpeg(fallbackArgs, 120000);
         appliedFilter = '-c copy -dn -sn -map_metadata -1 -fflags +bitexact';
       }
     }
 
-    const rawCleanedBuffer = await fs.readFile(outputPath);
-
-    if (rawCleanedBuffer.byteLength < 16384) {
+    const outStat = await fs.stat(outputPath).catch(() => null);
+    if (!outStat || outStat.size < 16384) {
       throw new Error('Output video terlalu kecil atau gagal diremux.');
     }
 
     // Neutralize any residual udta, meta, ilst, or uuid boxes created by FFmpeg in-place into safe free padding
     nodeProgressState.stage = 'binary_sanitize';
-    nodeProgressState.percent = 97;
+    nodeProgressState.percent = Math.max(nodeProgressState.percent || 0, 97);
     nodeProgressState.message = 'Eksisi box C2PA/UUID & finalisasi container MP4...';
     await writeProgressAtomic(nodeProgressState);
 
-    const cleanedBuffer = neutralizeContainerMetadataInPlace(rawCleanedBuffer);
-    const persisted = await persistCleanedResultForDownload(
-      activeJobId,
-      cleanedBuffer,
-      uploadId
-    );
+    let cleanedBuffer: Buffer = Buffer.alloc(0);
+    let finalSizeBytes = outStat.size;
+    let persisted: {
+      downloadUrl: string;
+      completedAt: string;
+      expiresAt: string;
+      ttlSeconds: number;
+    };
+
+    if (!returnBuffer && outStat.size > 25 * 1024 * 1024) {
+      persisted = await persistCleanedFileForDownload(activeJobId, outputPath, uploadId);
+    } else {
+      const rawCleanedBuffer = await fs.readFile(outputPath);
+      cleanedBuffer = neutralizeContainerMetadataInPlace(rawCleanedBuffer);
+      finalSizeBytes = cleanedBuffer.byteLength;
+      persisted = await persistCleanedResultForDownload(
+        activeJobId,
+        cleanedBuffer,
+        uploadId
+      );
+    }
 
     nodeProgressState.uploadId = uploadId;
     nodeProgressState.stage = 'completed';
@@ -1941,11 +2051,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     nodeProgressState.expiresAt = persisted.expiresAt;
     nodeProgressState.ttlSeconds = persisted.ttlSeconds;
     nodeProgressState.expired = false;
-    nodeProgressState.outputSizeBytes = cleanedBuffer.byteLength;
+    nodeProgressState.outputSizeBytes = finalSizeBytes;
     nodeProgressState.downloadUrl = persisted.downloadUrl;
     nodeProgressState.appliedFilter = appliedFilter;
     nodeProgressState.logs = serverLogs;
-    nodeProgressState.message = `Selesai 100% (${(cleanedBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB) • Auto-Clean server dalam 5 menit`;
+    nodeProgressState.message = `Selesai 100% (${(finalSizeBytes / (1024 * 1024)).toFixed(2)} MB) • Auto-Clean server dalam 5 menit`;
     await writeProgressAtomic(nodeProgressState);
 
     const encodedLogs = Buffer.from(
@@ -2104,6 +2214,12 @@ export async function POST(req: NextRequest) {
       originalName = uploaded.filename || 'input.mp4';
       asyncMode = true;
 
+      // Refresh upload TTL to 30m so sweepExpiredMetaCleanerFiles never deletes input while job encodes
+      await writeUploadMeta({
+        ...uploaded,
+        expiresAt: new Date(Date.now() + META_CLEANER_UPLOAD_IDLE_MS).toISOString(),
+      });
+
       const modeField = body?.mode;
       if (modeField === 'remux_only') cleanerMode = 'remux_only';
       else if (modeField === 'safe_mode') cleanerMode = 'safe_mode';
@@ -2193,6 +2309,46 @@ export async function POST(req: NextRequest) {
     }
 
     progressFilePath = getProgressFilePath(activeJobId);
+
+    // Deduplicate concurrent/retried async POST requests for the exact same jobId so FFmpeg never restarts at 4%
+    if (asyncMode) {
+      const existingJob = await readProgressSafe(activeJobId);
+      const existingAgeMs = existingJob?.updatedAt
+        ? Math.max(0, Date.now() - Date.parse(existingJob.updatedAt))
+        : Infinity;
+      const alreadyActiveOnDisk =
+        Boolean(existingJob) &&
+        existingJob?.stage !== 'failed' &&
+        !existingJob?.expired &&
+        (existingJob?.stage === 'completed' ||
+          Boolean(existingJob?.resultReady) ||
+          existingAgeMs < 180_000);
+
+      if (activeJobsSet.has(activeJobId) || alreadyActiveOnDisk) {
+        if (!keepInputPath) {
+          await fs.unlink(inputPath).catch(() => {});
+        }
+        return NextResponse.json(
+          {
+            success: true,
+            accepted: true,
+            deduplicated: true,
+            jobId: activeJobId,
+            uploadId: uploadId || existingJob?.uploadId || null,
+            ttlSeconds: Math.round(META_CLEANER_AUTO_CLEAN_MS / 1000),
+            downloadUrl: `/api/meta-cleaner/download?jobId=${encodeURIComponent(activeJobId)}`,
+          },
+          {
+            status: 202,
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
+      }
+      activeJobsSet.add(activeJobId);
+    }
+
     const initialProgressState: CleanerProgressState = {
       jobId: activeJobId,
       uploadId,
@@ -2216,6 +2372,7 @@ export async function POST(req: NextRequest) {
       activeJobId,
       uploadId,
       keepInputPath,
+      returnBuffer: !asyncMode,
       inputPath,
       intermediatePath,
       pass1Path,
@@ -2235,9 +2392,13 @@ export async function POST(req: NextRequest) {
     };
 
     if (asyncMode) {
-      void processCleanerJob(jobParams).catch((bgErr) => {
-        console.error('Background MetaCleaner job error:', bgErr);
-      });
+      void processCleanerJob(jobParams)
+        .catch((bgErr) => {
+          console.error('Background MetaCleaner job error:', bgErr);
+        })
+        .finally(() => {
+          activeJobsSet.delete(activeJobId);
+        });
 
       return NextResponse.json(
         {

@@ -122,6 +122,26 @@ async function reconcileStateWithDisk(jobId: string): Promise<{
   const updatedMs = Date.parse(state.updatedAt || '');
   const ageMs = Number.isFinite(updatedMs) ? Math.max(0, now - updatedMs) : 0;
 
+  // Detect crashed/OOM-killed worker so polling UI never spins forever on a dead job
+  const isActiveStage =
+    state.stage === 'queued' ||
+    state.stage === 'probing' ||
+    state.stage === 'pass1_reencode' ||
+    state.stage === 'pass2_remux' ||
+    state.stage === 'binary_sanitize';
+  if (!resultReady && isActiveStage && ageMs > 180_000) {
+    state = {
+      ...state,
+      stage: 'failed',
+      error: 'Worker server berhenti merespons (>3 menit tanpa update progres).',
+      message:
+        'Gagal: Proses FFmpeg di server terhenti di tengah jalan (timeout/memori). Silakan coba ulang.',
+      updatedAt: new Date().toISOString(),
+    };
+    await writeProgressAtomic(state);
+    return { state, resultReady: false, ageMs };
+  }
+
   return { state, resultReady, ageMs };
 }
 
