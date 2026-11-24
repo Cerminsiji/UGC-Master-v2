@@ -15,6 +15,7 @@ import json
 import argparse
 import tempfile
 import random
+import threading
 from datetime import datetime, timezone
 
 def _map_node_arch(machine: str) -> str:
@@ -291,38 +292,58 @@ def build_unified_video_filter(
     )
 
 
+def _build_organic_room_and_voice_chain(
+    voice_prefix: str,
+    out_label: str,
+    p: dict,
+    atempo_val: float,
+    apad_filter: str,
+    extrastereo_m: float = 1.18,
+    speech_gain_db: float = 0.0,
+) -> str:
+    gain_step = f"volume={speech_gain_db:.2f}dB," if abs(speech_gain_db) >= 0.4 else ""
+    return (
+        f"anoisesrc=color=pink:amplitude=0.0017:sample_rate=48000:seed={p['seed_l']}[pL];"
+        f"anoisesrc=color=pink:amplitude=0.0017:sample_rate=48000:seed={p['seed_r']}[pR];"
+        f"anoisesrc=color=brown:amplitude=0.0013:sample_rate=48000:seed={p['seed_b']}[bRoom];"
+        f"anoisesrc=color=white:amplitude=0.0155:sample_rate=48000:seed={p['seed_air']}[wAir];"
+        "[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt];"
+        "[wAir]highpass=f=15800,lowpass=f=20800,pan=stereo|c0=0.9*c0|c1=0.8*c0,adelay=0|7[airSt];"
+        "[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt];"
+        "[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room];"
+        f"{voice_prefix}aresample=48000:async=1:first_pts=0,"
+        "aformat=channel_layouts=stereo,"
+        f"{gain_step}"
+        f"asetrate=48000*{p['pitch_ratio']},aresample=48000,atempo={atempo_val},"
+        "highpass=f=75,"
+        "equalizer=f=210:t=q:w=1.0:g=0.9,"
+        "equalizer=f=3100:t=q:w=1.4:g=-0.7,"
+        "aexciter=level_in=1:level_out=1:amount=1.40:drive=2.5:blend=0:freq=8500:ceil=19900,"
+        "aphaser=in_gain=0.85:out_gain=0.85:delay=2.4:decay=0.35:speed=0.7:type=t,"
+        "asplit=2[vDry][vRef];"
+        "[vRef]highpass=f=420,lowpass=f=7800,pan=stereo|c0=0.15*c0|c1=-0.15*c1,adelay=0|11[vSide];"
+        "[vDry][vSide]amix=inputs=2:duration=first:normalize=0,"
+        "aecho=0.95:0.92:7|13:0.022|0.012,"
+        f"extrastereo=m={extrastereo_m},"
+        "acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,"
+        f"{apad_filter}[voice];"
+        f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+        f"alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS{out_label}"
+    )
+
+
 def build_synthid_audio_filter_complex(
     voice_label: str = "[0:a]",
     out_label: str = "[aout]",
     job_profile: dict | None = None,
     pad_target_dur: float = 0.0,
+    speech_gain_db: float = 0.0,
 ) -> str:
     p = job_profile or generate_organic_job_profile()
     atempo_val = round(1.04 / p["pitch_ratio"], 5)
     apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
-    return (
-        f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_l']}[pL];"
-        f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_r']}[pR];"
-        f"anoisesrc=color=brown:amplitude=0.0015:sample_rate=48000:seed={p['seed_b']}[bRoom];"
-        f"anoisesrc=color=white:amplitude=0.0114:sample_rate=48000:seed={p['seed_air']}[wAir];"
-        "[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt];"
-        "[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt];"
-        "[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt];"
-        "[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room];"
-        f"{voice_label}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,"
-        "aformat=channel_layouts=stereo,"
-        f"asetrate=48000*{p['pitch_ratio']},aresample=48000,atempo={atempo_val},"
-        "highpass=f=75,"
-        "equalizer=f=210:t=q:w=1.0:g=0.9,"
-        "equalizer=f=3100:t=q:w=1.4:g=-0.7,"
-        "aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,"
-        "aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,"
-        "aecho=0.95:0.92:7|13:0.022|0.012,"
-        "extrastereo=m=1.12,"
-        "acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,"
-        f"{apad_filter}[voice];"
-        f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-        f"alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS{out_label}"
+    return _build_organic_room_and_voice_chain(
+        f"{voice_label}asetpts=PTS-STARTPTS,", out_label, p, atempo_val, apad_filter, 1.18, speech_gain_db
     )
 
 
@@ -331,37 +352,17 @@ def build_safe_mode_audio_filter_complex(
     out_label: str = "[aout]",
     job_profile: dict | None = None,
     pad_target_dur: float = 0.0,
+    speech_gain_db: float = 0.0,
 ) -> str:
     """
-    Safe Mode Temporal-Locked Audio Filtergraph V 2.2:
-    Randomized room-tone + 17-20.8kHz thermal mic air seeds + phase/early-reflection dispersion + 0.89 anti-clipping limiter.
+    Safe Mode Temporal-Locked Audio Filtergraph V 2.3:
+    True stereo room reflection + 15.8-20.8kHz thermal mic air + phase dispersion + 0.89 anti-clipping limiter.
     """
     p = job_profile or generate_organic_job_profile()
     atempo_val = round(1.0 / p["pitch_ratio"], 5)
     apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
-    return (
-        f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_l']}[pL];"
-        f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_r']}[pR];"
-        f"anoisesrc=color=brown:amplitude=0.0015:sample_rate=48000:seed={p['seed_b']}[bRoom];"
-        f"anoisesrc=color=white:amplitude=0.0114:sample_rate=48000:seed={p['seed_air']}[wAir];"
-        "[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt];"
-        "[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt];"
-        "[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt];"
-        "[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room];"
-        f"{voice_label}asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,"
-        "aformat=channel_layouts=stereo,"
-        f"asetrate=48000*{p['pitch_ratio']},aresample=48000,atempo={atempo_val},"
-        "highpass=f=75,"
-        "equalizer=f=210:t=q:w=1.0:g=0.9,"
-        "equalizer=f=3100:t=q:w=1.4:g=-0.7,"
-        "aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,"
-        "aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,"
-        "aecho=0.95:0.92:7|13:0.022|0.012,"
-        "extrastereo=m=1.10,"
-        "acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,"
-        f"{apad_filter}[voice];"
-        f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-        f"alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS{out_label}"
+    return _build_organic_room_and_voice_chain(
+        f"{voice_label}asetpts=PTS-STARTPTS,", out_label, p, atempo_val, apad_filter, 1.15, speech_gain_db
     )
 
 
@@ -372,12 +373,13 @@ def build_unified_audio_filter_complex(
     job_profile: dict | None = None,
     audio_duration_sec: float = 0.0,
     pad_target_dur: float = 0.0,
+    speech_gain_db: float = 0.0,
 ) -> str:
     """
-    Unified Anti-TTS Audio Filtergraph V 2.2:
+    Unified Anti-TTS Audio Filtergraph V 2.3:
+    - Normalized speech bed + true L/R acoustic room reflection (zero pseudo-stereo mono duplicate)
     - Randomized per-job pink/brown/air-band mic thermal bed (zero 16kHz brickwall cutoff)
-    - Nonlinear all-pass phase dispersion (aphaser) + dual-tap acoustic early reflections + 0.89 peak ceiling
-    - Aligned 1:1 with video trim & speed_pts cadence + padded to full video duration
+    - Nonlinear all-pass phase dispersion (aphaser) + dual-tap early reflections + 0.89 peak ceiling
     """
     p = job_profile or generate_organic_job_profile()
     pre_trim = max(0.0, round(p["trim_start"] - 0.02, 3))
@@ -389,29 +391,8 @@ def build_unified_audio_filter_complex(
     atrim_prefix = f"atrim=start={pre_trim},asetpts=PTS-STARTPTS," if can_trim_audio else "asetpts=PTS-STARTPTS,"
     atempo_val = round((1.0 / p["speed_pts"]) / p["pitch_ratio"], 5)
     apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
-    return (
-        f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_l']}[pL];"
-        f"anoisesrc=color=pink:amplitude=0.0022:sample_rate=48000:seed={p['seed_r']}[pR];"
-        f"anoisesrc=color=brown:amplitude=0.0015:sample_rate=48000:seed={p['seed_b']}[bRoom];"
-        f"anoisesrc=color=white:amplitude=0.0114:sample_rate=48000:seed={p['seed_air']}[wAir];"
-        "[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt];"
-        "[wAir]highpass=f=17200,highpass=f=17200,lowpass=f=20800,pan=stereo|c0=c0|c1=c0,adelay=0|7[airSt];"
-        "[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt];"
-        "[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room];"
-        f"{voice_label}{atrim_prefix}aresample=48000:async=1:first_pts=0,"
-        "aformat=channel_layouts=stereo,"
-        f"asetrate=48000*{p['pitch_ratio']},aresample=48000,atempo={atempo_val},"
-        "highpass=f=75,"
-        "equalizer=f=210:t=q:w=1.0:g=0.9,"
-        "equalizer=f=3100:t=q:w=1.4:g=-0.7,"
-        "aexciter=level_in=1:level_out=1:amount=1.10:drive=2.2:blend=0:freq=9000:ceil=19900,"
-        "aphaser=in_gain=0.72:out_gain=0.72:delay=2.4:decay=0.35:speed=0.7:type=t,"
-        "aecho=0.95:0.92:7|13:0.022|0.012,"
-        "extrastereo=m=1.12,"
-        "acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,"
-        f"{apad_filter}[voice];"
-        f"[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-        f"alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS{out_label}"
+    return _build_organic_room_and_voice_chain(
+        f"{voice_label}{atrim_prefix}", out_label, p, atempo_val, apad_filter, 1.18, speech_gain_db
     )
 
 class ProgressTracker:
@@ -420,6 +401,7 @@ class ProgressTracker:
         self.job_id = job_id
         self.last_write_ts = 0.0
         self.max_percent = 4
+        self._lock = threading.Lock()
         self.state = {
             "jobId": job_id,
             "stage": "probing",
@@ -440,46 +422,49 @@ class ProgressTracker:
         if not self.progress_file or not os.path.isfile(self.progress_file):
             return
         try:
-            with open(self.progress_file, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-            if isinstance(existing, dict):
-                self.state.update(existing)
-                self.max_percent = max(self.max_percent, int(existing.get("percent") or 0))
+            with self._lock:
+                with open(self.progress_file, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                if isinstance(existing, dict):
+                    self.state.update(existing)
+                    self.max_percent = max(self.max_percent, int(existing.get("percent") or 0))
         except Exception:
             pass
 
     def update(self, force: bool = False, **kwargs):
-        if "percent" in kwargs and kwargs["percent"] is not None:
-            requested_pct = int(kwargs["percent"])
-            if requested_pct < self.max_percent and self.state.get("stage") != "failed":
-                kwargs["percent"] = self.max_percent
-            else:
-                self.max_percent = max(self.max_percent, requested_pct)
-        self.state.update(kwargs)
-        self.state["updatedAt"] = datetime.now(timezone.utc).isoformat()
-        if not self.progress_file:
-            return
-        now = time.monotonic()
-        if not force and (now - self.last_write_ts) < 0.22:
-            return
-        self.last_write_ts = now
-        tmp_path = f"{self.progress_file}.tmp.{os.getpid()}"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(self.state, f)
-            os.replace(tmp_path, self.progress_file)
-        except Exception:
+        with self._lock:
+            if "percent" in kwargs and kwargs["percent"] is not None:
+                requested_pct = int(kwargs["percent"])
+                if requested_pct < self.max_percent and self.state.get("stage") != "failed":
+                    kwargs["percent"] = self.max_percent
+                else:
+                    self.max_percent = max(self.max_percent, requested_pct)
+            self.state.update(kwargs)
+            self.state["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            if not self.progress_file:
+                return
+            now = time.monotonic()
+            if not force and (now - self.last_write_ts) < 0.20:
+                return
+            self.last_write_ts = now
+            tmp_path = f"{self.progress_file}.tmp.{os.getpid()}.{threading.get_ident()}"
             try:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(self.state, f)
+                os.replace(tmp_path, self.progress_file)
             except Exception:
-                pass
+                try:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                except Exception:
+                    pass
 
     def push_log(self, msg: str, force: bool = True):
-        logs = self.state.get("logs", [])
-        if not logs or logs[-1] != msg:
-            logs.append(msg)
-            self.state["logs"] = logs[-24:]
+        with self._lock:
+            logs = self.state.get("logs", [])
+            if not logs or logs[-1] != msg:
+                logs.append(msg)
+                self.state["logs"] = logs[-24:]
         self.update(force=force)
 
 def parse_time_to_sec(time_str: str) -> float:
@@ -514,6 +499,7 @@ def probe_stream_metrics(input_file: str) -> dict:
     info = {
         "has_audio": False,
         "audio_duration_sec": 0.0,
+        "speech_gain_db": 0.0,
         "codec": "h264",
         "width": 0,
         "height": 0,
@@ -563,6 +549,20 @@ def probe_stream_metrics(input_file: str) -> dict:
                     elif info["duration_sec"] > 0:
                         info["total_frames"] = max(1, int(info["duration_sec"] * 30.0))
 
+            if info["has_audio"]:
+                try:
+                    vd = subprocess.run(
+                        [FFMPEG_BIN, "-hide_banner", "-t", "8", "-i", input_file, "-vn", "-af", "volumedetect", "-f", "null", "-"],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6
+                    )
+                    vm = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", vd.stderr)
+                    if vm:
+                        mean_db = float(vm.group(1))
+                        if -45.0 <= mean_db <= -3.0:
+                            info["speech_gain_db"] = round(max(-8.0, min(18.0, -20.5 - mean_db)), 2)
+                except Exception:
+                    pass
+
             # Fast 2s pulldown duplicate probe when src_fps >= 28 (catches already-reencoded 24->30 pulldown inputs)
             if info["src_fps"] >= 28.0 and info["duration_sec"] >= 1.5:
                 try:
@@ -596,6 +596,14 @@ def probe_stream_metrics(input_file: str) -> dict:
         pass
     return info
 
+def _with_stats_period(cmd: list[str]) -> list[str]:
+    if "-stats_period" in cmd:
+        return cmd
+    if len(cmd) >= 2 and cmd[1] == "-y":
+        return [cmd[0], "-y", "-stats_period", "0.25", *cmd[2:]]
+    return [cmd[0], "-stats_period", "0.25", *cmd[1:]]
+
+
 def run_ffmpeg_streaming(
     cmd: list[str],
     tracker: ProgressTracker,
@@ -607,7 +615,7 @@ def run_ffmpeg_streaming(
     expected_frames: int,
     prefix: str,
 ) -> tuple[int, str]:
-    """Run FFmpeg via Popen, streaming stderr telemetry cleanly into ProgressTracker."""
+    """Run FFmpeg via Popen, streaming stderr telemetry + anti-stall lookahead/remux heartbeat into ProgressTracker."""
     tracker.update(
         force=True,
         stage=stage,
@@ -615,8 +623,9 @@ def run_ffmpeg_streaming(
         percent=start_pct,
     )
 
+    final_cmd = _with_stats_period(cmd)
     proc = subprocess.Popen(
-        cmd,
+        final_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=0,
@@ -629,52 +638,95 @@ def run_ffmpeg_streaming(
     time_re = re.compile(r"time=\s*(\d+:\d+:\d+(?:\.\d+)?)")
     speed_re = re.compile(r"speed=\s*([^\s]+)")
 
-    while True:
-        byte = proc.stderr.read(1) if proc.stderr else b""
-        if not byte:
-            break
-        stderr_chunks.append(byte)
-        if byte in (b"\r", b"\n"):
-            line = line_buf.decode("utf-8", errors="replace").strip()
-            line_buf = b""
-            if not line:
+    last_telemetry_ts = [time.monotonic()]
+    stop_heartbeat = threading.Event()
+
+    def _heartbeat_loop():
+        while not stop_heartbeat.wait(0.65):
+            if proc.poll() is not None:
+                break
+            idle_sec = time.monotonic() - last_telemetry_ts[0]
+            if idle_sec < 0.75:
                 continue
-
-            if line.startswith("frame="):
-                fm = frame_re.search(line)
-                fpm = fps_re.search(line)
-                tm = time_re.search(line)
-                sm = speed_re.search(line)
-
-                cur_frame = int(fm.group(1)) if fm else tracker.state["frame"]
-                cur_fps = float(fpm.group(1)) if fpm else tracker.state["fps"]
-                cur_time = parse_time_to_sec(tm.group(1)) if tm else tracker.state["outTimeSec"]
-                cur_speed = sm.group(1) if sm else tracker.state["speed"]
-
-                ratio = 0.0
-                if expected_duration > 0.1 and cur_time > 0:
-                    ratio = min(1.0, cur_time / expected_duration)
-                elif expected_frames > 0 and cur_frame > 0:
-                    ratio = min(1.0, cur_frame / float(expected_frames))
-
-                pct = min(end_pct, max(start_pct, int(start_pct + ratio * (end_pct - start_pct))))
+            cur_pct = tracker.max_percent
+            if cur_pct < end_pct - 1:
+                cur_stage = tracker.state.get("stage") or stage
+                if cur_stage == "pass2_remux":
+                    hb_msg = "Relokasi atom MOOV (+faststart) & sinkronisasi muxing MP4..."
+                elif tracker.state.get("frame", 0) > 0:
+                    hb_msg = f"{stage_label} — flushing B-frame buffer ({tracker.state.get('frame', 0)}/{expected_frames or '?'})..."
+                else:
+                    hb_msg = f"{stage_label} — inisialisasi filtergraph & encoder..."
                 tracker.update(
-                    force=False,
-                    stage=stage,
-                    message=f"{stage_label} (frame {cur_frame}{'/' + str(expected_frames) if expected_frames > 0 else ''} • {cur_speed})",
-                    percent=pct,
-                    frame=cur_frame,
-                    totalFrames=expected_frames,
-                    fps=cur_fps,
-                    speed=cur_speed,
-                    outTimeSec=round(cur_time, 2),
+                    force=True,
+                    stage=cur_stage,
+                    message=hb_msg,
+                    percent=min(end_pct - 1, cur_pct + 1),
                 )
-        else:
-            line_buf += byte
+                last_telemetry_ts[0] = time.monotonic()
 
-    if proc.stdout:
-        proc.stdout.read()
-    returncode = proc.wait()
+    hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
+    hb_thread.start()
+
+    try:
+        while True:
+            byte = proc.stderr.read(1) if proc.stderr else b""
+            if not byte:
+                break
+            stderr_chunks.append(byte)
+            if byte in (b"\r", b"\n"):
+                line = line_buf.decode("utf-8", errors="replace").strip()
+                line_buf = b""
+                if not line:
+                    continue
+
+                if line.startswith("frame="):
+                    last_telemetry_ts[0] = time.monotonic()
+                    fm = frame_re.search(line)
+                    fpm = fps_re.search(line)
+                    tm = time_re.search(line)
+                    sm = speed_re.search(line)
+
+                    cur_frame = int(fm.group(1)) if fm else tracker.state["frame"]
+                    cur_fps = float(fpm.group(1)) if fpm else tracker.state["fps"]
+                    cur_time = parse_time_to_sec(tm.group(1)) if tm else tracker.state["outTimeSec"]
+                    cur_speed = sm.group(1) if sm else tracker.state["speed"]
+
+                    time_ratio = min(1.0, cur_time / expected_duration) if (expected_duration > 0.1 and cur_time > 0) else 0.0
+                    frame_ratio = min(1.0, cur_frame / float(expected_frames)) if (expected_frames > 0 and cur_frame > 0) else 0.0
+                    ratio = max(time_ratio, frame_ratio)
+
+                    encode_cap = max(start_pct, end_pct - 2)
+                    pct = min(encode_cap, max(start_pct, int(start_pct + ratio * (encode_cap - start_pct))))
+                    tracker.update(
+                        force=False,
+                        stage=stage,
+                        message=f"{stage_label} (frame {cur_frame}{'/' + str(expected_frames) if expected_frames > 0 else ''} • {cur_speed})",
+                        percent=pct,
+                        frame=cur_frame,
+                        totalFrames=expected_frames,
+                        fps=cur_fps,
+                        speed=cur_speed,
+                        outTimeSec=round(cur_time, 2),
+                    )
+                elif "Starting second pass" in line:
+                    last_telemetry_ts[0] = time.monotonic()
+                    tracker.update(
+                        force=True,
+                        stage="pass2_remux",
+                        message="Remuxing atom MOOV (+faststart) & Zero-SEI Container...",
+                        percent=max(tracker.max_percent, max(start_pct, end_pct - 1)),
+                    )
+            else:
+                line_buf += byte
+
+        if proc.stdout:
+            proc.stdout.read()
+        returncode = proc.wait()
+    finally:
+        stop_heartbeat.set()
+        hb_thread.join(timeout=1.0)
+
     full_stderr = b"".join(stderr_chunks).decode("utf-8", errors="replace")
     if returncode == 0:
         tracker.update(force=True, percent=end_pct)
@@ -942,6 +994,75 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
         sys.stderr.write(f"Binary sanitize warning: {e}\n")
     return sanitized_count
 
+
+def verify_cleaned_output(output_path: str, expect_audio: bool = False) -> dict:
+    """Quickly verify MP4 atom integrity, zero residual provenance boxes, and playable streams before completion."""
+    import struct
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) < 16384:
+        raise RuntimeError("Output MP4 gagal verifikasi ukuran minimal.")
+
+    bad_boxes = {"uuid", "c2pa", "jumb", "free", "skip", "udta", "meta", "ilst"}
+    found_bad: list[str] = []
+    has_ftyp = False
+    has_moov = False
+    has_mdat = False
+
+    with open(output_path, "rb") as f:
+        data = f.read()
+
+    def _scan_boxes(start: int, end: int, depth: int):
+        nonlocal has_ftyp, has_moov, has_mdat
+        if depth > 6:
+            return
+        pos = start
+        while pos + 8 <= end:
+            sz = struct.unpack(">I", data[pos:pos + 4])[0]
+            tp = data[pos + 4:pos + 8].decode("latin-1", errors="replace")
+            hdr = 8
+            if sz == 1 and pos + 16 <= end:
+                sz = struct.unpack(">Q", data[pos + 8:pos + 16])[0]
+                hdr = 16
+            elif sz == 0:
+                sz = end - pos
+            if sz < hdr or pos + sz > end:
+                break
+            if depth == 0:
+                if tp == "ftyp":
+                    has_ftyp = True
+                elif tp == "moov":
+                    has_moov = True
+                elif tp == "mdat":
+                    has_mdat = True
+            if tp in bad_boxes and tp not in found_bad:
+                found_bad.append(tp)
+            if tp in ("moov", "trak", "mdia", "minf", "stbl"):
+                _scan_boxes(pos + hdr, pos + sz, depth + 1)
+            pos += sz
+
+    _scan_boxes(0, len(data), 0)
+    if not (has_ftyp and has_moov and has_mdat):
+        raise RuntimeError("Container MP4 tidak memiliki struktur ftyp/moov/mdat yang valid.")
+    if found_bad:
+        raise RuntimeError(f"Masih ditemukan sisa atom container AI/tombstone: {','.join(found_bad)}")
+
+    res = subprocess.run(
+        [FFPROBE_BIN, "-v", "error", "-show_format", "-show_streams", "-of", "json", output_path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10
+    )
+    if res.returncode != 0 or not res.stdout.strip():
+        raise RuntimeError("Verifikasi ffprobe gagal membaca stream output.")
+    pdata = json.loads(res.stdout)
+    streams = pdata.get("streams") or []
+    has_v = any(st.get("codec_type") == "video" and int(st.get("width") or 0) >= 64 for st in streams)
+    if not has_v:
+        raise RuntimeError("Stream video tidak valid setelah remuxing.")
+    return {
+        "has_video": has_v,
+        "has_audio": any(st.get("codec_type") == "audio" for st in streams),
+        "expected_audio": expect_audio,
+        "size_bytes": len(data),
+    }
+
 def process_video(
     input_path: str,
     output_path: str,
@@ -963,6 +1084,7 @@ def process_video(
     metrics = probe_stream_metrics(input_path)
     has_audio = metrics["has_audio"]
     audio_duration_sec = metrics["audio_duration_sec"]
+    speech_gain_db = float(metrics.get("speech_gain_db") or 0.0)
     codec_name = metrics["codec"]
     vid_w, vid_h = metrics["width"], metrics["height"]
     duration_sec = metrics["duration_sec"]
@@ -1042,7 +1164,7 @@ def process_video(
 
     cam_meta: list[str] = []
     encode_preset = "superfast" if duration_sec > 10 else "veryfast"
-    b_adapt_mode = "1" if duration_sec > 10 else "2"
+    b_adapt_mode = "1"
     movflags_str = "+faststart"
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -1068,11 +1190,13 @@ def process_video(
             "scenecut=40:keyint=60:min-keyint=15"
         )
 
-        # SINGLE-COMMAND ALL-IN-ONE EXPORT PROFILE
+        # TWO-STAGE ALL-IN-ONE EXPORT PROFILE:
+        # Stage A (10% -> 80%): Audio-visual anti-AI frame synthesis into pass1_path
+        # Stage B (81% -> 91%): Dedicated Zero-SEI (-bsf:v filter_units) + Hardware OEM + +faststart remux into output_path
         if mode == "all_in_one":
             aio_msg = (
-                f"-> [ALL-IN-ONE SINGLE PIPELINE V 2.2] {fps_mode_label} + Anti-Diffusion hqdn3d + Asymmetric Warp (k1={job_profile['lens_k1']}) "
-                "+ Dual-Scale Bayer CMOS Grain + AAC 224k 22.5kHz Air & Aphased Audio..."
+                f"-> [PASS 1/2 • ALL-IN-ONE V 2.3] {fps_mode_label} + Anti-Diffusion hqdn3d + Asymmetric Warp (k1={job_profile['lens_k1']}) "
+                "+ Dual-Scale Bayer CMOS Grain + AAC 256k 21kHz Stereo Room Air..."
             )
             logs.append(aio_msg)
             tracker.push_log(aio_msg)
@@ -1117,7 +1241,7 @@ def process_video(
                 ]
                 if include_audio:
                     audio_fc = build_unified_audio_filter_complex(
-                        "[0:a]", "[aout]", duration_sec, job_profile, audio_duration_sec, expected_out_dur
+                        "[0:a]", "[aout]", duration_sec, job_profile, audio_duration_sec, expected_out_dur, speech_gain_db
                     )
                     full_fc = f"[0:v]{video_filter_str}[vout];{audio_fc}"
                     cmd.extend([
@@ -1125,7 +1249,7 @@ def process_video(
                         "-map", "[vout]",
                         "-map", "[aout]",
                         "-c:a", "aac",
-                        "-b:a", "224k",
+                        "-b:a", "256k",
                         "-ar", "48000",
                         "-cutoff", "22500",
                     ])
@@ -1146,31 +1270,33 @@ def process_video(
                     "-fflags", "+genpts+bitexact",
                     "-flags:v", "+bitexact",
                     "-flags:a", "+bitexact",
-                    "-movflags", movflags_str,
                     "-shortest",
-                    output_path,
+                    pass1_path,
                 ])
                 return cmd
 
             rc_aio, err_aio = (1, "")
             aio_ok = False
+            pass1_has_audio = False
             if has_audio:
                 rc_aio, err_aio = run_ffmpeg_streaming(
                     build_aio_cmd(True),
                     tracker,
                     stage="pass1_reencode",
-                    stage_label="All-in-One V 2.0 (30fps Native + Sub-Pixel Drift + Gaussian Grain + Zero-Silence Audio)",
+                    stage_label="Pass 1/2 Encode: 30fps Native + Stereo Room + 21kHz Air",
                     start_pct=10,
-                    end_pct=94,
+                    end_pct=80,
                     expected_duration=expected_out_dur,
                     expected_frames=expected_frames,
                     prefix="ffmpeg-all-in-one",
                 )
-                aio_ok = rc_aio == 0 and os.path.isfile(output_path) and os.path.getsize(output_path) > 16384
-                if not aio_ok:
+                aio_ok = rc_aio == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384
+                if aio_ok:
+                    pass1_has_audio = True
+                else:
                     try:
-                        if os.path.isfile(output_path):
-                            os.unlink(output_path)
+                        if os.path.isfile(pass1_path):
+                            os.unlink(pass1_path)
                     except Exception:
                         pass
                     fb_msg = "[AUDIO FALLBACK PYTHON] Stream audio tidak standar — mencoba ulang All-in-One mode video-only (-an)..."
@@ -1182,24 +1308,71 @@ def process_video(
                     build_aio_cmd(False),
                     tracker,
                     stage="pass1_reencode",
-                    stage_label="All-in-One V 2.0 (Video-Only Resilient Fallback)",
+                    stage_label="Pass 1/2 Encode: Safe CFR Video-Only Fallback",
                     start_pct=10,
-                    end_pct=94,
+                    end_pct=80,
                     expected_duration=expected_out_dur,
                     expected_frames=expected_frames,
                     prefix="ffmpeg-all-in-one-v",
                 )
-                aio_ok = rc_aio == 0 and os.path.isfile(output_path) and os.path.getsize(output_path) > 16384
+                aio_ok = rc_aio == 0 and os.path.isfile(pass1_path) and os.path.getsize(pass1_path) > 16384
 
             if not aio_ok:
-                err_msg = err_aio.splitlines()[-1] if err_aio else "All-in-One FFmpeg pipeline failed"
+                err_msg = err_aio.splitlines()[-1] if err_aio else "All-in-One Pass 1 FFmpeg pipeline failed"
                 raise RuntimeError(f"FFmpeg All-in-One Pipeline gagal: {err_msg}")
 
             logs.extend(extract_ffmpeg_telemetry(err_aio, "ffmpeg-all-in-one"))
-            done_aio = (
-                f"✓ [ALL-IN-ONE SELESAI V 2.2] {fps_mode_label} + Anti-Diffusion hqdn3d + Asymmetric Warp + Dual-Scale Bayer CMOS Grain "
-                "+ AAC 224k 22.5kHz Air & Aphased Audio + Zero-Tombstone MP4 selesai."
+            done_p1 = (
+                f"✓ [PASS 1/2 SELESAI] {fps_mode_label} + Anti-Diffusion Warp + Dual-Scale Bayer CMOS Grain "
+                "+ AAC 256k 21kHz Stereo Air selesai — melanjutkan Pass 2 Zero-SEI Remuxing..."
             )
+            logs.append(done_p1)
+            tracker.push_log(done_p1)
+
+            aio_pass2_cmd = [
+                FFMPEG_BIN,
+                "-y",
+                "-i", pass1_path,
+                "-map", "0:v:0",
+                *(["-map", "0:a:0"] if pass1_has_audio else []),
+                "-dn",
+                "-sn",
+                "-c", "copy",
+                "-bsf:v", "filter_units=remove_types=6",
+                "-map_metadata", "-1",
+                "-map_metadata:g", "-1",
+                "-map_metadata:s:v", "-1",
+                "-map_metadata:s:a", "-1",
+                "-map_chapters", "-1",
+                "-write_tmcd", "0",
+                *cam_meta,
+                "-metadata:s:v:0", f"handler_name={v_handler}",
+                "-metadata:s:v:0", f"language={lang_tag}",
+                *(["-metadata:s:a:0", f"handler_name={a_handler}", "-metadata:s:a:0", f"language={lang_tag}"] if pass1_has_audio else []),
+                "-brand", camera_brand,
+                "-fflags", "+bitexact",
+                "-flags:v", "+bitexact",
+                "-flags:a", "+bitexact",
+                "-movflags", movflags_str,
+                output_path,
+            ]
+            rc2_aio, err2_aio = run_ffmpeg_streaming(
+                aio_pass2_cmd,
+                tracker,
+                stage="pass2_remux",
+                stage_label="Pass 2/2 Remux: Zero-SEI Strip, OEM Stamping & +faststart MOOV",
+                start_pct=81,
+                end_pct=91,
+                expected_duration=expected_out_dur,
+                expected_frames=expected_frames,
+                prefix="ffmpeg-all-in-one-remux",
+            )
+            if rc2_aio != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) < 16384:
+                err_msg2 = err2_aio.splitlines()[-1] if err2_aio else "All-in-One Pass 2 remux failed"
+                raise RuntimeError(f"FFmpeg Pass 2 Remux gagal: {err_msg2}")
+
+            logs.extend(extract_ffmpeg_telemetry(err2_aio, "ffmpeg-all-in-one-remux"))
+            done_aio = "✓ [PASS 2/2 REMUX SELESAI] Zero-SEI Bitstream Scrub + MOOV +faststart Container Rewrite selesai."
             logs.append(done_aio)
             tracker.push_log(done_aio)
         else:
@@ -1237,15 +1410,15 @@ def process_video(
                     if include_audio:
                         if mode == "unified":
                             audio_fc = build_unified_audio_filter_complex(
-                                "[0:a]", "[aout]", duration_sec, job_profile, audio_duration_sec, expected_out_dur
+                                "[0:a]", "[aout]", duration_sec, job_profile, audio_duration_sec, expected_out_dur, speech_gain_db
                             )
                         elif mode == "safe_mode":
                             audio_fc = build_safe_mode_audio_filter_complex(
-                                "[0:a]", "[aout]", job_profile, expected_out_dur
+                                "[0:a]", "[aout]", job_profile, expected_out_dur, speech_gain_db
                             )
                         else:
                             audio_fc = build_synthid_audio_filter_complex(
-                                "[0:a]", "[aout]", job_profile, expected_out_dur
+                                "[0:a]", "[aout]", job_profile, expected_out_dur, speech_gain_db
                             )
                         full_fc = f"[0:v]{video_filter_str}[vout];{audio_fc}"
                         cmd.extend([
@@ -1253,7 +1426,7 @@ def process_video(
                             "-map", "[vout]",
                             "-map", "[aout]",
                             "-c:a", "aac",
-                            "-b:a", "224k",
+                            "-b:a", "256k",
                             "-ar", "48000",
                             "-cutoff", "22500",
                         ])
@@ -1467,22 +1640,29 @@ def process_video(
         tracker.update(
             force=True,
             stage="binary_sanitize",
-            message="Eksisi box C2PA/UUID/JUMBF, kompaksi atom free, & finalisasi MP4...",
-            percent=96,
+            message="Eksisi box C2PA/UUID/JUMBF & kompaksi atom free...",
+            percent=92,
         )
         sanitized_boxes = sanitize_binary_boxes_in_place(output_path)
-        out_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        tracker.update(
+            force=True,
+            stage="binary_sanitize",
+            message="Memverifikasi integritas atom MOOV/MDAT & 0 sisa metadata...",
+            percent=95,
+        )
+        verify_info = verify_cleaned_output(output_path, expect_audio=has_audio)
+        out_size_mb = verify_info["size_bytes"] / (1024 * 1024)
         fin1 = f"✓ [EKSISI FISIK & KOMPAKSI MP4] {sanitized_boxes} residu/tombstone/free box dihapus total & offset stco disesuaikan."
-        fin2 = f"✓ [SELESAI] Output bersih berhasil dibuat: {out_size_mb:.2f} MB (0% SEI Type 6, 0% Tombstone udta/meta, 30fps Native Gaussian)."
+        fin2 = f"✓ [VERIFIKASI CONTAINER] MP4 lolos audit integritas ({out_size_mb:.2f} MB, 0 tombstones) — menyimpan hasil akhir..."
         logs.append(fin1)
         logs.append(fin2)
         tracker.push_log(fin1, force=False)
         tracker.push_log(fin2, force=False)
         tracker.update(
             force=True,
-            stage="completed",
-            message=f"Selesai 100% ({out_size_mb:.2f} MB) • MetaCleaner V 2.0 Aktif",
-            percent=100,
+            stage="binary_sanitize",
+            message=f"Container terverifikasi ({out_size_mb:.2f} MB) — menulis file akhir...",
+            percent=97,
         )
 
     return {

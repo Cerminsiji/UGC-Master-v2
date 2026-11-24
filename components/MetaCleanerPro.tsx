@@ -794,6 +794,7 @@ export const MetaCleanerPro: React.FC = () => {
 
   // Server processing telemetry & 5-minute auto-clean states (Non-streaming)
   const [cloudProgress, setCloudProgress] = useState<CleanerProgressState | null>(null);
+  const [displayedPercent, setDisplayedPercent] = useState<number>(0);
   const [serverDownloadUrl, setServerDownloadUrl] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [supportsNativeShare, setSupportsNativeShare] = useState(false);
@@ -802,6 +803,24 @@ export const MetaCleanerPro: React.FC = () => {
   const [autoCleanRemainingSec, setAutoCleanRemainingSec] = useState<number | null>(null);
   const [isServerCleanedUp, setIsServerCleanedUp] = useState(false);
   const [isCleaningServerNow, setIsCleaningServerNow] = useState(false);
+
+  useEffect(() => {
+    const target = cloudProgress ? Math.min(100, Math.max(0, cloudProgress.percent || 0)) : 0;
+    if (!cloudProgress) {
+      setDisplayedPercent(0);
+      return;
+    }
+    if (cloudProgress.stage === 'failed' || cloudProgress.stage === 'completed') {
+      setDisplayedPercent(target);
+      return;
+    }
+    if (displayedPercent >= target) return;
+    const step = target - displayedPercent > 8 ? 2 : 1;
+    const t = setTimeout(() => {
+      setDisplayedPercent((prev) => Math.min(target, prev + step));
+    }, 85);
+    return () => clearTimeout(t);
+  }, [cloudProgress, displayedPercent]);
 
   useEffect(() => {
     setSupportsNativeShare(
@@ -960,148 +979,6 @@ export const MetaCleanerPro: React.FC = () => {
     return `${mins}:${secs}`;
   };
 
-  // Restore active or recently-completed server job after page reload
-  useEffect(() => {
-    let cancelled = false;
-    const restoreSessionJob = async () => {
-      let savedRaw: string | null = null;
-      try {
-        savedRaw = sessionStorage.getItem('metacleaner_active_job');
-      } catch {
-        return;
-      }
-      if (!savedRaw) return;
-
-      let parsed: { jobId?: string; uploadId?: string; fileName?: string } | null = null;
-      try {
-        parsed = JSON.parse(savedRaw);
-      } catch {
-        return;
-      }
-      if (!parsed?.jobId) return;
-
-      try {
-        const res = await fetch(
-          `/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`,
-          {
-            cache: 'no-store',
-            credentials: 'include',
-            signal: AbortSignal.timeout(12000),
-          }
-        );
-        if (!res.ok || cancelled) return;
-        const pData = (await res.json()) as CleanerProgressState;
-        if (cancelled || !pData || pData.expired) {
-          try {
-            sessionStorage.removeItem('metacleaner_active_job');
-          } catch {}
-          return;
-        }
-
-        const outName = parsed.fileName
-          ? `${parsed.fileName.replace(/\.[^/.]+$/, '')}_output_bersih.mp4`
-          : 'video_output_bersih.mp4';
-
-        let maxRestorePct = pData.percent || 0;
-        setLastJobId(parsed.jobId);
-        if (parsed.uploadId) setServerUploadId(parsed.uploadId);
-        setCloudProgress(pData);
-
-        if (pData.stage === 'completed' || pData.resultReady) {
-          const expiresAtIso =
-            pData.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
-          setAutoCleanExpiresAt(expiresAtIso);
-          setIsServerCleanedUp(false);
-          setServerDownloadUrl(
-            `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&filename=${encodeURIComponent(outName)}`
-          );
-          setPreviewUrlAfter(
-            `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&inline=1&t=${Date.now()}`
-          );
-          setProgressText('SELESAI 100%');
-          appendLog(
-            `✓ [SESSION PULIH] Hasil video Job ${parsed.jobId} masih tersedia di server hingga masa Auto-Clean 5 menit berakhir.`,
-            'emerald'
-          );
-        } else if (pData.stage !== 'failed') {
-          setIsProcessing(true);
-          activeJobIdRef.current = parsed.jobId;
-          abortPollingRef.current = false;
-          setProgressText(`${maxRestorePct || 5}%`);
-          appendLog(
-            `[SESSION PULIH] Menyambung kembali pemantauan proses server Job ${parsed.jobId}...`,
-            'indigo'
-          );
-
-          while (!cancelled && !abortPollingRef.current) {
-            await new Promise((r) => setTimeout(r, 1500));
-            if (cancelled || abortPollingRef.current) break;
-            try {
-              const pollRes = await fetch(
-                `/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`,
-                {
-                  cache: 'no-store',
-                  credentials: 'include',
-                  signal: AbortSignal.timeout(12000),
-                }
-              );
-              if (!pollRes.ok) {
-                setNetworkWarning(
-                  `Koneksi lambat (HTTP ${pollRes.status}) — pemrosesan tetap berjalan di server...`
-                );
-                continue;
-              }
-              setNetworkWarning(null);
-              const nextData = (await pollRes.json()) as CleanerProgressState;
-              if (cancelled || abortPollingRef.current) break;
-              if (nextData.stage !== 'failed') {
-                maxRestorePct = Math.max(maxRestorePct, nextData.percent || 0);
-                nextData.percent = maxRestorePct;
-              }
-              setCloudProgress(nextData);
-              setProgressText(`${nextData.percent}%`);
-
-              if (nextData.expired) {
-                setIsServerCleanedUp(true);
-                setIsProcessing(false);
-                break;
-              }
-              if (nextData.stage === 'completed' || nextData.resultReady) {
-                const expIso =
-                  nextData.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
-                setAutoCleanExpiresAt(expIso);
-                setIsServerCleanedUp(false);
-                setServerDownloadUrl(
-                  `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&filename=${encodeURIComponent(outName)}`
-                );
-                setPreviewUrlAfter(
-                  `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&inline=1&t=${Date.now()}`
-                );
-                setProgressText('SELESAI 100%');
-                setIsProcessing(false);
-                break;
-              }
-              if (nextData.stage === 'failed') {
-                setProgressText('GAGAL');
-                setIsProcessing(false);
-                break;
-              }
-            } catch {
-              setNetworkWarning(
-                'Koneksi internet terganggu — pekerjaan tetap berjalan di server, menunggu jaringan kembali...'
-              );
-            }
-          }
-        }
-      } catch {}
-    };
-
-    void restoreSessionJob();
-    return () => {
-      cancelled = true;
-    };
-  }, [appendLog]);
-
   const runExternalProbe = useCallback(
     async (
       source: { uploadId?: string; jobId?: string; blob?: Blob; filename: string },
@@ -1169,7 +1046,7 @@ export const MetaCleanerPro: React.FC = () => {
         const probe = data.probe as ExternalProbeReport;
         const av = probe.audioVisualForensics;
 
-        const applyProbeToCardState = (prev: InspectionState): InspectionState => {
+        const mapProbeState = (prev: InspectionState): InspectionState => {
           const seiTotal = probe.seiReport.totalSeiUnits;
           const isOverallClean = probe.cleanliness.overallClean;
           const asciiHint = probe.seiReport.asciiTraces.slice(0, 2).join(', ');
@@ -1225,11 +1102,11 @@ export const MetaCleanerPro: React.FC = () => {
 
         if (target === 'before') {
           setBeforeProbe(probe);
-          setBeforeState(applyProbeToCardState);
+          setBeforeState((prev) => mapProbeState(prev));
           setDiagTarget('before');
         } else {
           setAfterProbe(probe);
-          setAfterState(applyProbeToCardState);
+          setAfterState((prev) => mapProbeState(prev));
           setDiagTarget('after');
         }
 
@@ -1255,6 +1132,167 @@ export const MetaCleanerPro: React.FC = () => {
     },
     [appendLog]
   );
+
+  // Restore active or recently-completed server job after page reload
+  useEffect(() => {
+    let cancelled = false;
+    const restoreSessionJob = async () => {
+      let savedRaw: string | null = null;
+      try {
+        savedRaw = sessionStorage.getItem('metacleaner_active_job');
+      } catch {
+        return;
+      }
+      if (!savedRaw) return;
+
+      let parsed: { jobId?: string; uploadId?: string; fileName?: string } | null = null;
+      try {
+        parsed = JSON.parse(savedRaw);
+      } catch {
+        return;
+      }
+      if (!parsed?.jobId) return;
+
+      try {
+        const res = await fetch(
+          `/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`,
+          {
+            cache: 'no-store',
+            credentials: 'include',
+            signal: AbortSignal.timeout(12000),
+          }
+        );
+        if (!res.ok || cancelled) return;
+        const pData = (await res.json()) as CleanerProgressState;
+        if (cancelled || !pData || pData.expired) {
+          try {
+            sessionStorage.removeItem('metacleaner_active_job');
+          } catch {}
+          return;
+        }
+
+        const outName = parsed.fileName
+          ? `${parsed.fileName.replace(/\.[^/.]+$/, '')}_output_bersih.mp4`
+          : 'video_output_bersih.mp4';
+
+        let maxRestorePct = pData.percent || 0;
+        setLastJobId(parsed.jobId);
+        if (parsed.uploadId) setServerUploadId(parsed.uploadId);
+        setCloudProgress(pData);
+
+        if (pData.resultReady || (pData.stage === 'completed' && Boolean(pData.downloadUrl))) {
+          const expiresAtIso =
+            pData.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
+          setAutoCleanExpiresAt(expiresAtIso);
+          setIsServerCleanedUp(false);
+          setServerDownloadUrl(
+            `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&filename=${encodeURIComponent(outName)}`
+          );
+          setPreviewUrlAfter(
+            `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&inline=1&t=${Date.now()}`
+          );
+          setProgressText('SELESAI 100%');
+          appendLog(
+            `✓ [SESSION PULIH] Hasil video Job ${parsed.jobId} masih tersedia di server hingga masa Auto-Clean 5 menit berakhir.`,
+            'emerald'
+          );
+        } else if (pData.stage !== 'failed') {
+          setIsProcessing(true);
+          activeJobIdRef.current = parsed.jobId;
+          abortPollingRef.current = false;
+          setProgressText(`${maxRestorePct || 5}%`);
+          appendLog(
+            `[SESSION PULIH] Menyambung kembali pemantauan proses server Job ${parsed.jobId}...`,
+            'indigo'
+          );
+
+          while (!cancelled && !abortPollingRef.current) {
+            await new Promise((r) => setTimeout(r, maxRestorePct >= 75 ? 350 : 600));
+            if (cancelled || abortPollingRef.current) break;
+            try {
+              const pollRes = await fetch(
+                `/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`,
+                {
+                  cache: 'no-store',
+                  credentials: 'include',
+                  signal: AbortSignal.timeout(12000),
+                }
+              );
+              if (!pollRes.ok) {
+                setNetworkWarning(
+                  `Koneksi lambat (HTTP ${pollRes.status}) — pemrosesan tetap berjalan di server...`
+                );
+                continue;
+              }
+              setNetworkWarning(null);
+              const nextData = (await pollRes.json()) as CleanerProgressState;
+              if (cancelled || abortPollingRef.current) break;
+              const isTerminalReady =
+                Boolean(nextData.resultReady) &&
+                nextData.stage === 'completed' &&
+                Boolean(nextData.downloadUrl);
+
+              if (nextData.stage !== 'failed') {
+                const boundedPct = isTerminalReady
+                  ? 100
+                  : Math.min(99, Math.max(maxRestorePct, nextData.percent || 0));
+                maxRestorePct = boundedPct;
+                nextData.percent = boundedPct;
+              }
+
+              if (nextData.expired) {
+                setIsServerCleanedUp(true);
+                setIsProcessing(false);
+                break;
+              }
+              if (isTerminalReady) {
+                setCloudProgress({
+                  ...nextData,
+                  stage: 'binary_sanitize',
+                  percent: 99,
+                  message: 'Memverifikasi integritas hasil & kesiapan download...',
+                });
+                setProgressText('VERIFIKASI AKHIR (99%)...');
+                await runExternalProbe({ jobId: parsed.jobId, filename: outName }, 'after');
+                if (cancelled || abortPollingRef.current) break;
+                const expIso =
+                  nextData.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
+                setAutoCleanExpiresAt(expIso);
+                setIsServerCleanedUp(false);
+                setServerDownloadUrl(
+                  `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&filename=${encodeURIComponent(outName)}`
+                );
+                setPreviewUrlAfter(
+                  `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&inline=1&t=${Date.now()}`
+                );
+                setCloudProgress({ ...nextData, stage: 'completed', percent: 100 });
+                setProgressText('SELESAI 100%');
+                setIsProcessing(false);
+                break;
+              }
+              setCloudProgress(nextData);
+              setProgressText(`${nextData.percent}%`);
+              if (nextData.stage === 'failed') {
+                setProgressText('GAGAL');
+                setIsProcessing(false);
+                break;
+              }
+            } catch {
+              setNetworkWarning(
+                'Koneksi internet terganggu — pekerjaan tetap berjalan di server, menunggu jaringan kembali...'
+              );
+            }
+          }
+        }
+      } catch {}
+    };
+
+    void restoreSessionJob();
+    return () => {
+      cancelled = true;
+    };
+  }, [appendLog, runExternalProbe]);
+
 
   // Resilient chunked uploader with resume & per-chunk retries on bad internet
   const uploadVideoToServer = useCallback(
@@ -1592,19 +1630,29 @@ export const MetaCleanerPro: React.FC = () => {
     const sourceByteLength = currentFile.size;
     let maxUiPercent = 0;
 
-    const syncProgressSnapshot = (pData: CleanerProgressState) => {
+    const syncProgressSnapshot = (pData: CleanerProgressState, holdAtVerification = false) => {
       if (!pData || !pData.stage) return;
       const clampedPct =
         pData.stage === 'failed'
           ? pData.percent
-          : Math.max(maxUiPercent, pData.percent || 0);
+          : holdAtVerification
+            ? Math.min(99, Math.max(maxUiPercent, pData.percent || 0))
+            : Math.max(maxUiPercent, pData.percent || 0);
       if (pData.stage !== 'failed') {
         maxUiPercent = clampedPct;
       }
-      setCloudProgress({ ...pData, percent: clampedPct });
+      const nextState: CleanerProgressState = holdAtVerification
+        ? {
+            ...pData,
+            stage: 'binary_sanitize',
+            percent: clampedPct,
+            message: 'Memverifikasi 0 SEI, atom MOOV & kesiapan file bersih di server...',
+          }
+        : { ...pData, percent: clampedPct };
+      setCloudProgress(nextState);
       const framePart =
-        pData.frame > 0
-          ? ` • Frame ${pData.frame}${pData.totalFrames > 0 ? `/${pData.totalFrames}` : ''}`
+        nextState.frame > 0
+          ? ` • Frame ${nextState.frame}${nextState.totalFrames > 0 ? `/${nextState.totalFrames}` : ''}`
           : '';
       setProgressText(`${clampedPct}%${framePart}`);
 
@@ -1741,19 +1789,29 @@ export const MetaCleanerPro: React.FC = () => {
         );
       } catch {}
 
-      // 3. Gentle resilient polling — transient network errors wait patiently and NEVER restart the job!
+      // 3. Adaptive resilient polling — faster during remux/tail stages + auto-resync on stale progress
       const startedAt = Date.now();
       const maxWaitMs = 15 * 60 * 1000;
       let finalState: CleanerProgressState | null = null;
+      let lastServerSig = '';
+      let lastProgressAdvanceAt = Date.now();
+      let latestServerStage: string = 'queued';
 
       while (Date.now() - startedAt < maxWaitMs) {
         if (abortPollingRef.current) return;
-        await new Promise((r) => setTimeout(r, 1400));
+        const pollDelayMs =
+          maxUiPercent >= 75 ||
+          latestServerStage === 'pass2_remux' ||
+          latestServerStage === 'binary_sanitize'
+            ? 300
+            : 450;
+        await new Promise((r) => setTimeout(r, pollDelayMs));
         if (abortPollingRef.current) return;
 
         try {
+          const needResync = Date.now() - lastProgressAdvanceAt > 18000;
           const pRes = await fetch(
-            `/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}`,
+            `/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}${needResync ? '&resync=1' : ''}`,
             {
               cache: 'no-store',
               credentials: 'include',
@@ -1769,8 +1827,16 @@ export const MetaCleanerPro: React.FC = () => {
           }
 
           setNetworkWarning(null);
-          const pData = (await pRes.json()) as CleanerProgressState;
-          syncProgressSnapshot(pData);
+          const rawJson = await pRes.json();
+          const pData = (rawJson?.state ? rawJson.state : rawJson) as CleanerProgressState;
+          if (pData?.stage) {
+            latestServerStage = pData.stage;
+          }
+          const sig = `${pData.stage}:${pData.percent}:${pData.frame}:${pData.message}`;
+          if (sig !== lastServerSig) {
+            lastServerSig = sig;
+            lastProgressAdvanceAt = Date.now();
+          }
 
           if (pData.expired) {
             setIsServerCleanedUp(true);
@@ -1779,7 +1845,15 @@ export const MetaCleanerPro: React.FC = () => {
             );
           }
 
-          if (pData.stage === 'completed' || pData.resultReady) {
+          const isTerminalReady =
+            Boolean(pData.resultReady) &&
+            pData.stage === 'completed' &&
+            Boolean(pData.downloadUrl);
+
+          // Hold at verification percentage (<=99%) until post-remux audit + download readiness passes!
+          syncProgressSnapshot(pData, isTerminalReady);
+
+          if (isTerminalReady) {
             finalState = pData;
             break;
           }
@@ -1796,11 +1870,10 @@ export const MetaCleanerPro: React.FC = () => {
           ) {
             throw pollErr;
           }
-          // Network offline/drop/timeout during polling: stay calm, keep polling without aborting or restarting job!
           setNetworkWarning(
             'Koneksi internet terganggu — pekerjaan tetap berjalan di server, menunggu jaringan kembali...'
           );
-          await new Promise((r) => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 1500));
         }
       }
 
@@ -1810,38 +1883,51 @@ export const MetaCleanerPro: React.FC = () => {
         throw new Error('Waktu tunggu pemantauan server melebihi batas. Coba cek ulang atau unggah ulang.');
       }
 
+      // 4. Verify downloadable MP4 file header on server BEFORE marking UI finished!
+      setProgressText('MEMVERIFIKASI KESIAPAN FILE BERSIH (99%)...');
+      let downloadHeaderVerified = false;
+      for (let hAttempt = 1; hAttempt <= 4; hAttempt++) {
+        if (abortPollingRef.current) return;
+        try {
+          const headProbeRes = await fetch(
+            `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&inline=1`,
+            {
+              headers: { Range: 'bytes=0-31' },
+              cache: 'no-store',
+              credentials: 'include',
+              signal: AbortSignal.timeout(10000),
+            }
+          );
+          if (headProbeRes.ok || headProbeRes.status === 206) {
+            const headerBuf = new Uint8Array(await headProbeRes.arrayBuffer());
+            if (
+              headerBuf.length >= 8 &&
+              headerBuf[4] === 0x66 &&
+              headerBuf[5] === 0x74 &&
+              headerBuf[6] === 0x79 &&
+              headerBuf[7] === 0x70
+            ) {
+              downloadHeaderVerified = true;
+              break;
+            }
+          }
+        } catch {}
+        await new Promise((r) => setTimeout(r, 400 * hAttempt));
+      }
+
+      if (!downloadHeaderVerified) {
+        throw new Error('File hasil di server belum siap atau struktur ftyp MP4 gagal diverifikasi.');
+      }
+
+      // 5. Run server-side FFprobe audit BEFORE marking status as completed 100%!
+      setProgressText('VERIFIKASI FFPROBE & 0 SEI DI SERVER (99%)...');
+      await runExternalProbe({ jobId, filename: outputFileName }, 'after');
+      if (abortPollingRef.current) return;
+
       const expiresAtIso =
         finalState.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
       const inlineStreamUrl = `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&inline=1&t=${Date.now()}`;
       const downloadAttachmentUrl = `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&filename=${encodeURIComponent(outputFileName)}`;
-
-      setLastJobId(jobId);
-      setServerDownloadUrl(downloadAttachmentUrl);
-      setAutoCleanExpiresAt(expiresAtIso);
-      setIsServerCleanedUp(false);
-      setNetworkWarning(null);
-      setPreviewUrlAfter(inlineStreamUrl);
-      setProgressText('VERIFIKASI FFPROBE DI SERVER...');
-
-      appendLog(
-        `✓ [SERVER PROCESSING SELESAI] Hasil siap di server (${((finalState.outputSizeBytes || 0) / (1024 * 1024)).toFixed(2)} MB). Timer Auto-Clean 5 menit aktif!`,
-        'emerald'
-      );
-      appendLog(
-        `✓ [HARDWARE CAMERA OEM] Profil kamera disuntikkan: ${
-          cameraProfile === 'apple'
-            ? 'Apple iPhone 15 Pro (Core Media Video)'
-            : cameraProfile === 'samsung'
-              ? 'Samsung Galaxy S24 Ultra (VideoHandle)'
-              : cameraProfile === 'xiaomi'
-                ? 'Xiaomi 14 Ultra (HyperOS / Leica)'
-                : 'Netral / Bitexact Clean'
-        } • Resolusi: ${upscale1080p && cameraProfile !== 'neutral' ? '1080p Full-HD BT.709' : 'Resolusi Asli BT.709'}.`,
-        'indigo'
-      );
-
-      // Run FFprobe directly on the server using jobId (0 MB extra upload!)
-      await runExternalProbe({ jobId, filename: outputFileName }, 'after');
 
       // Gently cache output into local browser RAM only when output <= 25 MB (prevents OOM tab crashes on large videos)
       let cachedBlob: Blob | null = null;
@@ -1895,13 +1981,42 @@ export const MetaCleanerPro: React.FC = () => {
         }
       }
 
+      setLastJobId(jobId);
+      setServerDownloadUrl(downloadAttachmentUrl);
+      setAutoCleanExpiresAt(expiresAtIso);
+      setIsServerCleanedUp(false);
+      setNetworkWarning(null);
       if (!cachedBlob) {
+        setPreviewUrlAfter(inlineStreamUrl);
         appendLog(
           'ℹ [DIRECT SERVER DOWNLOAD] Preview & unduhan langsung dari server siap. Gunakan tombol Unduh Berkas Bersih sebelum timer 5 menit berakhir.',
           'amber'
         );
       }
 
+      appendLog(
+        `✓ [SERVER PROCESSING SELESAI 100%] Hasil terverifikasi (${((finalState.outputSizeBytes || 0) / (1024 * 1024)).toFixed(2)} MB). Timer Auto-Clean 5 menit aktif!`,
+        'emerald'
+      );
+      appendLog(
+        `✓ [HARDWARE CAMERA OEM] Profil kamera disuntikkan: ${
+          cameraProfile === 'apple'
+            ? 'Apple iPhone 15 Pro (Core Media Video)'
+            : cameraProfile === 'samsung'
+              ? 'Samsung Galaxy S24 Ultra (VideoHandle)'
+              : cameraProfile === 'xiaomi'
+                ? 'Xiaomi 14 Ultra (HyperOS / Leica)'
+                : 'Netral / Bitexact Clean'
+        } • Resolusi: ${upscale1080p && cameraProfile !== 'neutral' ? '1080p Full-HD BT.709' : 'Resolusi Asli BT.709'}.`,
+        'indigo'
+      );
+
+      setCloudProgress({
+        ...finalState,
+        stage: 'completed',
+        percent: 100,
+      });
+      setDisplayedPercent(100);
       setProgressText('SELESAI 100%');
     } catch (serverErr: any) {
       if (abortPollingRef.current) return;
@@ -2151,11 +2266,11 @@ export const MetaCleanerPro: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/25 border border-emerald-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-                    <span>2. Unique Pink/Brown Audio Seeds (-51dB) + Synced 160k AAC Anti-TTS</span>
+                    <span>2. Stereo Room Reflection + 21kHz Thermal Air (AAC 256k Anti-TTS)</span>
                   </div>
                   <div className="flex items-center gap-2 text-indigo-300 bg-indigo-950/25 border border-indigo-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
-                    <span>3. Zero-SEI + Zero-Free + Zero-Tombstone MP4 (Adaptive b-adapt=2 GOP)</span>
+                    <span>3. Pass 2 Zero-SEI Remux + Zero-Free MP4 + Audit Integritas</span>
                   </div>
                 </div>
               </div>
@@ -2271,22 +2386,22 @@ export const MetaCleanerPro: React.FC = () => {
               </div>
               <div className="flex items-center gap-3 text-[11px] font-mono">
                 <span className="text-slate-400">{cloudProgress.engine}</span>
-                <span className={`font-bold ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : 'text-cyan-400'}`}>
-                  {cloudProgress.percent}%
+                <span className={`font-bold tabular-nums ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : 'text-cyan-400'}`}>
+                  {displayedPercent}%
                 </span>
               </div>
             </div>
 
             <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
               <div
-                className={`h-full transition-all duration-300 ${
+                className={`h-full transition-all duration-150 ${
                   cloudProgress.stage === 'failed'
                     ? 'bg-rose-500'
                     : cloudProgress.stage === 'completed'
                       ? 'bg-emerald-500'
                       : 'bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400'
                 }`}
-                style={{ width: `${Math.min(100, Math.max(0, cloudProgress.percent))}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, displayedPercent))}%` }}
               />
             </div>
 
