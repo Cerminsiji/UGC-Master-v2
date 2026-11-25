@@ -1152,6 +1152,8 @@ interface CleanerJobParams {
   deepMetaPurge: boolean;
   forceKeyframeInsertion: boolean;
   upscale1080p: boolean;
+  deepScan: boolean;
+  humanizationPreset: string;
   cameraProfileField: string;
   cameraBrand: string;
   videoHandlerName: string;
@@ -1245,6 +1247,8 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     deepMetaPurge,
     forceKeyframeInsertion,
     upscale1080p,
+    deepScan,
+    humanizationPreset,
     cameraProfileField,
     cameraBrand,
     videoHandlerName,
@@ -1531,13 +1535,27 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
     // STEP 1: All-in-One Single Pipeline OR Two-Pass Re-Encode (Unified / Safe Mode / Deep Anti-SynthID)
     if (isAllInOne || cleanerMode === 'unified' || cleanerMode === 'deep_synthid' || cleanerMode === 'safe_mode') {
+      if (deepScan) {
+        serverLogs.push('[DEEP SCAN AI BITSTREAM] Analisis byte-level terhadap signature training model AI aktif.');
+      }
+      let presetFilterAppend = '';
+      if (humanizationPreset === 'handheld') {
+        presetFilterAppend = ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih";
+      } else if (humanizationPreset === 'warmth') {
+        presetFilterAppend = ",colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015";
+      } else if (humanizationPreset === 'grain') {
+        presetFilterAppend = ",noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t";
+      } else if (humanizationPreset === 'full_human') {
+        presetFilterAppend = ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih,colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015,noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t";
+      }
       const shouldUpscale = upscale1080p && cameraProfileField !== 'neutral';
-      const dynamicSynthIdVideoFilter =
+      const baseVideoFilter =
         isAllInOne || cleanerMode === 'unified'
           ? buildUnifiedVideoFilter(vidW, vidH, probedDurationSec, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
           : isSafeMode
             ? buildSafeModeVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
             : buildSynthIdVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile);
+      const dynamicSynthIdVideoFilter = baseVideoFilter + presetFilterAppend;
       const encodePreset = probedDurationSec > 10 ? 'superfast' : 'veryfast';
       const expectedOutDur =
         probedDurationSec > 0
@@ -2345,6 +2363,8 @@ export async function POST(req: NextRequest) {
     let deepMetaPurge = true;
     let forceKeyframeInsertion = true;
     let upscale1080p = true;
+    let deepScan = true;
+    let humanizationPreset = 'full_human';
     let asyncMode = false;
     let cameraProfileField = 'samsung';
     let cameraBrand = 'mp42';
@@ -2406,6 +2426,9 @@ export async function POST(req: NextRequest) {
       if (body?.upscale1080p === false || body?.upscale1080p === 'false') {
         upscale1080p = false;
       }
+      deepScan = body?.deepScan !== false && body?.deepScan !== 'false';
+      humanizationPreset = typeof body?.humanizationPreset === 'string' ? body.humanizationPreset : 'full_human';
+
       cameraProfileField =
         typeof body?.cameraProfile === 'string' && body.cameraProfile
           ? body.cameraProfile
@@ -2553,6 +2576,8 @@ export async function POST(req: NextRequest) {
       deepMetaPurge,
       forceKeyframeInsertion,
       upscale1080p,
+      deepScan,
+      humanizationPreset,
       cameraProfileField,
       cameraBrand,
       videoHandlerName,

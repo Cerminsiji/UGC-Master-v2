@@ -31,6 +31,7 @@ import {
 import type { ExternalProbeReport } from '@/lib/video-probe';
 import type { CleanerProgressState } from '@/lib/meta-cleaner-progress';
 import { WatermarkNoiseVisualizer } from './WatermarkNoiseVisualizer';
+import { analyzeVideoHumanization, HumanizationAnalysisReport } from '@/lib/humanization-analyzer';
 
 interface LogEntry {
   id: string;
@@ -757,6 +758,8 @@ export const MetaCleanerPro: React.FC = () => {
   const [previewUrlAfter, setPreviewUrlAfter] = useState<string | null>(null);
   const [cameraProfile, setCameraProfile] = useState<'samsung' | 'apple' | 'xiaomi' | 'neutral'>('samsung');
   const [upscale1080p, setUpscale1080p] = useState<boolean>(true);
+  const [deepScanEnabled, setDeepScanEnabled] = useState<boolean>(true);
+  const [humanizationPreset, setHumanizationPreset] = useState<'none' | 'handheld' | 'warmth' | 'grain' | 'full_human'>('full_human');
 
   const [fileStatus, setFileStatus] = useState<{ text: string; color: 'amber' | 'emerald' | 'rose' }>({
     text: 'Menunggu Berkas',
@@ -1748,6 +1751,8 @@ export const MetaCleanerPro: React.FC = () => {
               forceKeyframeInsertion: false,
               cameraProfile,
               upscale1080p,
+              deepScan: deepScanEnabled,
+              humanizationPreset,
             }),
             cache: 'no-store',
             credentials: 'include',
@@ -2324,6 +2329,40 @@ export const MetaCleanerPro: React.FC = () => {
                   Menstandarkan handler kamera native (<code>VideoHandle</code> / <code>Core Media Video</code>) tanpa menyisipkan box <code>mdta</code> sintetik, menstandarkan 1080p BT.709, &amp; mengompaksi atom <code>free</code>.
                 </p>
               </div>
+
+              <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-300 font-bold text-[11px]">Deep Scan AI Bitstream:</span>
+                  <button
+                    type="button"
+                    onClick={() => setDeepScanEnabled(!deepScanEnabled)}
+                    className={`px-2.5 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
+                      deepScanEnabled
+                        ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
+                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    }`}
+                  >
+                    {deepScanEnabled ? 'AKTIF (Byte-Level Scan)' : 'NONAKTIF'}
+                  </button>
+                </div>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-300 font-bold text-[11px]">Humanization Preset:</span>
+                  <select
+                    value={humanizationPreset}
+                    onChange={(e) => setHumanizationPreset(e.target.value as any)}
+                    className="bg-slate-900 border border-slate-700 text-indigo-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value="full_human">Complete Organic Suite (Jitter + Warmth + Grain)</option>
+                    <option value="handheld">Handheld Cam Jitter (Micro-Wobble)</option>
+                    <option value="warmth">Natural Skin Tone Warmth & Color</option>
+                    <option value="grain">Organic CMOS Sensor Grain</option>
+                    <option value="none">Standar Organik / Neutral</option>
+                  </select>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-snug">
+                  Byte-level bitstream signature comparison &amp; humanization noise injection to break sterile AI rendering look.
+                </p>
+              </div>
             </div>
 
             <button
@@ -2843,6 +2882,78 @@ export const MetaCleanerPro: React.FC = () => {
               )}
             </div>
           </div>
+
+          {beforeProbe && (() => {
+            const humanizationReport = analyzeVideoHumanization(beforeProbe);
+            return (
+              <div className="bg-gradient-to-br from-slate-950 via-indigo-950/20 to-slate-950 rounded-2xl border border-indigo-500/30 p-5 space-y-4 shadow-xl mb-4">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-extrabold text-lg">
+                      {humanizationReport.humanizationScore}%
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-extrabold text-slate-200 flex items-center gap-2">
+                        <span>Humanization Analyzer &amp; Organic Score</span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-indigo-300">
+                          {humanizationReport.aiRiskLevel}
+                        </span>
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        Analisis bitstream byte-level terhadap signature AI &amp; rekomendasi preset humanisasi.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (humanizationReport.suggestions.length > 0 && humanizationReport.suggestions[0].recommendedPreset) {
+                          setHumanizationPreset(humanizationReport.suggestions[0].recommendedPreset as any);
+                          appendLog(`✓ [HUMANIZATION ANALYZER] Menerapkan preset rekomendasi: ${humanizationReport.suggestions[0].recommendedPreset.toUpperCase()}`, 'emerald');
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-indigo-900/30 cursor-pointer"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Terapkan Rekomendasi Preset</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {Object.entries(humanizationReport.breakdown).map(([key, val]) => (
+                    <div key={key} className="bg-slate-900/80 border border-slate-800 rounded-xl p-2.5 space-y-1">
+                      <div className="text-[10px] uppercase font-mono text-slate-400">
+                        {key === 'metadataCleanliness' ? 'Metadata Clean' : key === 'bitstreamEntropy' ? 'Bitstream Entropy' : key === 'motionNaturalness' ? 'Motion Natural' : 'Acoustic Air'}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-extrabold text-slate-200">{val} / 25</span>
+                        <div className="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                          <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${(val / 25) * 100}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-[11px] font-bold text-slate-300">Saran Tindakan &amp; Deteksi Marker AI:</span>
+                  <div className="space-y-1.5">
+                    {humanizationReport.suggestions.map((s) => (
+                      <div key={s.id} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs">
+                        <CheckCircle2 className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5">
+                          <div className="font-bold text-slate-200">{s.title}</div>
+                          <div className="text-slate-400 text-[11px]">{s.description}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
             {[
