@@ -32,6 +32,11 @@ import type { ExternalProbeReport } from '@/lib/video-probe';
 import type { CleanerProgressState } from '@/lib/meta-cleaner-progress';
 import { WatermarkNoiseVisualizer } from './WatermarkNoiseVisualizer';
 import { analyzeVideoHumanization, HumanizationAnalysisReport } from '@/lib/humanization-analyzer';
+import {
+  scrambleWatermarkBitstreamsInPlace,
+  type BitstreamScrambleResult,
+  type SynthIdScrambleMode,
+} from '@/lib/bitstream-scrambler';
 
 interface LogEntry {
   id: string;
@@ -310,87 +315,7 @@ function findMdatRanges(bytes: Uint8Array): Array<{ start: number; end: number }
   return ranges;
 }
 
-function neutralizeContainerBoxesInPlace(bytes: Uint8Array): void {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const decoder = new TextDecoder('ascii', { fatal: false });
-
-  const clean = (start: number, end: number, depth: number) => {
-    if (depth > 8) return;
-    let offset = start;
-
-    while (offset + 8 <= end) {
-      let size = view.getUint32(offset, false);
-      const type = decoder.decode(bytes.subarray(offset + 4, offset + 8));
-      let headerSize = 8;
-
-      if (size === 1) {
-        if (offset + 16 > end) break;
-        const high = view.getUint32(offset + 8, false);
-        const low = view.getUint32(offset + 12, false);
-        size = high * 4294967296 + low;
-        headerSize = 16;
-      } else if (size === 0) {
-        size = end - offset;
-      }
-
-      if (size < headerSize || offset + size > end) break;
-
-      if (type === 'stsd' && offset + headerSize + 8 < offset + size) {
-        clean(offset + headerSize + 8, offset + size, depth + 1);
-      } else if (['avc1', 'avc3', 'hev1', 'hvc1', 'mp4v'].includes(type) && size >= 86) {
-        bytes.fill(0x00, offset + 50, offset + 82);
-        bytes.fill(0x00, offset + 20, offset + 24);
-      } else if (['uuid', 'c2pa', 'jumb', 'c2ma', 'c2cl', 'XMP_'].includes(type)) {
-        bytes[offset + 4] = 0x66;
-        bytes[offset + 5] = 0x72;
-        bytes[offset + 6] = 0x65;
-        bytes[offset + 7] = 0x65;
-        bytes.fill(0x00, offset + headerSize, offset + size);
-      } else if (['udta', 'meta', 'ilst', '©too', '©enc'].includes(type)) {
-        const payload = decoder.decode(bytes.subarray(offset + headerSize, Math.min(offset + size, offset + 512)));
-        const isEmptyTombstone =
-          (type === 'udta' && payload.includes('mdirappl') && size <= 128) ||
-          (type === 'meta' && payload.includes('mdirappl') && size <= 120) ||
-          (type === 'ilst' && size <= 16);
-        if (
-          isEmptyTombstone ||
-          payload.includes('c2pa') ||
-          payload.includes('SynthID') ||
-          payload.includes('trainedAlgorithmicMedia') ||
-          payload.includes('Veo') ||
-          payload.includes('Sora') ||
-          payload.includes('Runway') ||
-          payload.includes('Pika') ||
-          payload.includes('com.ai.generator') ||
-          payload.includes('ai-studio') ||
-          payload.includes('Lavf') ||
-          payload.includes('Lavc') ||
-          payload.includes('SHOPEE') ||
-          payload.includes('s264') ||
-          payload.includes('garena') ||
-          payload.includes('live-tech')
-        ) {
-          bytes[offset + 4] = 0x66;
-          bytes[offset + 5] = 0x72;
-          bytes[offset + 6] = 0x65;
-          bytes[offset + 7] = 0x65;
-          bytes.fill(0x00, offset + headerSize, offset + size);
-        } else {
-          const nextStart = type === 'meta' ? offset + headerSize + 4 : offset + headerSize;
-          if (nextStart < offset + size) {
-            clean(nextStart, offset + size, depth + 1);
-          }
-        }
-      } else if (CONTAINER_BOX_TYPES.has(type)) {
-        clean(offset + headerSize, offset + size, depth + 1);
-      }
-
-      offset += size;
-    }
-  };
-
-  clean(0, bytes.length, 0);
-}
+// Bitstream & container scrambling handled via scrambleWatermarkBitstreamsInPlace (@/lib/bitstream-scrambler)
 
 /**
  * Inspects an ArrayBuffer/Uint8Array for SynthID carriers, C2PA, UUID boxes, vendor encoder strings, and H.264 SEI NAL Unit Type 6 packets.
@@ -760,6 +685,8 @@ export const MetaCleanerPro: React.FC = () => {
   const [upscale1080p, setUpscale1080p] = useState<boolean>(true);
   const [deepScanEnabled, setDeepScanEnabled] = useState<boolean>(true);
   const [humanizationPreset, setHumanizationPreset] = useState<'none' | 'handheld' | 'warmth' | 'grain' | 'full_human'>('full_human');
+  const [synthidScrambleMode, setSynthidScrambleMode] = useState<SynthIdScrambleMode>('aggressive');
+  const [localScrambleReport, setLocalScrambleReport] = useState<BitstreamScrambleResult | null>(null);
 
   const [fileStatus, setFileStatus] = useState<{ text: string; color: 'amber' | 'emerald' | 'rose' }>({
     text: 'Menunggu Berkas',
@@ -1571,6 +1498,7 @@ export const MetaCleanerPro: React.FC = () => {
     setProbeErrorBefore(null);
     setProbeErrorAfter(null);
     setCloudProgress(null);
+    setLocalScrambleReport(null);
     setPreviewUrlBefore(URL.createObjectURL(file));
 
     setFileStatus({ text: 'Membaca ke RAM...', color: 'amber' });
@@ -1626,6 +1554,7 @@ export const MetaCleanerPro: React.FC = () => {
     setAutoCleanExpiresAt(null);
     setAutoCleanRemainingSec(null);
     setIsServerCleanedUp(false);
+    setLocalScrambleReport(null);
     seenServerLogRef.current.clear();
 
     const baseName = currentFile.name.replace(/\.[^/.]+$/, '');
@@ -1753,6 +1682,7 @@ export const MetaCleanerPro: React.FC = () => {
               upscale1080p,
               deepScan: deepScanEnabled,
               humanizationPreset,
+              synthidScrambleMode,
             }),
             cache: 'no-store',
             credentials: 'include',
@@ -1957,7 +1887,16 @@ export const MetaCleanerPro: React.FC = () => {
               const candidateUint8 = new Uint8Array(dlBuf);
               const mp4Check = validateMp4Buffer(candidateUint8, sourceByteLength);
               if (mp4Check.valid) {
-                neutralizeContainerBoxesInPlace(candidateUint8);
+                const scrambleRes = scrambleWatermarkBitstreamsInPlace(candidateUint8, {
+                  scrambleSeiPayloads: synthidScrambleMode !== 'off',
+                });
+                setLocalScrambleReport(scrambleRes);
+                if (scrambleRes.totalBytesScrambled > 0 || scrambleRes.seiUnitsDetected > 0) {
+                  appendLog(
+                    `✓ [CLIENT BITSTREAM SCRAMBLER] Digest #${scrambleRes.entropyDigestHex} • ${scrambleRes.seiPayloadsScrambled}/${scrambleRes.seiUnitsDetected} SEI + ${scrambleRes.watermarkAtomsScrambled} Atom (${scrambleRes.totalBytesScrambled} bytes) diacak secara kriptografis.`,
+                    'emerald'
+                  );
+                }
                 cachedBlob = new Blob([candidateUint8 as unknown as BlobPart], {
                   type: 'video/mp4',
                 });
@@ -2359,8 +2298,31 @@ export const MetaCleanerPro: React.FC = () => {
                     <option value="none">Standar Organik / Neutral</option>
                   </select>
                 </div>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-300 font-bold text-[11px]">SynthID Bitstream Scrambler:</span>
+                  <select
+                    value={synthidScrambleMode}
+                    onChange={(e) => setSynthidScrambleMode(e.target.value as SynthIdScrambleMode)}
+                    className="bg-slate-900 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-emerald-400 cursor-pointer"
+                  >
+                    <option value="aggressive">Aggressive Deep Scramble (CSPRNG + Chroma Drift)</option>
+                    <option value="balanced">Balanced Organic Scramble (NAL + Container)</option>
+                    <option value="off">Standard Strip (Zero-SEI Only)</option>
+                  </select>
+                </div>
+                {localScrambleReport && (
+                  <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-[10px] font-mono text-emerald-300">
+                    <span>SCRAMBLED #{localScrambleReport.entropyDigestHex}</span>
+                    <span>•</span>
+                    <span>{localScrambleReport.seiPayloadsScrambled}/{localScrambleReport.seiUnitsDetected} SEI</span>
+                    <span>•</span>
+                    <span>{localScrambleReport.watermarkAtomsScrambled} Atom</span>
+                    <span>•</span>
+                    <span>{localScrambleReport.totalBytesScrambled} B acak</span>
+                  </div>
+                )}
                 <p className="text-[10px] text-slate-400 leading-snug">
-                  Byte-level bitstream signature comparison &amp; humanization noise injection to break sterile AI rendering look.
+                  Byte-level signature scan, CSPRNG watermark &amp; SEI payload scrambling + Chroma-Luma subcarrier desync untuk menetralisir SynthID AI-Marker.
                 </p>
               </div>
             </div>

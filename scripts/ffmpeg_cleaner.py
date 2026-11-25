@@ -93,8 +93,8 @@ def _compute_target_dimensions(width: int, height: int, upscale_1080p: bool = Tr
     return even_w, even_h
 
 
-def generate_organic_job_profile() -> dict:
-    """Per-job randomized organic camera/ISP parameters so MetaCleaner never emits a static fingerprint."""
+def generate_organic_job_profile(synthid_scramble: str = "aggressive") -> dict:
+    """Per-job randomized organic camera/ISP parameters & SynthID entropy weights."""
     rng = random.SystemRandom()
     rot_sign = rng.choice((-1.0, 1.0))
     pitch_choice = (
@@ -102,6 +102,7 @@ def generate_organic_job_profile() -> dict:
         if rng.random() < 0.65
         else round(rng.uniform(1.014, 1.022), 4)
     )
+    is_agg = synthid_scramble == "aggressive"
     return {
         "trim_start": round(rng.uniform(0.03, 0.07), 3),
         "speed_pts": round(rng.uniform(0.970, 0.985), 4),
@@ -116,17 +117,22 @@ def generate_organic_job_profile() -> dict:
         "freq1": round(rng.uniform(1.03, 1.37), 2),
         "freq2": round(rng.uniform(2.47, 2.99), 2),
         "freq3": round(rng.uniform(4.13, 4.87), 2),
-        "crop_ratio": round(rng.uniform(0.940, 0.948), 3),
+        "crop_ratio": round(rng.uniform(0.936, 0.946) if is_agg else rng.uniform(0.940, 0.948), 3),
         "cas_strength": round(rng.uniform(0.17, 0.24), 2),
-        "noise_y": round(rng.uniform(2.65, 3.15), 2),
-        "noise_c": round(rng.uniform(1.00, 1.25), 2),
-        "post_noise_y": round(rng.uniform(1.05, 1.30), 2),
+        "noise_y": round(rng.uniform(3.05, 3.65) if is_agg else rng.uniform(2.65, 3.15), 2),
+        "noise_c": round(rng.uniform(1.20, 1.48) if is_agg else rng.uniform(1.00, 1.25), 2),
+        "post_noise_y": round(rng.uniform(1.20, 1.48) if is_agg else rng.uniform(1.05, 1.30), 2),
+        "hue_amp1": round(rot_sign * rng.uniform(0.32, 0.55), 3),
+        "hue_amp2": round(-rot_sign * rng.uniform(0.24, 0.42), 3),
         "contrast": round(rng.uniform(1.014, 1.022), 3),
         "saturation": round(rng.uniform(1.012, 1.024), 3),
         "gamma": round(rng.uniform(1.004, 1.012), 3),
         "wb_r": round(rng.uniform(1.006, 1.012), 3),
         "wb_g": round(rng.uniform(1.004, 1.009), 3),
         "wb_b": round(rng.uniform(1.005, 1.011), 3),
+        "psy_rd": f"{round(rng.uniform(1.05, 1.20), 2)},{round(rng.uniform(0.10, 0.16), 2)}",
+        "aq_strength": str(round(rng.uniform(1.10, 1.24), 2)),
+        "deblock": f"{rng.choice((-2, -1))},{rng.choice((-2, -1))}",
         "crf": "18",
         "pitch_ratio": pitch_choice,
         "seed_l": rng.randint(100000, 999999),
@@ -949,11 +955,11 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
                             data[offset+20:offset+24] = b"\x00\x00\x00\x00"
                     elif box_type in ("uuid", "c2pa", "jumb", "c2ma", "c2cl", "XMP_"):
                         data[offset+4:offset+8] = b"free"
-                        data[offset+hdr:offset+size] = b"\x00" * (size - hdr)
+                        data[offset+hdr:offset+size] = os.urandom(size - hdr)
                         sanitized_count += 1
                     elif box_type in ("©too", "©enc"):
                         data[offset+4:offset+8] = b"free"
-                        data[offset+hdr:offset+size] = b"\x00" * (size - hdr)
+                        data[offset+hdr:offset+size] = os.urandom(size - hdr)
                         sanitized_count += 1
                     elif box_type in ("udta", "meta", "ilst"):
                         payload_raw = data[offset+hdr:min(offset+size, offset+2048)]
@@ -972,7 +978,7 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
                         )
                         if is_ffmpeg_empty_skeleton or any(bad in payload for bad in bad_markers):
                             data[offset+4:offset+8] = b"free"
-                            data[offset+hdr:offset+size] = b"\x00" * (size - hdr)
+                            data[offset+hdr:offset+size] = os.urandom(size - hdr)
                             sanitized_count += 1
                         else:
                             next_start = offset + hdr + 4 if box_type == "meta" else offset + hdr
@@ -993,6 +999,253 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
     except Exception as e:
         sys.stderr.write(f"Binary sanitize warning: {e}\n")
     return sanitized_count
+
+
+def scramble_input_bitstream_watermarks(src_path: str, dst_path: str, codec_hint: str = "h264") -> dict:
+    """
+    Creates a pre-scrambled copy of src_path at dst_path where:
+    1) Provenance/watermark atoms (uuid, c2pa, jumb, udta, meta, XMP_) & avc1/hev1 compressor tags are overwritten with CSPRNG entropy;
+    2) H.264 SEI (NAL Type 6) & HEVC SEI (NAL Type 39/40) watermark payloads inside exact video sample ranges are randomized in-place prior to decoding.
+    """
+    import struct
+    shutil.copyfile(src_path, dst_path)
+    stats = {
+        "sei_detected": 0,
+        "sei_scrambled": 0,
+        "atoms_scrambled": 0,
+        "bytes_scrambled": 0,
+        "samples_scanned": 0,
+        "markers": [],
+    }
+    marker_hits: set[str] = set()
+    markers = (
+        "synthid", "c2pa", "jumb", "trainedalgorithmicmedia", "google", "deepmind",
+        "veo", "sora", "kling", "runway", "pika", "luma", "hailuo", "midjourney",
+        "seedance", "elevenlabs", "lavf", "lavc", "x264", "ffmpeg", "shopee", "s264",
+    )
+    container_types = {"moov", "trak", "mdia", "minf", "stbl", "edts", "dinf", "udta", "meta", "ilst"}
+
+    try:
+        with open(dst_path, "r+b") as f:
+            data = bytearray(f.read())
+            length = len(data)
+            if length < 64:
+                return stats
+
+            is_hevc = "hevc" in codec_hint.lower() or "h265" in codec_hint.lower()
+            moov_range: tuple[int, int] | None = None
+
+            def scramble_containers(start: int, end: int, depth: int):
+                nonlocal is_hevc, moov_range
+                if depth > 8:
+                    return
+                pos = start
+                while pos + 8 <= end:
+                    sz = struct.unpack(">I", data[pos:pos + 4])[0]
+                    tp = data[pos + 4:pos + 8].decode("latin-1", errors="ignore")
+                    hdr = 8
+                    if sz == 1 and pos + 16 <= end:
+                        sz = struct.unpack(">Q", data[pos + 8:pos + 16])[0]
+                        hdr = 16
+                    elif sz == 0:
+                        sz = end - pos
+                    if sz < hdr or pos + sz > end:
+                        break
+                    if depth == 0 and tp == "moov":
+                        moov_range = (pos + hdr, pos + sz)
+                    if tp in ("hev1", "hvc1"):
+                        is_hevc = True
+                    if tp == "stsd" and pos + hdr + 8 < pos + sz:
+                        scramble_containers(pos + hdr + 8, pos + sz, depth + 1)
+                    elif tp in ("avc1", "avc3", "hev1", "hvc1", "mp4v") and sz >= 86:
+                        if any(data[pos + 50:pos + 82]):
+                            data[pos + 50:pos + 82] = b"\x00" * 32
+                            stats["bytes_scrambled"] += 32
+                        if any(data[pos + 20:pos + 24]):
+                            data[pos + 20:pos + 24] = b"\x00\x00\x00\x00"
+                            stats["bytes_scrambled"] += 4
+                    elif tp in ("uuid", "c2pa", "jumb", "c2ma", "c2cl", "XMP_", "©too", "©enc", "tmcd"):
+                        sample = data[pos + hdr:min(pos + sz, pos + 2048)].decode("ascii", errors="ignore").lower()
+                        for mk in markers:
+                            if mk in sample:
+                                marker_hits.add(mk)
+                        marker_hits.add(tp)
+                        data[pos + 4:pos + 8] = b"free"
+                        data[pos + hdr:pos + sz] = os.urandom(sz - hdr)
+                        stats["atoms_scrambled"] += 1
+                        stats["bytes_scrambled"] += sz - hdr
+                    elif tp in ("udta", "meta", "ilst"):
+                        sample = data[pos + hdr:min(pos + sz, pos + 2048)].decode("ascii", errors="ignore").lower()
+                        hits = [mk for mk in markers if mk in sample]
+                        if hits:
+                            marker_hits.update(hits)
+                            data[pos + 4:pos + 8] = b"free"
+                            data[pos + hdr:pos + sz] = os.urandom(sz - hdr)
+                            stats["atoms_scrambled"] += 1
+                            stats["bytes_scrambled"] += sz - hdr
+                        else:
+                            nxt = pos + hdr + 4 if tp == "meta" else pos + hdr
+                            if nxt < pos + sz:
+                                scramble_containers(nxt, pos + sz, depth + 1)
+                    elif tp in container_types:
+                        nxt = pos + hdr + 4 if tp == "meta" else pos + hdr
+                        if nxt < pos + sz:
+                            scramble_containers(nxt, pos + sz, depth + 1)
+                    pos += sz
+
+            scramble_containers(0, length, 0)
+
+            # Extract video sample ranges from moov
+            video_ranges: list[tuple[int, int]] = []
+            if moov_range is not None:
+                m_start, m_end = moov_range
+                m_off = m_start
+                while m_off + 8 <= m_end:
+                    m_sz = struct.unpack(">I", data[m_off:m_off + 4])[0]
+                    m_tp = data[m_off + 4:m_off + 8].decode("latin-1", errors="ignore")
+                    if m_sz < 8 or m_off + m_sz > m_end:
+                        break
+                    if m_tp == "trak":
+                        is_vide = False
+                        stco: list[int] = []
+                        stsc: list[tuple[int, int]] = []
+                        stsz: list[int] = []
+
+                        def walk_trak(s: int, e: int, d: int):
+                            nonlocal is_vide
+                            if d > 6:
+                                return
+                            p = s
+                            while p + 8 <= e:
+                                sz = struct.unpack(">I", data[p:p + 4])[0]
+                                tp = data[p + 4:p + 8].decode("latin-1", errors="ignore")
+                                hdr = 8
+                                if sz == 1 and p + 16 <= e:
+                                    sz = struct.unpack(">Q", data[p + 8:p + 16])[0]
+                                    hdr = 16
+                                elif sz == 0:
+                                    sz = e - p
+                                if sz < hdr or p + sz > e:
+                                    break
+                                if tp == "hdlr" and p + hdr + 12 <= p + sz:
+                                    if data[p + hdr + 8:p + hdr + 12] == b"vide":
+                                        is_vide = True
+                                elif tp == "stco" and p + hdr + 8 <= p + sz:
+                                    cnt = struct.unpack(">I", data[p + hdr + 4:p + hdr + 8])[0]
+                                    for i in range(cnt):
+                                        op = p + hdr + 8 + i * 4
+                                        if op + 4 > p + sz:
+                                            break
+                                        stco.append(struct.unpack(">I", data[op:op + 4])[0])
+                                elif tp == "co64" and p + hdr + 8 <= p + sz:
+                                    cnt = struct.unpack(">I", data[p + hdr + 4:p + hdr + 8])[0]
+                                    for i in range(cnt):
+                                        op = p + hdr + 8 + i * 8
+                                        if op + 8 > p + sz:
+                                            break
+                                        stco.append(struct.unpack(">Q", data[op:op + 8])[0])
+                                elif tp == "stsc" and p + hdr + 8 <= p + sz:
+                                    cnt = struct.unpack(">I", data[p + hdr + 4:p + hdr + 8])[0]
+                                    for i in range(cnt):
+                                        op = p + hdr + 8 + i * 12
+                                        if op + 12 > p + sz:
+                                            break
+                                        fc, spc = struct.unpack(">II", data[op:op + 8])
+                                        stsc.append((fc, spc))
+                                elif tp == "stsz" and p + hdr + 12 <= p + sz:
+                                    fixed_sz, cnt = struct.unpack(">II", data[p + hdr + 4:p + hdr + 12])
+                                    if fixed_sz > 0:
+                                        stsz.extend([fixed_sz] * min(cnt, 200000))
+                                    else:
+                                        for i in range(cnt):
+                                            op = p + hdr + 12 + i * 4
+                                            if op + 4 > p + sz:
+                                                break
+                                            stsz.append(struct.unpack(">I", data[op:op + 4])[0])
+                                elif tp in container_types:
+                                    walk_trak(p + hdr, p + sz, d + 1)
+                                p += sz
+
+                        walk_trak(m_off + 8, m_off + m_sz, 0)
+                        if is_vide and stco and stsz:
+                            s_idx = 0
+                            for c_idx, c_off in enumerate(stco):
+                                if s_idx >= len(stsz):
+                                    break
+                                c_num = c_idx + 1
+                                spc = 1
+                                for fc, s_per_c in reversed(stsc):
+                                    if c_num >= fc:
+                                        spc = s_per_c
+                                        break
+                                cur = c_off
+                                for _ in range(spc):
+                                    if s_idx >= len(stsz):
+                                        break
+                                    sl = stsz[s_idx]
+                                    s_idx += 1
+                                    if 0 <= cur and cur + sl <= length:
+                                        video_ranges.append((cur, cur + sl))
+                                    cur += sl
+                            break
+                    m_off += m_sz
+
+            stats["samples_scanned"] = len(video_ranges)
+            for s_start, s_end in video_ranges:
+                pos = s_start
+                while pos + 6 <= s_end:
+                    nal_len = struct.unpack(">I", data[pos:pos + 4])[0]
+                    if nal_len < 2 or pos + 4 + nal_len > s_end:
+                        break
+                    nal_start = pos + 4
+                    nal_end = nal_start + nal_len
+                    hdr0 = data[nal_start]
+                    forbidden = (hdr0 & 0x80) != 0
+                    is_sei = False
+                    cursor = nal_start + 1
+                    if not is_hevc:
+                        if not forbidden and (hdr0 & 0x1F) == 6 and ((hdr0 >> 5) & 0x03) == 0:
+                            is_sei = True
+                    else:
+                        if not forbidden and ((hdr0 >> 1) & 0x3F) in (39, 40) and nal_start + 3 < nal_end:
+                            is_sei = True
+                            cursor = nal_start + 2
+
+                    if is_sei and cursor + 2 < nal_end:
+                        p_type = 0
+                        while cursor < nal_end - 1 and data[cursor] == 0xFF:
+                            p_type += 255
+                            cursor += 1
+                        if cursor < nal_end:
+                            p_type += data[cursor]
+                            cursor += 1
+                        while cursor < nal_end - 1 and data[cursor] == 0xFF:
+                            cursor += 1
+                        if cursor < nal_end:
+                            cursor += 1
+                        stats["sei_detected"] += 1
+                        p_text = data[nal_start:min(nal_end, nal_start + 512)].decode("ascii", errors="ignore").lower()
+                        for mk in markers:
+                            if mk in p_text:
+                                marker_hits.add(mk)
+                        sc_start = min(cursor, nal_end - 1)
+                        sc_end = nal_end - 1 if data[nal_end - 1] == 0x80 else nal_end
+                        if sc_end > sc_start and (p_type in (0, 1, 4, 5) or marker_hits):
+                            rnd = os.urandom(sc_end - sc_start)
+                            safe_bytes = bytes(0x04 + (b % 250) for b in rnd)
+                            data[sc_start:sc_end] = safe_bytes
+                            stats["sei_scrambled"] += 1
+                            stats["bytes_scrambled"] += sc_end - sc_start
+
+                    pos = nal_end
+
+            f.seek(0)
+            f.write(data)
+            f.truncate()
+        stats["markers"] = sorted(marker_hits)
+    except Exception as e:
+        sys.stderr.write(f"Pre-decode bitstream scramble warning: {e}\n")
+    return stats
 
 
 def verify_cleaned_output(output_path: str, expect_audio: bool = False) -> dict:
@@ -1071,6 +1324,9 @@ def process_video(
     force_keyframes: bool = True,
     camera_profile: str = "samsung",
     upscale_1080p: bool = True,
+    deep_scan: bool = True,
+    humanization_preset: str = "full_human",
+    synthid_scramble: str = "aggressive",
     progress_file: str | None = None,
     job_id: str = "",
 ) -> dict:
@@ -1091,7 +1347,7 @@ def process_video(
     src_fps = metrics["src_fps"]
     pulldown_detected = metrics["pulldown_detected"]
     effective_fps = metrics["effective_fps"]
-    job_profile = generate_organic_job_profile()
+    job_profile = generate_organic_job_profile(synthid_scramble=synthid_scramble)
     target_w, target_h = _compute_target_dimensions(vid_w, vid_h, upscale_1080p and camera_profile != "neutral")
 
     if mode == "deep_synthid" and duration_sec > 0:
@@ -1121,6 +1377,24 @@ def process_video(
         video_filter_str = build_synthid_video_filter(
             vid_w, vid_h, use_upscale, src_fps, pulldown_detected, effective_fps, job_profile
         )
+
+    # Inject Humanization Preset & Aggressive SynthID Spectral/Subcarrier Scrambling
+    if humanization_preset == "handheld":
+        video_filter_str += ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih"
+    elif humanization_preset == "warmth":
+        video_filter_str += ",colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015"
+    elif humanization_preset == "grain":
+        video_filter_str += ",noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t"
+    elif humanization_preset == "full_human":
+        video_filter_str += (
+            ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih,"
+            "colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015,"
+            "noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t"
+        )
+
+    if synthid_scramble == "aggressive":
+        video_filter_str += f",hue=h='{job_profile['hue_amp1']}*sin(t*1.17)+{job_profile['hue_amp2']}*cos(t*2.63)'"
+
     res_label = f"{vid_w}x{vid_h} -> {target_w}x{target_h}" if (target_w and (target_w != vid_w or target_h != vid_h)) else (f"{vid_w}x{vid_h}" if vid_w else "Auto")
     fps_mode_label = (
         f"Pulldown Repair ({effective_fps}fps->30fps)"
@@ -1145,6 +1419,11 @@ def process_video(
     )
     tracker.push_log(probe_msg)
 
+    if deep_scan:
+        ds_msg = f"[DEEP SCAN AI BITSTREAM] Byte-level scan aktif (Preset: {humanization_preset.upper()}, Scramble: {synthid_scramble.upper()})."
+        logs.append(ds_msg)
+        tracker.push_log(ds_msg)
+
     if camera_profile == "apple":
         camera_brand = "mp42"
         v_handler = "Core Media Video"
@@ -1168,8 +1447,23 @@ def process_video(
     movflags_str = "+faststart"
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        effective_input_path = input_path
+        if synthid_scramble != "off":
+            scrambled_in_path = os.path.join(temp_dir, "pre_scrambled_input.mp4")
+            sc_stats = scramble_input_bitstream_watermarks(input_path, scrambled_in_path, codec_name)
+            if os.path.isfile(scrambled_in_path) and os.path.getsize(scrambled_in_path) > 16384:
+                effective_input_path = scrambled_in_path
+            sc_msg = (
+                f"✓ [SYNTHID BITSTREAM SCRAMBLER] Mode={synthid_scramble.upper()} • "
+                f"{sc_stats['sei_scrambled']}/{sc_stats['sei_detected']} SEI Watermark NAL + "
+                f"{sc_stats['atoms_scrambled']} Atom Provenance ({sc_stats['bytes_scrambled']} bytes) diacak (PRNG)"
+                + (f" [{', '.join(sc_stats['markers'][:4])}]" if sc_stats['markers'] else "")
+            )
+            logs.append(sc_msg)
+            tracker.push_log(sc_msg)
+
         pass1_path = os.path.join(temp_dir, "pass1_reencoded.mp4")
-        source_for_pass2 = input_path
+        source_for_pass2 = effective_input_path
 
         effective_force_keyframes = force_keyframes and (mode not in ("all_in_one", "safe_mode", "unified"))
 
@@ -1185,9 +1479,10 @@ def process_video(
         ]
 
         x264_params = (
-            f"ref=2:bframes=2:b-adapt={b_adapt_mode}:b-pyramid=normal:weightp=1:psy-rd=1.10,0.12:aq-mode=2:"
-            "aq-strength=1.15:deblock=-2,-2:no-dct-decimate=1:nal-hrd=none:force-cfr=1:open-gop=0:"
-            "scenecut=40:keyint=60:min-keyint=15"
+            f"ref=2:bframes=2:b-adapt={b_adapt_mode}:b-pyramid=normal:weightp=1:"
+            f"psy-rd={job_profile['psy_rd']}:aq-mode=2:aq-strength={job_profile['aq_strength']}:"
+            f"deblock={job_profile['deblock']}:no-dct-decimate=1:nal-hrd=none:force-cfr=1:"
+            "open-gop=0:scenecut=40:keyint=60:min-keyint=15"
         )
 
         # TWO-STAGE ALL-IN-ONE EXPORT PROFILE:
@@ -1237,7 +1532,7 @@ def process_video(
                     "-y",
                     "-threads", "0",
                     "-filter_threads", "0",
-                    "-i", input_path,
+                    "-i", effective_input_path,
                 ]
                 if include_audio:
                     audio_fc = build_unified_audio_filter_complex(
@@ -1405,7 +1700,7 @@ def process_video(
                         "-y",
                         "-threads", "0",
                         "-filter_threads", "0",
-                        "-i", input_path,
+                        "-i", effective_input_path,
                     ]
                     if include_audio:
                         if mode == "unified":
@@ -1536,7 +1831,7 @@ def process_video(
                     FFMPEG_BIN,
                     "-y",
                     "-threads", "0",
-                    "-i", input_path,
+                    "-i", effective_input_path,
                     "-map", "0:v:0",
                 ]
                 if has_audio:
@@ -1588,7 +1883,7 @@ def process_video(
                 FFMPEG_BIN,
                 "-y",
                 "-i", source_for_pass2,
-                *(["-avoid_negative_ts", "make_zero"] if (effective_force_keyframes and source_for_pass2 == input_path) else []),
+                *(["-avoid_negative_ts", "make_zero"] if (effective_force_keyframes and source_for_pass2 == effective_input_path) else []),
                 "-map", "0:v:0",
             ]
             if has_audio:
@@ -1681,6 +1976,9 @@ def main():
     parser.add_argument("--force-keyframes", default="true", choices=["true", "false"])
     parser.add_argument("--camera-profile", default="samsung", choices=["samsung", "apple", "xiaomi", "neutral"])
     parser.add_argument("--upscale-1080p", default="true", choices=["true", "false"])
+    parser.add_argument("--deep-scan", default="true", choices=["true", "false"])
+    parser.add_argument("--humanization-preset", default="full_human")
+    parser.add_argument("--synthid-scramble", default="aggressive", choices=["aggressive", "balanced", "off"])
     parser.add_argument("--progress-file", default=None, help="Optional JSON progress file path")
     parser.add_argument("--job-id", default="", help="Job identifier for progress reporting")
     parser.add_argument("--defer-fail-to-caller", default="false", choices=["true", "false"])
@@ -1696,6 +1994,9 @@ def main():
             force_keyframes=(args.force_keyframes == "true"),
             camera_profile=args.camera_profile,
             upscale_1080p=(args.upscale_1080p == "true"),
+            deep_scan=(args.deep_scan == "true"),
+            humanization_preset=args.humanization_preset,
+            synthid_scramble=args.synthid_scramble,
             progress_file=args.progress_file,
             job_id=args.job_id,
         )

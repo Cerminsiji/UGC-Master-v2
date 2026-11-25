@@ -25,6 +25,10 @@ import {
   writeUploadMeta,
 } from '@/lib/meta-cleaner-progress';
 import { resolveMediaBinary } from '@/lib/video-probe';
+import {
+  scrambleWatermarkBitstreamsInPlace,
+  type SynthIdScrambleMode,
+} from '@/lib/bitstream-scrambler';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -306,7 +310,10 @@ async function runPythonCleaner(
   cameraProfile: string,
   upscale1080p: boolean,
   jobId: string,
-  progressFilePath?: string
+  progressFilePath?: string,
+  deepScan = true,
+  humanizationPreset = 'full_human',
+  synthidScrambleMode: SynthIdScrambleMode = 'aggressive'
 ): Promise<{ success: boolean; timedOut?: boolean; output_path?: string; size_bytes?: number; logs: string[]; error?: string }> {
   const pythonBin = 'python3';
   const scriptPath = resolvePythonScriptPath();
@@ -327,6 +334,12 @@ async function runPythonCleaner(
     cameraProfile,
     '--upscale-1080p',
     upscale1080p ? 'true' : 'false',
+    '--deep-scan',
+    deepScan ? 'true' : 'false',
+    '--humanization-preset',
+    humanizationPreset || 'full_human',
+    '--synthid-scramble',
+    synthidScrambleMode || 'aggressive',
     '--defer-fail-to-caller',
     'true',
   ];
@@ -431,12 +444,17 @@ interface OrganicJobProfile {
   noiseY: number;
   noiseC: number;
   postNoiseY: number;
+  hueAmp1: number;
+  hueAmp2: number;
   contrast: number;
   saturation: number;
   gamma: number;
   wbR: number;
   wbG: number;
   wbB: number;
+  psyRd: string;
+  aqStrength: string;
+  deblock: string;
   crf: string;
   pitchRatio: number;
   seedL: number;
@@ -450,10 +468,11 @@ function randFloat(min: number, max: number, decimals: number): number {
   return Number((min + unit * (max - min)).toFixed(decimals));
 }
 
-function generateOrganicJobProfile(): OrganicJobProfile {
+function generateOrganicJobProfile(synthidScrambleMode: SynthIdScrambleMode = 'aggressive'): OrganicJobProfile {
   const rotSign = crypto.randomInt(0, 2) === 0 ? -1 : 1;
   const pitchChoice =
     crypto.randomInt(0, 100) < 65 ? randFloat(0.976, 0.985, 4) : randFloat(1.014, 1.022, 4);
+  const isAgg = synthidScrambleMode === 'aggressive';
   return {
     trimStart: randFloat(0.03, 0.07, 3),
     speedPts: randFloat(0.970, 0.985, 4),
@@ -468,17 +487,22 @@ function generateOrganicJobProfile(): OrganicJobProfile {
     freq1: randFloat(1.03, 1.37, 2),
     freq2: randFloat(2.47, 2.99, 2),
     freq3: randFloat(4.13, 4.87, 2),
-    cropRatio: randFloat(0.940, 0.948, 3),
+    cropRatio: isAgg ? randFloat(0.936, 0.946, 3) : randFloat(0.940, 0.948, 3),
     casStrength: randFloat(0.17, 0.24, 2),
-    noiseY: randFloat(2.65, 3.15, 2),
-    noiseC: randFloat(1.00, 1.25, 2),
-    postNoiseY: randFloat(1.05, 1.30, 2),
+    noiseY: isAgg ? randFloat(3.05, 3.65, 2) : randFloat(2.65, 3.15, 2),
+    noiseC: isAgg ? randFloat(1.20, 1.48, 2) : randFloat(1.00, 1.25, 2),
+    postNoiseY: isAgg ? randFloat(1.20, 1.48, 2) : randFloat(1.05, 1.30, 2),
+    hueAmp1: Number((rotSign * randFloat(0.32, 0.55, 3)).toFixed(3)),
+    hueAmp2: Number((-rotSign * randFloat(0.24, 0.42, 3)).toFixed(3)),
     contrast: randFloat(1.014, 1.022, 3),
     saturation: randFloat(1.012, 1.024, 3),
     gamma: randFloat(1.004, 1.012, 3),
     wbR: randFloat(1.006, 1.012, 3),
     wbG: randFloat(1.004, 1.009, 3),
     wbB: randFloat(1.005, 1.011, 3),
+    psyRd: `${randFloat(1.05, 1.20, 2)},${randFloat(0.10, 0.16, 2)}`,
+    aqStrength: String(randFloat(1.10, 1.24, 2)),
+    deblock: `${crypto.randomInt(0, 2) === 0 ? -2 : -1},${crypto.randomInt(0, 2) === 0 ? -2 : -1}`,
     crf: '18',
     pitchRatio: pitchChoice,
     seedL: crypto.randomInt(100000, 999999),
@@ -1082,6 +1106,8 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
   };
 
   sanitizeRecursively(0, buf.length, 0);
+  // Cryptographically scramble any remaining watermark/C2PA/UUID payloads prior to free-box excision
+  scrambleWatermarkBitstreamsInPlace(buf, { scrambleSeiPayloads: false });
   return compactMp4RemoveFreeBoxes(buf);
 }
 
@@ -1154,6 +1180,7 @@ interface CleanerJobParams {
   upscale1080p: boolean;
   deepScan: boolean;
   humanizationPreset: string;
+  synthidScrambleMode: SynthIdScrambleMode;
   cameraProfileField: string;
   cameraBrand: string;
   videoHandlerName: string;
@@ -1249,6 +1276,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     upscale1080p,
     deepScan,
     humanizationPreset,
+    synthidScrambleMode,
     cameraProfileField,
     cameraBrand,
     videoHandlerName,
@@ -1258,6 +1286,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
   } = params;
 
   const nodeProgressState: CleanerProgressState = { ...initialProgressState };
+  const scrambledInputPath = path.join(os.tmpdir(), `metacleaner_scrambled_${activeJobId}_${Date.now()}.mp4`);
 
   try {
     // PRIMARY CLOUD ENGINE: Cloud Python FFmpeg Wrapper with Strict Frame-by-Frame Filtering
@@ -1271,7 +1300,10 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         cameraProfileField,
         upscale1080p,
         activeJobId,
-        progressFilePath
+        progressFilePath,
+        deepScan,
+        humanizationPreset,
+        synthidScrambleMode
       );
 
       if (pyResult?.timedOut) {
@@ -1388,7 +1420,26 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     }
 
     const serverLogs: string[] = [...(nodeProgressState.logs || [])];
-    let sourceForSeiStrip = inputPath;
+    let effectiveInputPath = inputPath;
+    if (synthidScrambleMode !== 'off') {
+      try {
+        const inputStat = await fs.stat(inputPath).catch(() => null);
+        if (inputStat && inputStat.size <= 250 * 1024 * 1024) {
+          const inBuf = await fs.readFile(inputPath);
+          const scStats = scrambleWatermarkBitstreamsInPlace(inBuf, { scrambleSeiPayloads: true });
+          await fs.writeFile(scrambledInputPath, inBuf);
+          effectiveInputPath = scrambledInputPath;
+          serverLogs.push(
+            `✓ [SYNTHID BITSTREAM SCRAMBLER] Mode=${synthidScrambleMode.toUpperCase()} • ${scStats.seiPayloadsScrambled}/${scStats.seiUnitsDetected} SEI Watermark NAL + ${scStats.watermarkAtomsScrambled} Atom Provenance (${scStats.totalBytesScrambled} bytes) diacak (CSPRNG)` +
+              (scStats.targetedMarkers.length ? ` [${scStats.targetedMarkers.slice(0, 4).join(', ')}]` : '')
+          );
+        }
+      } catch (scErr: any) {
+        serverLogs.push(`[SYNTHID SCRAMBLER INFO] Pre-scramble dilewati: ${scErr?.message || ''}`);
+      }
+    }
+
+    let sourceForSeiStrip = effectiveInputPath;
     let synthIdScrubbed = false;
     nodeProgressState.engine = 'Cloud Node.js FFmpeg Wrapper';
     nodeProgressState.stage = 'probing';
@@ -1403,7 +1454,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     let allInOneCommandDisplay = '';
     let allInOneAppliedFilter = '';
 
-    const jobProfile = generateOrganicJobProfile();
+    const jobProfile = generateOrganicJobProfile(synthidScrambleMode);
     let probedDurationSec = 0;
     let probedAudioDurationSec = 0;
     let probedFrames = 0;
@@ -1529,14 +1580,16 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
     const bAdaptMode = '1';
     const x264ParamString =
-      `ref=2:bframes=2:b-adapt=${bAdaptMode}:b-pyramid=normal:weightp=1:psy-rd=1.10,0.12:aq-mode=2:aq-strength=1.15:deblock=-2,-2:no-dct-decimate=1:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=60:min-keyint=15`;
+      `ref=2:bframes=2:b-adapt=${bAdaptMode}:b-pyramid=normal:weightp=1:psy-rd=${jobProfile.psyRd}:aq-mode=2:aq-strength=${jobProfile.aqStrength}:deblock=${jobProfile.deblock}:no-dct-decimate=1:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=60:min-keyint=15`;
 
     const movflagsStr = '+faststart';
 
     // STEP 1: All-in-One Single Pipeline OR Two-Pass Re-Encode (Unified / Safe Mode / Deep Anti-SynthID)
     if (isAllInOne || cleanerMode === 'unified' || cleanerMode === 'deep_synthid' || cleanerMode === 'safe_mode') {
       if (deepScan) {
-        serverLogs.push('[DEEP SCAN AI BITSTREAM] Analisis byte-level terhadap signature training model AI aktif.');
+        serverLogs.push(
+          `[DEEP SCAN AI BITSTREAM] Analisis byte-level aktif (Preset: ${humanizationPreset.toUpperCase()}, Scramble: ${synthidScrambleMode.toUpperCase()}).`
+        );
       }
       let presetFilterAppend = '';
       if (humanizationPreset === 'handheld') {
@@ -1548,6 +1601,10 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       } else if (humanizationPreset === 'full_human') {
         presetFilterAppend = ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih,colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015,noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t";
       }
+      const scramblePhaseFilterAppend =
+        synthidScrambleMode === 'aggressive'
+          ? `,hue=h='${jobProfile.hueAmp1}*sin(t*1.17)+${jobProfile.hueAmp2}*cos(t*2.73)'`
+          : '';
       const shouldUpscale = upscale1080p && cameraProfileField !== 'neutral';
       const baseVideoFilter =
         isAllInOne || cleanerMode === 'unified'
@@ -1555,7 +1612,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           : isSafeMode
             ? buildSafeModeVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
             : buildSynthIdVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile);
-      const dynamicSynthIdVideoFilter = baseVideoFilter + presetFilterAppend;
+      const dynamicSynthIdVideoFilter = baseVideoFilter + presetFilterAppend + scramblePhaseFilterAppend;
       const encodePreset = probedDurationSec > 10 ? 'superfast' : 'veryfast';
       const expectedOutDur =
         probedDurationSec > 0
@@ -1641,7 +1698,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-filter_threads',
           '0',
           '-i',
-          inputPath,
+          effectiveInputPath,
           '-filter_complex',
           fullAudioVisualFilterComplex,
           '-map',
@@ -1680,7 +1737,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-filter_threads',
           '0',
           '-i',
-          inputPath,
+          effectiveInputPath,
           '-map',
           '0:v:0',
           '-vf',
@@ -1770,7 +1827,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-filter_threads',
           '0',
           '-i',
-          inputPath,
+          effectiveInputPath,
           '-map',
           '0:v:0',
           '-vf',
@@ -1827,7 +1884,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-filter_threads',
           '0',
           '-i',
-          inputPath,
+          effectiveInputPath,
           '-filter_complex',
           fullAudioVisualFilterComplex,
           '-map',
@@ -1971,7 +2028,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         const keyframeArgs = [
           '-y',
           '-i',
-          inputPath,
+          effectiveInputPath,
           '-map',
           '0:v:0',
           '-map',
@@ -2098,7 +2155,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         '0',
         '-i',
         sourceForSeiStrip,
-        ...(effectiveForceKeyframes && sourceForSeiStrip === inputPath ? ['-avoid_negative_ts', 'make_zero'] : []),
+        ...(effectiveForceKeyframes && sourceForSeiStrip === effectiveInputPath ? ['-avoid_negative_ts', 'make_zero'] : []),
         ...activeStripFlags,
         ...cameraMetadataArgs,
         outputPath,
@@ -2294,6 +2351,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     if (!keepInputPath) {
       await fs.unlink(inputPath).catch(() => {});
     }
+    await fs.unlink(scrambledInputPath).catch(() => {});
     await fs.unlink(intermediatePath).catch(() => {});
     await fs.unlink(pass1Path).catch(() => {});
     await fs.unlink(outputPath).catch(() => {});
@@ -2365,6 +2423,7 @@ export async function POST(req: NextRequest) {
     let upscale1080p = true;
     let deepScan = true;
     let humanizationPreset = 'full_human';
+    let synthidScrambleMode: SynthIdScrambleMode = 'aggressive';
     let asyncMode = false;
     let cameraProfileField = 'samsung';
     let cameraBrand = 'mp42';
@@ -2428,6 +2487,11 @@ export async function POST(req: NextRequest) {
       }
       deepScan = body?.deepScan !== false && body?.deepScan !== 'false';
       humanizationPreset = typeof body?.humanizationPreset === 'string' ? body.humanizationPreset : 'full_human';
+      if (body?.synthidScrambleMode === 'balanced' || body?.synthidScrambleMode === 'off') {
+        synthidScrambleMode = body.synthidScrambleMode;
+      } else {
+        synthidScrambleMode = 'aggressive';
+      }
 
       cameraProfileField =
         typeof body?.cameraProfile === 'string' && body.cameraProfile
@@ -2444,6 +2508,9 @@ export async function POST(req: NextRequest) {
       const purgeField = formData.get('deepMetaPurge');
       const forceKeyframeField = formData.get('forceKeyframeInsertion');
       const upscaleField = formData.get('upscale1080p');
+      const deepScanField = formData.get('deepScan');
+      const presetField = formData.get('humanizationPreset');
+      const scrambleField = formData.get('synthidScrambleMode');
       asyncMode = formData.get('asyncMode') === 'true';
       const formJobId = sanitizeJobId(formData.get('jobId') as string | null);
       if (formJobId) {
@@ -2469,6 +2536,17 @@ export async function POST(req: NextRequest) {
       }
       if (upscaleField === 'false') {
         upscale1080p = false;
+      }
+      if (deepScanField === 'false') {
+        deepScan = false;
+      }
+      if (typeof presetField === 'string' && presetField) {
+        humanizationPreset = presetField;
+      }
+      if (scrambleField === 'balanced' || scrambleField === 'off') {
+        synthidScrambleMode = scrambleField;
+      } else {
+        synthidScrambleMode = 'aggressive';
       }
       if (!file) {
         return NextResponse.json(
@@ -2578,6 +2656,7 @@ export async function POST(req: NextRequest) {
       upscale1080p,
       deepScan,
       humanizationPreset,
+      synthidScrambleMode,
       cameraProfileField,
       cameraBrand,
       videoHandlerName,
