@@ -32,11 +32,7 @@ import type { ExternalProbeReport } from '@/lib/video-probe';
 import type { CleanerProgressState } from '@/lib/meta-cleaner-progress';
 import { WatermarkNoiseVisualizer } from './WatermarkNoiseVisualizer';
 import { analyzeVideoHumanization, HumanizationAnalysisReport } from '@/lib/humanization-analyzer';
-import {
-  scrambleWatermarkBitstreamsInPlace,
-  type BitstreamScrambleResult,
-  type SynthIdScrambleMode,
-} from '@/lib/bitstream-scrambler';
+import type { SynthIdScrambleMode } from '@/lib/bitstream-scrambler';
 
 interface LogEntry {
   id: string;
@@ -690,7 +686,6 @@ async function inspectVideoBuffer(
 
 export const MetaCleanerPro: React.FC = () => {
   const [currentFile, setCurrentFile] = useState<File | null>(null);
-  const [fileArrayBuffer, setFileArrayBuffer] = useState<ArrayBuffer | null>(null);
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
   const [previewUrlBefore, setPreviewUrlBefore] = useState<string | null>(null);
   const [previewUrlAfter, setPreviewUrlAfter] = useState<string | null>(null);
@@ -699,7 +694,8 @@ export const MetaCleanerPro: React.FC = () => {
   const [deepScanEnabled, setDeepScanEnabled] = useState<boolean>(true);
   const [humanizationPreset, setHumanizationPreset] = useState<'none' | 'handheld' | 'warmth' | 'grain' | 'full_human'>('full_human');
   const [synthidScrambleMode, setSynthidScrambleMode] = useState<SynthIdScrambleMode>('aggressive');
-  const [localScrambleReport, setLocalScrambleReport] = useState<BitstreamScrambleResult | null>(null);
+  const [processingMode, setProcessingMode] = useState<'all_in_one' | 'safe_mode' | 'remux_only'>('all_in_one');
+  const [forceKeyframeReencode, setForceKeyframeReencode] = useState<boolean>(true);
 
   const [fileStatus, setFileStatus] = useState<{ text: string; color: 'amber' | 'emerald' | 'rose' }>({
     text: 'Menunggu Berkas',
@@ -1139,6 +1135,7 @@ export const MetaCleanerPro: React.FC = () => {
             `✓ [SESSION PULIH] Hasil video Job ${parsed.jobId} masih tersedia di server hingga masa Auto-Clean 5 menit berakhir.`,
             'emerald'
           );
+          void runExternalProbe({ jobId: parsed.jobId, filename: outName }, 'after');
         } else if (pData.stage !== 'failed') {
           setIsProcessing(true);
           activeJobIdRef.current = parsed.jobId;
@@ -1511,7 +1508,6 @@ export const MetaCleanerPro: React.FC = () => {
     setProbeErrorBefore(null);
     setProbeErrorAfter(null);
     setCloudProgress(null);
-    setLocalScrambleReport(null);
     setPreviewUrlBefore(URL.createObjectURL(file));
 
     setFileStatus({ text: 'Membaca ke RAM...', color: 'amber' });
@@ -1519,7 +1515,6 @@ export const MetaCleanerPro: React.FC = () => {
     try {
       const inspectSlice = file.slice(0, 16 * 1024 * 1024);
       const buffer = await inspectSlice.arrayBuffer();
-      setFileArrayBuffer(buffer);
       setFileStatus({ text: 'Siap Upload ke Server', color: 'emerald' });
 
       const uint8 = new Uint8Array(buffer);
@@ -1567,7 +1562,6 @@ export const MetaCleanerPro: React.FC = () => {
     setAutoCleanExpiresAt(null);
     setAutoCleanRemainingSec(null);
     setIsServerCleanedUp(false);
-    setLocalScrambleReport(null);
     seenServerLogRef.current.clear();
 
     const baseName = currentFile.name.replace(/\.[^/.]+$/, '');
@@ -1688,9 +1682,9 @@ export const MetaCleanerPro: React.FC = () => {
             body: JSON.stringify({
               uploadId: activeUploadId,
               jobId,
-              mode: 'all_in_one',
+              mode: processingMode,
               deepMetaPurge: true,
-              forceKeyframeInsertion: false,
+              forceKeyframeInsertion: processingMode === 'remux_only' ? forceKeyframeReencode : false,
               cameraProfile,
               upscale1080p,
               deepScan: deepScanEnabled,
@@ -1900,16 +1894,6 @@ export const MetaCleanerPro: React.FC = () => {
               const candidateUint8 = new Uint8Array(dlBuf);
               const mp4Check = validateMp4Buffer(candidateUint8, sourceByteLength);
               if (mp4Check.valid) {
-                const scrambleRes = scrambleWatermarkBitstreamsInPlace(candidateUint8, {
-                  scrambleSeiPayloads: synthidScrambleMode !== 'off',
-                });
-                setLocalScrambleReport(scrambleRes);
-                if (scrambleRes.totalBytesScrambled > 0 || scrambleRes.seiUnitsDetected > 0) {
-                  appendLog(
-                    `✓ [CLIENT BITSTREAM SCRAMBLER] Digest #${scrambleRes.entropyDigestHex} • ${scrambleRes.seiPayloadsScrambled}/${scrambleRes.seiUnitsDetected} SEI + ${scrambleRes.watermarkAtomsScrambled} Atom (${scrambleRes.totalBytesScrambled} bytes) diacak secara kriptografis.`,
-                    'emerald'
-                  );
-                }
                 cachedBlob = new Blob([candidateUint8 as unknown as BlobPart], {
                   type: 'video/mp4',
                 });
@@ -1920,13 +1904,18 @@ export const MetaCleanerPro: React.FC = () => {
                   true,
                   cameraProfile
                 );
-                setAfterState((prev) => ({
-                  ...inspectedAfter,
-                  badgeText: prev.badgeClean === true ? prev.badgeText : inspectedAfter.badgeText,
-                  badgeClean: prev.badgeClean !== null ? prev.badgeClean : inspectedAfter.badgeClean,
-                  riskText: prev.riskClean !== null ? prev.riskText : inspectedAfter.riskText,
-                  riskClean: prev.riskClean !== null ? prev.riskClean : inspectedAfter.riskClean,
-                }));
+                setAfterState((prev) =>
+                  prev.riskClean !== null
+                    ? {
+                        ...prev,
+                        hex: inspectedAfter.hex,
+                        containerType: inspectedAfter.containerType,
+                        containerClean: inspectedAfter.containerClean,
+                        falsePositiveCheck: inspectedAfter.falsePositiveCheck,
+                        falsePositiveClean: inspectedAfter.falsePositiveClean,
+                      }
+                    : inspectedAfter
+                );
                 break;
               }
             }
@@ -1964,7 +1953,11 @@ export const MetaCleanerPro: React.FC = () => {
               : cameraProfile === 'xiaomi'
                 ? 'Xiaomi 14 Ultra (HyperOS / Leica)'
                 : 'Netral / Bitexact Clean'
-        } • Resolusi: ${upscale1080p && cameraProfile !== 'neutral' ? '1080p Full-HD BT.709' : 'Resolusi Asli BT.709'}.`,
+        } • ${
+          processingMode === 'remux_only'
+            ? 'Mode: Aggressive Container Transmuxing (Resolusi Asli)'
+            : `Resolusi: ${upscale1080p && cameraProfile !== 'neutral' ? '1080p Full-HD BT.709' : 'Resolusi Asli BT.709'}`
+        }.`,
         'indigo'
       );
 
@@ -2210,24 +2203,62 @@ export const MetaCleanerPro: React.FC = () => {
                 </div>
               )}
               <div className="pt-2 border-t border-slate-800/80 space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-bold">All-in-One Export Profile (Single Pipeline):</span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
-                    SAFE + DEEP + LOSSLESS
-                  </span>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-300 font-bold text-[11px]">Mode FFmpeg Re-Encode &amp; Transmux:</span>
+                  <select
+                    value={processingMode}
+                    onChange={(e) => setProcessingMode(e.target.value as 'all_in_one' | 'safe_mode' | 'remux_only')}
+                    className="bg-slate-900 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-emerald-400 cursor-pointer max-w-[230px]"
+                  >
+                    <option value="all_in_one">Re-Encode Penuh + Aggressive Transmux</option>
+                    <option value="safe_mode">Safe CFR Re-Encode + Transmux</option>
+                    <option value="remux_only">Transmuxing Kontainer Agresif (Purge Layer)</option>
+                  </select>
                 </div>
+
+                {processingMode === 'remux_only' && (
+                  <div className="flex justify-between items-center gap-2 bg-slate-900/90 border border-cyan-500/30 rounded-lg px-2.5 py-1.5">
+                    <span className="text-cyan-200 font-bold text-[10px]">
+                      Re-encode H.264 IDR/B-Frame saat Transmux:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setForceKeyframeReencode(!forceKeyframeReencode)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                        forceKeyframeReencode
+                          ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                          : 'bg-slate-800 text-slate-300 border border-slate-700'
+                      }`}
+                    >
+                      {forceKeyframeReencode ? 'AKTIF (Reset GOP)' : 'STREAM COPY MURNI'}
+                    </button>
+                  </div>
+                )}
+
                 <div className="space-y-1.5 text-[10px] font-mono">
                   <div className="flex items-center gap-2 text-cyan-300 bg-cyan-950/25 border border-cyan-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-                    <span>1. Zero-Pulldown 30fps Repair (0% Duplikat) + Per-Job Organic Warp &amp; ISP CAS</span>
+                    <span>
+                      {processingMode === 'remux_only'
+                        ? forceKeyframeReencode
+                          ? '1. Pass 1 Re-Encode H.264 Closed-GOP (crf/maxrate adaptif) tanpa filter visual berat'
+                          : '1. Direct Stream Copy (-c copy) tanpa re-encode piksel (Kecepatan Maksimal)'
+                        : processingMode === 'safe_mode'
+                          ? '1. Safe 30fps CFR Re-Encode (tanpa potong durasi) + Warp & CMOS Grain'
+                          : '1. Zero-Pulldown 30fps Repair (0% Duplikat) + Per-Job Organic Warp & ISP CAS'}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/25 border border-emerald-900/40 rounded-lg px-2.5 py-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-                    <span>2. Stereo Room Reflection + 21kHz Thermal Air (AAC 256k Anti-TTS)</span>
-                  </div>
+                  {processingMode !== 'remux_only' && (
+                    <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/25 border border-emerald-900/40 rounded-lg px-2.5 py-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                      <span>2. Stereo Room Reflection + 21kHz Thermal Air (AAC 192k Anti-TTS)</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 text-indigo-300 bg-indigo-950/25 border border-indigo-900/40 rounded-lg px-2.5 py-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
-                    <span>3. Pass 2 Zero-SEI Remux + Zero-Free MP4 + Audit Integritas</span>
+                    <span>
+                      {processingMode === 'remux_only' ? '2.' : '3.'} Aggressive Transmux (-map 0:V:0 -dn -sn -map_metadata -1) + Eksisi udta/meta/uuid/c2pa/SEI
+                    </span>
                   </div>
                 </div>
               </div>
@@ -2250,11 +2281,16 @@ export const MetaCleanerPro: React.FC = () => {
                 </div>
                 <div className="flex justify-between items-center gap-2">
                   <span className="text-slate-300 font-bold text-[11px]">
-                    Target Resolusi Kamera:
+                    Target Resolusi Kamera{processingMode === 'remux_only' ? ' (Khusus Re-Encode)' : ''}:
                   </span>
-                  <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded p-0.5">
+                  <div
+                    className={`flex items-center gap-1 bg-slate-900 border border-slate-700 rounded p-0.5 ${
+                      processingMode === 'remux_only' ? 'opacity-50 pointer-events-none' : ''
+                    }`}
+                  >
                     <button
                       type="button"
+                      disabled={processingMode === 'remux_only'}
                       onClick={() => setUpscale1080p(true)}
                       className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer whitespace-nowrap ${
                         upscale1080p
@@ -2266,6 +2302,7 @@ export const MetaCleanerPro: React.FC = () => {
                     </button>
                     <button
                       type="button"
+                      disabled={processingMode === 'remux_only'}
                       onClick={() => setUpscale1080p(false)}
                       className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer whitespace-nowrap ${
                         !upscale1080p
@@ -2278,7 +2315,7 @@ export const MetaCleanerPro: React.FC = () => {
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-400 leading-snug">
-                  Menstandarkan handler kamera native (<code>VideoHandle</code> / <code>Core Media Video</code>) tanpa menyisipkan box <code>mdta</code> sintetik, menstandarkan 1080p BT.709, &amp; mengompaksi atom <code>free</code>.
+                  Menstandarkan handler kamera native (<code>VideoHandle</code> / <code>Core Media Video</code>) tanpa menyisipkan box <code>mdta</code> sintetik, menstandarkan 1080p BT.709 saat re-encode, &amp; mengompaksi atom <code>free</code>.
                 </p>
               </div>
 
@@ -2298,11 +2335,16 @@ export const MetaCleanerPro: React.FC = () => {
                   </button>
                 </div>
                 <div className="flex justify-between items-center gap-2">
-                  <span className="text-slate-300 font-bold text-[11px]">Humanization Preset:</span>
+                  <span className="text-slate-300 font-bold text-[11px]">
+                    Humanization Preset{processingMode === 'remux_only' ? ' (Khusus Re-Encode)' : ''}:
+                  </span>
                   <select
                     value={humanizationPreset}
+                    disabled={processingMode === 'remux_only'}
                     onChange={(e) => setHumanizationPreset(e.target.value as any)}
-                    className="bg-slate-900 border border-slate-700 text-indigo-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-indigo-500 cursor-pointer"
+                    className={`bg-slate-900 border border-slate-700 text-indigo-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-indigo-500 ${
+                      processingMode === 'remux_only' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                    }`}
                   >
                     <option value="full_human">Complete Organic Suite (Jitter + Warmth + Grain)</option>
                     <option value="handheld">Handheld Cam Jitter (Micro-Wobble)</option>
@@ -2323,19 +2365,21 @@ export const MetaCleanerPro: React.FC = () => {
                     <option value="off">Standard Strip (Zero-SEI Only)</option>
                   </select>
                 </div>
-                {localScrambleReport && (
+                {cloudProgress?.scrambleStats && (
                   <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-[10px] font-mono text-emerald-300">
-                    <span>SCRAMBLED #{localScrambleReport.entropyDigestHex}</span>
+                    <span>SCRAMBLED (SERVER CSPRNG)</span>
                     <span>•</span>
-                    <span>{localScrambleReport.seiPayloadsScrambled}/{localScrambleReport.seiUnitsDetected} SEI</span>
+                    <span>
+                      {cloudProgress.scrambleStats.seiPayloadsScrambled}/{cloudProgress.scrambleStats.seiUnitsDetected} SEI
+                    </span>
                     <span>•</span>
-                    <span>{localScrambleReport.watermarkAtomsScrambled} Atom</span>
+                    <span>{cloudProgress.scrambleStats.watermarkAtomsScrambled} Atom</span>
                     <span>•</span>
-                    <span>{localScrambleReport.totalBytesScrambled} B acak</span>
+                    <span>{cloudProgress.scrambleStats.totalBytesScrambled} B acak</span>
                   </div>
                 )}
                 <p className="text-[10px] text-slate-400 leading-snug">
-                  Byte-level signature scan, CSPRNG watermark &amp; SEI payload scrambling + Chroma-Luma subcarrier desync untuk menetralisir SynthID AI-Marker.
+                  Byte-level signature scan, CSPRNG watermark &amp; SEI payload scrambling di server + Chroma-Luma subcarrier desync untuk menetralisir SynthID AI-Marker.
                 </p>
               </div>
             </div>
@@ -2920,8 +2964,14 @@ export const MetaCleanerPro: React.FC = () => {
                         type="button"
                         onClick={() => {
                           if (humanizationReport.suggestions.length > 0 && humanizationReport.suggestions[0].recommendedPreset && humanizationReport.suggestions[0].recommendedPreset !== 'none') {
-                            setHumanizationPreset(humanizationReport.suggestions[0].recommendedPreset as any);
-                            appendLog(`✓ [HUMANIZATION ANALYZER] Menerapkan preset rekomendasi: ${humanizationReport.suggestions[0].recommendedPreset.toUpperCase()}`, 'emerald');
+                            const rec = humanizationReport.suggestions[0].recommendedPreset as any;
+                            setHumanizationPreset(rec);
+                            if (processingMode === 'remux_only') {
+                              setProcessingMode('all_in_one');
+                              appendLog(`✓ [HUMANIZATION ANALYZER] Menerapkan preset rekomendasi: ${String(rec).toUpperCase()} & mengalihkan mode ke Re-Encode Penuh`, 'emerald');
+                            } else {
+                              appendLog(`✓ [HUMANIZATION ANALYZER] Menerapkan preset rekomendasi: ${String(rec).toUpperCase()}`, 'emerald');
+                            }
                           }
                         }}
                         className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-indigo-900/30 cursor-pointer"

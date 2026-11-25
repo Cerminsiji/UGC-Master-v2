@@ -314,7 +314,15 @@ async function runPythonCleaner(
   deepScan = true,
   humanizationPreset = 'full_human',
   synthidScrambleMode: SynthIdScrambleMode = 'aggressive'
-): Promise<{ success: boolean; timedOut?: boolean; output_path?: string; size_bytes?: number; logs: string[]; error?: string }> {
+): Promise<{
+  success: boolean;
+  timedOut?: boolean;
+  output_path?: string;
+  size_bytes?: number;
+  scramble_stats?: CleanerProgressState['scrambleStats'];
+  logs: string[];
+  error?: string;
+}> {
   const pythonBin = 'python3';
   const scriptPath = resolvePythonScriptPath();
 
@@ -563,46 +571,6 @@ function buildCadenceFinish(srcFps = 0, pulldownDetected = false): string {
   return 'fps=30';
 }
 
-function buildSynthIdVideoFilter(
-  width = 0,
-  height = 0,
-  upscale1080p = true,
-  srcFps = 0,
-  pulldownDetected = false,
-  effectiveFps = 0,
-  jobProfile?: OrganicJobProfile
-): string {
-  const p = jobProfile || generateOrganicJobProfile();
-  const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
-  const scaleStep =
-    targetW >= 64 && targetH >= 64
-      ? `scale=${targetW}:${targetH}:flags=bicubic+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv`
-      : 'scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=bicubic+accurate_rnd:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv';
-
-  const prep = buildCadencePrep(pulldownDetected, effectiveFps);
-  const finish = buildCadenceFinish(srcFps, pulldownDetected);
-
-  return [
-    ...(prep ? [prep] : []),
-    'setpts=0.961538*(PTS-STARTPTS)',
-    finish,
-    'format=yuv420p',
-    "tmix=frames=2:weights='0.86 0.14'",
-    'hqdn3d=1.1:0.9:1.6:1.2',
-    `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${p.lensK1}:k2=${p.lensK2}`,
-    `rotate=a='${p.rotBias}+${p.rotA1}*sin(t*${p.freq1})+${p.rotA2}*cos(t*${p.freq2})+${p.rotA3}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
-    `crop=w=trunc(iw*${p.cropRatio}/2)*2:h=trunc(ih*${p.cropRatio}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.78).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.75).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.75).toFixed(4)}*sin(t*${p.freq3}))':y='(ih-oh)*0.54+ih*(${(p.rotA1 * 0.65).toFixed(4)}*cos(t*0.93)+${(p.rotA2 * 0.65).toFixed(4)}*sin(t*2.41)+${(p.rotA3 * 0.65).toFixed(4)}*cos(t*3.97))'`,
-    `noise=c0s=${p.noiseY}:c1s=${p.noiseC}:c2s=${p.noiseC}:allf=t`,
-    scaleStep,
-    'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
-    `colorchannelmixer=rr=${p.wbR}:rg=-0.006:rb=-0.002:gr=-0.003:gg=${p.wbG}:gb=-0.002:br=-0.003:bg=-0.004:bb=${p.wbB}`,
-    `eq=contrast=${p.contrast}:brightness='0.0016*sin(t*0.83)+0.0010*cos(t*1.97)':saturation=${p.saturation}:gamma=${p.gamma}:eval=frame`,
-    `cas=strength=${p.casStrength}`,
-    `noise=c0s=${p.postNoiseY}:c1s=0:c2s=0:allf=t`,
-    'setsar=1',
-  ].join(',');
-}
-
 function buildSafeModeVideoFilter(
   width = 0,
   height = 0,
@@ -720,28 +688,6 @@ function buildOrganicRoomAndVoiceChain(
   ].join(';');
 }
 
-function buildSynthIdAudioFilterComplex(
-  voiceLabel = '[0:a]',
-  outLabel = '[aout]',
-  jobProfile?: OrganicJobProfile,
-  padTargetDur = 0,
-  speechGainDb = 0
-): string {
-  const p = jobProfile || generateOrganicJobProfile();
-  const atempoVal = (1.04 / p.pitchRatio).toFixed(5);
-  const apadFilter =
-    padTargetDur > 0.2 ? `apad=whole_dur=${Math.max(padTargetDur + 0.35, 1.0).toFixed(3)}` : 'apad=pad_dur=0.35';
-  return buildOrganicRoomAndVoiceChain(
-    `${voiceLabel}asetpts=PTS-STARTPTS,`,
-    outLabel,
-    p,
-    atempoVal,
-    apadFilter,
-    1.30,
-    speechGainDb
-  );
-}
-
 function buildSafeModeAudioFilterComplex(
   voiceLabel = '[0:a]',
   outLabel = '[aout]',
@@ -793,58 +739,20 @@ function buildUnifiedAudioFilterComplex(
 }
 
 /**
- * Explicit server-side FFmpeg flags to strip SEI NAL Unit Type 6 packets
- * and container/stream metadata without corrupting video playback.
+ * Strict stream-copy container rewrite flags to strip SEI NAL Unit Type 6 packets,
+ * data/subtitle/timecode tracks, and vendor tags while keeping B-frame PTS/DTS intact.
  */
-const SERVER_FFMPEG_SEI_STRIP_FLAGS: string[] = [
+const STREAM_COPY_SEI_STRIP_FLAGS: string[] = [
   '-map',
-  '0:v:0',
+  '0:V:0',
   '-map',
-  '0:a?',
-  '-dn',
-  '-sn',
-  '-c',
-  'copy',
-  '-map_metadata',
-  '-1',
-  '-map_metadata:g',
-  '-1',
-  '-map_chapters',
-  '-1',
-  '-map_metadata:s:v',
-  '-1',
-  '-map_metadata:s:a',
-  '-1',
-  '-bsf:v',
-  'filter_units=remove_types=6',
-  '-write_tmcd',
-  '0',
-  '-metadata:s:v:0',
-  'handler_name=VideoHandle',
-  '-metadata:s:a:0',
-  'handler_name=SoundHandle',
-  '-brand',
-  'mp42',
-  '-fflags',
-  '+bitexact',
-  '-flags:v',
-  '+bitexact',
-  '-flags:a',
-  '+bitexact',
-  '-movflags',
-  '+faststart',
-];
-
-/**
- * Deep Meta Purge: Stricter stream-copy container rewrite flags to guarantee
- * zero remaining SEI (Supplemental Enhancement Information), data tracks, timecode tracks,
- * or vendor tags in the output MP4 container while keeping B-frame PTS/DTS 100% intact.
- */
-const DEEP_META_PURGE_STREAM_COPY_FLAGS: string[] = [
+  '0:a:0?',
   '-map',
-  '0:v:0',
+  '-0:d',
   '-map',
-  '0:a?',
+  '-0:s',
+  '-map',
+  '-0:t',
   '-dn',
   '-sn',
   '-c',
@@ -1074,20 +982,13 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
       } else if ((type === 'mvhd' || type === 'tkhd' || type === 'mdhd') && offset + hdr + 12 <= offset + size) {
         const ver = buf[offset + hdr];
         if (ver === 0 && offset + hdr + 12 <= offset + size) {
-          const ctime = view.getUint32(offset + hdr + 4, false);
-          if (ctime === 0) {
-            view.setUint32(offset + hdr + 4, macEpochCtime >>> 0, false);
-            view.setUint32(offset + hdr + 8, macEpochMtime >>> 0, false);
-          }
+          view.setUint32(offset + hdr + 4, macEpochCtime >>> 0, false);
+          view.setUint32(offset + hdr + 8, macEpochMtime >>> 0, false);
         } else if (ver === 1 && offset + hdr + 20 <= offset + size) {
-          const cHi = view.getUint32(offset + hdr + 4, false);
-          const cLo = view.getUint32(offset + hdr + 8, false);
-          if (cHi === 0 && cLo === 0) {
-            view.setUint32(offset + hdr + 4, 0, false);
-            view.setUint32(offset + hdr + 8, macEpochCtime >>> 0, false);
-            view.setUint32(offset + hdr + 12, 0, false);
-            view.setUint32(offset + hdr + 16, macEpochMtime >>> 0, false);
-          }
+          view.setUint32(offset + hdr + 4, 0, false);
+          view.setUint32(offset + hdr + 8, macEpochCtime >>> 0, false);
+          view.setUint32(offset + hdr + 12, 0, false);
+          view.setUint32(offset + hdr + 16, macEpochMtime >>> 0, false);
         }
       } else if (type === 'stsd' && offset + hdr + 8 < offset + size) {
         sanitizeRecursively(offset + hdr + 8, offset + size, depth + 1);
@@ -1095,37 +996,37 @@ function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
         // Clear 32-byte compressorname Pascal string (Lavc libx264) & vendor bytes inside VisualSampleEntry
         buf.fill(0x00, offset + 50, offset + 82);
         buf.fill(0x00, offset + 20, offset + 24);
-      } else if (['uuid', 'c2pa', 'jumb', 'c2ma', 'c2cl', 'XMP_'].includes(type)) {
+      } else if (
+        [
+          'uuid',
+          'c2pa',
+          'jumb',
+          'c2ma',
+          'c2cl',
+          'XMP_',
+          '©too',
+          '©enc',
+          'tmcd',
+          'udta',
+          'meta',
+          'ilst',
+          'keys',
+          'cprt',
+          'xml ',
+          'bxml',
+          'auth',
+          'titl',
+          'dscp',
+          'loci',
+          'albm',
+          'kywd',
+        ].includes(type)
+      ) {
         buf[offset + 4] = 0x66; // 'f'
         buf[offset + 5] = 0x72; // 'r'
         buf[offset + 6] = 0x65; // 'e'
         buf[offset + 7] = 0x65; // 'e'
         buf.fill(0x00, offset + hdr, offset + size);
-      } else if (type === '©too' || type === '©enc') {
-        buf[offset + 4] = 0x66;
-        buf[offset + 5] = 0x72;
-        buf[offset + 6] = 0x65;
-        buf[offset + 7] = 0x65;
-        buf.fill(0x00, offset + hdr, offset + size);
-      } else if (['udta', 'meta', 'ilst'].includes(type)) {
-        const rawSub = buf.subarray(offset + hdr, Math.min(offset + size, offset + 2048));
-        const payload = decoder.decode(rawSub).toLowerCase();
-        const isFfmpegEmptySkeleton =
-          (type === 'udta' && payload.includes('mdirappl') && size <= 128) ||
-          (type === 'meta' && payload.includes('mdirappl') && size <= 120) ||
-          (type === 'ilst' && size <= 16);
-        if (isFfmpegEmptySkeleton || badMarkers.some((m) => payload.includes(m))) {
-          buf[offset + 4] = 0x66; // 'f'
-          buf[offset + 5] = 0x72; // 'r'
-          buf[offset + 6] = 0x65; // 'e'
-          buf[offset + 7] = 0x65; // 'e'
-          buf.fill(0x00, offset + hdr, offset + size);
-        } else {
-          const nextStart = type === 'meta' ? offset + hdr + 4 : offset + hdr;
-          if (nextStart < offset + size) {
-            sanitizeRecursively(nextStart, offset + size, depth + 1);
-          }
-        }
       } else if (['moov', 'trak', 'mdia', 'minf', 'stbl', 'edts', 'dinf'].includes(type)) {
         sanitizeRecursively(offset + hdr, offset + size, depth + 1);
       }
@@ -1145,7 +1046,32 @@ function verifyCleanedMp4Boxes(buf: Buffer): void {
   }
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const decoder = new TextDecoder('ascii', { fatal: false });
-  const badBoxes = new Set(['uuid', 'c2pa', 'jumb', 'free', 'skip', 'udta', 'meta', 'ilst']);
+  const badBoxes = new Set([
+    'uuid',
+    'c2pa',
+    'jumb',
+    'c2ma',
+    'c2cl',
+    'XMP_',
+    '©too',
+    '©enc',
+    'tmcd',
+    'free',
+    'skip',
+    'udta',
+    'meta',
+    'ilst',
+    'keys',
+    'cprt',
+    'xml ',
+    'bxml',
+    'auth',
+    'titl',
+    'dscp',
+    'loci',
+    'albm',
+    'kywd',
+  ]);
   const foundBad: string[] = [];
   let hasFtyp = false;
   let hasMoov = false;
@@ -1202,7 +1128,7 @@ interface CleanerJobParams {
   outputPath: string;
   progressFilePath: string;
   originalName: string;
-  cleanerMode: 'all_in_one' | 'unified' | 'deep_synthid' | 'safe_mode' | 'remux_only';
+  cleanerMode: 'all_in_one' | 'safe_mode' | 'remux_only';
   deepMetaPurge: boolean;
   forceKeyframeInsertion: boolean;
   upscale1080p: boolean;
@@ -1343,11 +1269,6 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       if (pyResult?.success && fsSync.existsSync(outputPath)) {
         const statPy = await fs.stat(outputPath).catch(() => null);
         if (statPy && statPy.size > 16384) {
-          const rawCleanedBuffer =
-            !returnBuffer && statPy.size > 25 * 1024 * 1024
-              ? null
-              : await fs.readFile(outputPath);
-
           const existingBeforePersist = await readProgressSafe(activeJobId);
           await writeProgressAtomic({
             ...(existingBeforePersist || nodeProgressState),
@@ -1366,10 +1287,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             ttlSeconds: number;
           };
 
-          if (!rawCleanedBuffer) {
-            // Python already ran sanitize_binary_boxes_in_place + verify_cleaned_output; persist atomically
+          if (!returnBuffer) {
+            // Python already ran sanitize_binary_boxes_in_place + verify_cleaned_output; persist directly without Node RAM re-read
             persisted = await persistCleanedFileForDownload(activeJobId, outputPath, uploadId);
           } else {
+            const rawCleanedBuffer = await fs.readFile(outputPath);
             cleanedBuffer = neutralizeContainerMetadataInPlace(rawCleanedBuffer);
             verifyCleanedMp4Boxes(cleanedBuffer);
             finalSizeBytes = cleanedBuffer.byteLength;
@@ -1403,6 +1325,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             outputSizeBytes: finalSizeBytes,
             downloadUrl: persisted.downloadUrl,
             appliedFilter,
+            scrambleStats: pyResult.scramble_stats || existingPyProgress?.scrambleStats,
             logs: Array.isArray(pyResult.logs) ? pyResult.logs : existingPyProgress?.logs || [],
             message: `Selesai 100% (${(finalSizeBytes / (1024 * 1024)).toFixed(2)} MB) • Auto-Clean server dalam 5 menit`,
           });
@@ -1457,6 +1380,13 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           const scStats = scrambleWatermarkBitstreamsInPlace(inBuf, { scrambleSeiPayloads: true });
           await fs.writeFile(scrambledInputPath, inBuf);
           effectiveInputPath = scrambledInputPath;
+          nodeProgressState.scrambleStats = {
+            seiUnitsDetected: scStats.seiUnitsDetected,
+            seiPayloadsScrambled: scStats.seiPayloadsScrambled,
+            watermarkAtomsScrambled: scStats.watermarkAtomsScrambled,
+            totalBytesScrambled: scStats.totalBytesScrambled,
+            targetedMarkers: scStats.targetedMarkers.slice(0, 6),
+          };
           serverLogs.push(
             `✓ [SYNTHID BITSTREAM SCRAMBLER] Mode=${synthidScrambleMode.toUpperCase()} • ${scStats.seiPayloadsScrambled}/${scStats.seiUnitsDetected} SEI Watermark NAL + ${scStats.watermarkAtomsScrambled} Atom Provenance (${scStats.totalBytesScrambled} bytes) diacak (CSPRNG)` +
               (scStats.targetedMarkers.length ? ` [${scStats.targetedMarkers.slice(0, 4).join(', ')}]` : '')
@@ -1471,16 +1401,17 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     let synthIdScrubbed = false;
     nodeProgressState.engine = 'Cloud Node.js FFmpeg Wrapper';
     nodeProgressState.stage = 'probing';
+    nodeProgressState.logs = serverLogs;
     nodeProgressState.message = 'Beralih ke Cloud Node.js FFmpeg Wrapper & ffprobe...';
     await writeProgressAtomic(nodeProgressState);
 
     const isAllInOne = cleanerMode === 'all_in_one';
     const isSafeMode = cleanerMode === 'safe_mode';
-    const isTemporalCfrMode = isAllInOne || cleanerMode === 'safe_mode' || cleanerMode === 'unified';
+    const isTemporalCfrMode = isAllInOne || isSafeMode;
     const effectiveForceKeyframes = forceKeyframeInsertion && !isTemporalCfrMode;
-    let skipPass2 = false;
-    let allInOneCommandDisplay = '';
-    let allInOneAppliedFilter = '';
+    const skipPass2 = false;
+    const allInOneCommandDisplay = '';
+    const allInOneAppliedFilter = '';
 
     const jobProfile = generateOrganicJobProfile(synthidScrambleMode, humanizationPreset);
     let probedDurationSec = 0;
@@ -1616,9 +1547,15 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       `ref=${jobProfile.refs}:bframes=${jobProfile.bframes}:b-adapt=${bAdaptMode}:b-pyramid=normal:weightp=1:psy-rd=${jobProfile.psyRd}:aq-mode=${jobProfile.aqMode}:aq-strength=${jobProfile.aqStrength}:deblock=${jobProfile.deblock}:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=${jobProfile.keyint}:min-keyint=${jobProfile.minKeyint}`;
 
     const movflagsStr = '+faststart';
+    const shouldUpscale = upscale1080p && cameraProfileField !== 'neutral';
+    const targetMaxBps = shouldUpscale
+      ? Math.max(3_000_000, Math.min(5_000_000, Math.round((srcBitrate || 4_000_000) * 1.15)))
+      : Math.max(2_000_000, Math.min(4_200_000, Math.round((srcBitrate || 3_600_000) * 0.95)));
+    const maxrateK = `${Math.max(2000, Math.floor(targetMaxBps / 1000))}k`;
+    const bufsizeK = `${Math.max(4000, Math.floor((targetMaxBps * 2) / 1000))}k`;
 
-    // STEP 1: All-in-One Single Pipeline OR Two-Pass Re-Encode (Unified / Safe Mode / Deep Anti-SynthID)
-    if (isAllInOne || cleanerMode === 'unified' || cleanerMode === 'deep_synthid' || cleanerMode === 'safe_mode') {
+    // STEP 1: All-in-One Single Pipeline OR Safe Mode Temporal CFR Re-Encode
+    if (isAllInOne || isSafeMode) {
       if (deepScan) {
         serverLogs.push(
           `[DEEP SCAN AI BITSTREAM] Analisis byte-level aktif (Preset: ${humanizationPreset.toUpperCase()}, Scramble: ${synthidScrambleMode.toUpperCase()}).`
@@ -1632,28 +1569,17 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         synthidScrambleMode === 'aggressive'
           ? `,hue=h='${jobProfile.hueAmp1}*sin(t*1.17)+${jobProfile.hueAmp2}*cos(t*2.73)'`
           : '';
-      const shouldUpscale = upscale1080p && cameraProfileField !== 'neutral';
-      const targetMaxBps = shouldUpscale
-        ? Math.max(3_000_000, Math.min(5_000_000, Math.round((srcBitrate || 4_000_000) * 1.15)))
-        : Math.max(2_000_000, Math.min(4_200_000, Math.round((srcBitrate || 3_600_000) * 0.95)));
-      const maxrateK = `${Math.max(2000, Math.floor(targetMaxBps / 1000))}k`;
-      const bufsizeK = `${Math.max(4000, Math.floor((targetMaxBps * 2) / 1000))}k`;
 
-      const baseVideoFilter =
-        isAllInOne || cleanerMode === 'unified'
-          ? buildUnifiedVideoFilter(vidW, vidH, probedDurationSec, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
-          : isSafeMode
-            ? buildSafeModeVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
-            : buildSynthIdVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile);
+      const baseVideoFilter = isAllInOne
+        ? buildUnifiedVideoFilter(vidW, vidH, probedDurationSec, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
+        : buildSafeModeVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile);
       const dynamicSynthIdVideoFilter = baseVideoFilter + presetFilterAppend + scramblePhaseFilterAppend;
       const encodePreset = probedDurationSec <= 12 ? 'fast' : 'faster';
       const expectedOutDur =
         probedDurationSec > 0
-          ? isAllInOne || cleanerMode === 'unified'
+          ? isAllInOne
             ? Math.max(0.2, (probedDurationSec - (probedDurationSec > 2.0 ? jobProfile.trimStart : 0)) * jobProfile.speedPts)
-            : isSafeMode
-              ? Math.max(0.2, probedDurationSec)
-              : Math.max(0.2, probedDurationSec * 0.961538)
+            : Math.max(0.2, probedDurationSec)
           : 0;
 
       if (isAllInOne) {
@@ -1802,7 +1728,6 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             if (statAio && statAio.size > 16384) {
               aioDone = true;
               sourceForSeiStrip = pass1Path;
-              skipPass2 = false;
               synthIdScrubbed = true;
               serverLogs.push(
                 '✓ [PASS 1/2 SELESAI (NODE)] Frame-by-frame encoding selesai — melanjutkan Pass 2 Zero-SEI + Faststart Remux...'
@@ -1831,7 +1756,6 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             if (statAioV && statAioV.size > 16384) {
               aioDone = true;
               sourceForSeiStrip = pass1Path;
-              skipPass2 = false;
               synthIdScrubbed = true;
               serverLogs.push(
                 '✓ [PASS 1/2 VIDEO SELESAI (NODE)] Video encoding selesai — melanjutkan Pass 2 Zero-SEI Remux...'
@@ -1846,11 +1770,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         }
       } else {
         serverLogs.push(
-          cleanerMode === 'unified'
-            ? `[STEP 1/2 PAKET TERPADU ANTI-GLITCH + ANTI-SYNTHID] Temporal CFR ketat (Bypass Keyframe-Only) + Optik CMOS + Audio Rubberband & Stereo Pink Air (-cutoff 20500)...`
-            : isSafeMode
-              ? `[STEP 1/2 SAFE MODE TEMPORAL ANTI-GLITCH] Re-encoding ketat frame-by-frame CFR (Bypass Keyframe-Only Injection) + Audio Synced Anti-TTS...`
-              : `[STEP 1/2 RE-ENCODE AUDIO-VISUAL V 2.0] Re-sintesis 30fps Bebas-Ghost (bf=2, refs=2, -crf 18) + Pink/Brown Room Air...`
+          `[STEP 1/2 SAFE MODE TEMPORAL ANTI-GLITCH] Re-encoding ketat frame-by-frame CFR (Bypass Keyframe-Only Injection) + Audio Synced Anti-TTS...`
         );
 
         const pass1VideoOnlyArgs = [
@@ -1896,7 +1816,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           'filter_units=remove_types=6',
           '-an',
           '-fflags',
-          isTemporalCfrMode ? '+genpts+bitexact' : '+bitexact',
+          '+genpts+bitexact',
           '-flags:v',
           '+bitexact',
           '-map_metadata',
@@ -1906,13 +1826,13 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           pass1Path,
         ];
 
-        const fullAudioVisualFilterComplex = `[0:v]${dynamicSynthIdVideoFilter}[vout];${
-          cleanerMode === 'unified'
-            ? buildUnifiedAudioFilterComplex('[0:a]', '[aout]', probedDurationSec, jobProfile, probedAudioDurationSec, expectedOutDur, speechGainDb)
-            : isSafeMode
-              ? buildSafeModeAudioFilterComplex('[0:a]', '[aout]', jobProfile, expectedOutDur, speechGainDb)
-              : buildSynthIdAudioFilterComplex('[0:a]', '[aout]', jobProfile, expectedOutDur, speechGainDb)
-        }`;
+        const fullAudioVisualFilterComplex = `[0:v]${dynamicSynthIdVideoFilter}[vout];${buildSafeModeAudioFilterComplex(
+          '[0:a]',
+          '[aout]',
+          jobProfile,
+          expectedOutDur,
+          speechGainDb
+        )}`;
 
         const pass1WithAudioArgs = [
           '-y',
@@ -1965,56 +1885,47 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '48000',
           '-cutoff',
           '21800',
-              ...cameraMetadataArgs,
-              '-metadata:s:v:0',
-              `handler_name=${videoHandlerName}`,
-              '-metadata:s:a:0',
-              `handler_name=${audioHandlerName}`,
-              '-brand',
-              cameraBrand,
-              '-fflags',
-              isTemporalCfrMode ? '+genpts+bitexact' : '+bitexact',
-              '-flags:v',
-              '+bitexact',
-              '-flags:a',
-              '+bitexact',
-              '-map_metadata',
-              '-1',
-              '-map_chapters',
-              '-1',
-              '-shortest',
-              pass1Path,
-            ];
+          ...cameraMetadataArgs,
+          '-metadata:s:v:0',
+          `handler_name=${videoHandlerName}`,
+          '-metadata:s:a:0',
+          `handler_name=${audioHandlerName}`,
+          '-brand',
+          cameraBrand,
+          '-fflags',
+          '+genpts+bitexact',
+          '-flags:v',
+          '+bitexact',
+          '-flags:a',
+          '+bitexact',
+          '-map_metadata',
+          '-1',
+          '-map_chapters',
+          '-1',
+          '-shortest',
+          pass1Path,
+        ];
 
-            let reencodeDone = false;
-            const ptsScale = isTemporalCfrMode ? jobProfile.speedPts : 0.961538;
-            if (hasAudio) {
-              try {
-                await runFfmpegWithProgress(pass1WithAudioArgs, 420000, {
-                  state: nodeProgressState,
-                  stage: 'pass1_reencode',
-                  stageLabel:
-                    cleanerMode === 'unified'
-                      ? 'Pass 1/2 (Node Unified V 2.0): 30fps CFR + Anti-AI'
-                      : isSafeMode
-                        ? 'Pass 1/2 (Node Safe Mode V 2.0): Strict 30fps CFR Re-Encoding'
-                        : 'Pass 1/2 (Node FFmpeg V 2.0): Audio-Visual Anti-AI Filtering',
-                  startPct: 10,
-                  endPct: 82,
-                  expectedDuration: expectedOutDur || probedDurationSec * ptsScale,
-                  expectedFrames: Math.max(1, Math.round((expectedOutDur || probedDurationSec * ptsScale) * 30.0)),
-                });
+        let reencodeDone = false;
+        const ptsScale = jobProfile.speedPts;
+        if (hasAudio) {
+          try {
+            await runFfmpegWithProgress(pass1WithAudioArgs, 420000, {
+              state: nodeProgressState,
+              stage: 'pass1_reencode',
+              stageLabel: 'Pass 1/2 (Node Safe Mode V 2.0): Strict 30fps CFR Re-Encoding',
+              startPct: 10,
+              endPct: 82,
+              expectedDuration: expectedOutDur || probedDurationSec * ptsScale,
+              expectedFrames: Math.max(1, Math.round((expectedOutDur || probedDurationSec * ptsScale) * 30.0)),
+            });
             const stat1 = await fs.stat(pass1Path).catch(() => null);
             if (stat1 && stat1.size > 16384) {
               sourceForSeiStrip = pass1Path;
               synthIdScrubbed = true;
               reencodeDone = true;
               serverLogs.push(
-                cleanerMode === 'unified'
-                  ? `✓ [STEP 1/2 UNIFIED] Temporal CFR anti-glitch + Optik CMOS Anti-SynthID + Audio Rubberband/Pink Air selesai mulus (0% stutter).`
-                  : isSafeMode
-                    ? `✓ [STEP 1/2 SAFE MODE] Re-encoding temporal CFR ketat selesai mulus (0% stutter, Keyframe-Only Injection dilewati).`
-                    : `✓ [STEP 1/2 AUDIO-VISUAL] Re-sintesis 29.97fps bebas ghost + Rubberband + Stereo Pink Room Air + 0% SEI Type 6 selesai.`
+                '✓ [STEP 1/2 SAFE MODE] Re-encoding temporal CFR ketat selesai mulus (0% stutter, Keyframe-Only Injection dilewati).'
               );
             }
           } catch (audioErr: any) {
@@ -2030,12 +1941,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             await runFfmpegWithProgress(pass1VideoOnlyArgs, 420000, {
               state: nodeProgressState,
               stage: 'pass1_reencode',
-              stageLabel:
-                cleanerMode === 'unified'
-                  ? 'Pass 1/2 (Node Unified): Temporal CFR + Anti-SynthID Video-Only'
-                  : isSafeMode
-                    ? 'Pass 1/2 (Node Safe Mode): Filtering Temporal Video-Only'
-                    : 'Pass 1/2 (Node FFmpeg): Filtering Frame-by-Frame Video-Only',
+              stageLabel: 'Pass 1/2 (Node Safe Mode): Filtering Temporal Video-Only',
               startPct: 10,
               endPct: 82,
               expectedDuration: expectedOutDur || probedDurationSec * ptsScale,
@@ -2046,7 +1952,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
               sourceForSeiStrip = pass1Path;
               synthIdScrubbed = true;
               serverLogs.push(
-                `✓ [STEP 1/2 RE-ENCODE TOTAL] Re-encoding video selesai tanpa SEI NAL Type 6 & SynthID didekorrelasi.`
+                '✓ [STEP 1/2 RE-ENCODE TOTAL] Re-encoding video selesai tanpa SEI NAL Type 6 & SynthID didekorrelasi.'
               );
             }
           } catch (vErr: any) {
@@ -2067,9 +1973,17 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-i',
           effectiveInputPath,
           '-map',
-          '0:v:0',
+          '0:V:0',
           '-map',
-          '0:a?',
+          '0:a:0?',
+          '-map',
+          '-0:d',
+          '-map',
+          '-0:s',
+          '-map',
+          '-0:t',
+          '-dn',
+          '-sn',
           '-c:v',
           'libx264',
           '-preset',
@@ -2080,6 +1994,10 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '4.1',
           '-crf',
           jobProfile.crf,
+          '-maxrate',
+          maxrateK,
+          '-bufsize',
+          bufsizeK,
           '-bf',
           String(jobProfile.bframes),
           '-refs',
@@ -2108,10 +2026,26 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '+bitexact',
           '-flags:v',
           '+bitexact',
+          '-flags:a',
+          '+bitexact',
           '-map_metadata',
+          '-1',
+          '-map_metadata:g',
+          '-1',
+          '-map_metadata:s:v',
+          '-1',
+          '-map_metadata:s:a',
           '-1',
           '-map_chapters',
           '-1',
+          '-write_tmcd',
+          '0',
+          '-metadata:s:v:0',
+          `handler_name=${videoHandlerName}`,
+          '-metadata:s:a:0',
+          `handler_name=${audioHandlerName}`,
+          '-brand',
+          cameraBrand,
           pass1Path,
         ];
         await runFfmpegWithProgress(keyframeArgs, 420000, {
@@ -2163,10 +2097,8 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         }
       } catch {}
 
-      // PASS 2: Deep Meta Purge / Explicit SEI NAL Unit Excision & Container Normalization
-      const baseStripFlags = deepMetaPurge
-        ? DEEP_META_PURGE_STREAM_COPY_FLAGS
-        : SERVER_FFMPEG_SEI_STRIP_FLAGS;
+      // PASS 2: Explicit SEI NAL Unit Excision & Container Normalization
+      const baseStripFlags = STREAM_COPY_SEI_STRIP_FLAGS;
 
       // Substitute dynamically determined BSF argument, camera OEM profile, and movflags
       const activeStripFlags = baseStripFlags.map((flag, idx) => {
@@ -2194,7 +2126,9 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         '0',
         '-i',
         sourceForSeiStrip,
-        ...(effectiveForceKeyframes && sourceForSeiStrip === effectiveInputPath ? ['-avoid_negative_ts', 'make_zero'] : []),
+        ...(cleanerMode === 'remux_only' || (effectiveForceKeyframes && sourceForSeiStrip === effectiveInputPath)
+          ? ['-avoid_negative_ts', 'make_zero']
+          : []),
         ...activeStripFlags,
         ...cameraMetadataArgs,
         outputPath,
@@ -2250,9 +2184,15 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-i',
           sourceForSeiStrip,
           '-map',
-          '0:v:0',
+          '0:V:0',
           '-map',
-          '0:a?',
+          '0:a:0?',
+          '-map',
+          '-0:d',
+          '-map',
+          '-0:s',
+          '-map',
+          '-0:t',
           '-dn',
           '-sn',
           '-c',
@@ -2282,7 +2222,15 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           outputPath,
         ]);
 
-        await runFfmpeg(fallbackArgs, 120000);
+        await runFfmpegWithProgress(fallbackArgs, 120000, {
+          state: nodeProgressState,
+          stage: 'pass2_remux',
+          stageLabel: 'Pass 2/2 Fallback (Node FFmpeg): Remux Bitexact MP4',
+          startPct: 86,
+          endPct: 92,
+          expectedDuration: probedDurationSec,
+          expectedFrames: probedFrames,
+        });
         appliedFilter = '-c copy -dn -sn -map_metadata -1 -fflags +bitexact';
       }
     }
@@ -2456,7 +2404,7 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get('content-type') || '';
     let inputBuffer: Buffer | null = null;
     let originalName = 'input.mp4';
-    let cleanerMode: 'all_in_one' | 'unified' | 'deep_synthid' | 'safe_mode' | 'remux_only' = 'all_in_one';
+    let cleanerMode: 'all_in_one' | 'safe_mode' | 'remux_only' = 'all_in_one';
     let deepMetaPurge = true;
     let forceKeyframeInsertion = true;
     let upscale1080p = true;
@@ -2511,8 +2459,6 @@ export async function POST(req: NextRequest) {
       const modeField = body?.mode;
       if (modeField === 'remux_only') cleanerMode = 'remux_only';
       else if (modeField === 'safe_mode') cleanerMode = 'safe_mode';
-      else if (modeField === 'deep_synthid') cleanerMode = 'deep_synthid';
-      else if (modeField === 'unified') cleanerMode = 'unified';
       else cleanerMode = 'all_in_one';
 
       if (body?.deepMetaPurge === false || body?.deepMetaPurge === 'false') {
@@ -2560,10 +2506,6 @@ export async function POST(req: NextRequest) {
         cleanerMode = 'remux_only';
       } else if (modeField === 'safe_mode') {
         cleanerMode = 'safe_mode';
-      } else if (modeField === 'deep_synthid') {
-        cleanerMode = 'deep_synthid';
-      } else if (modeField === 'unified') {
-        cleanerMode = 'unified';
       } else {
         cleanerMode = 'all_in_one';
       }

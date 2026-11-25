@@ -52,6 +52,13 @@ export interface CleanerProgressState {
   resyncCount?: number;
   lastResyncAt?: string;
   resultReady?: boolean;
+  scrambleStats?: {
+    seiUnitsDetected: number;
+    seiPayloadsScrambled: number;
+    watermarkAtomsScrambled: number;
+    totalBytesScrambled: number;
+    targetedMarkers?: string[];
+  };
 }
 
 export interface UploadedVideoMeta {
@@ -367,6 +374,7 @@ export async function sweepExpiredMetaCleanerFiles(force = false): Promise<void>
         }
       } else if (
         (name.startsWith('metacleaner_in_') ||
+          name.startsWith('metacleaner_scrambled_') ||
           name.startsWith('metacleaner_pass1_') ||
           name.startsWith('metacleaner_out_') ||
           name.startsWith('metacleaner_probe_')) &&
