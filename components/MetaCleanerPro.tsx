@@ -465,10 +465,23 @@ async function inspectVideoBuffer(
     }
   }
 
-  // 2. Direct container header scan outside mdat for Lavf, Lavc, Google partial stamps, Shopee s264, and AI vendor tags
-  const mdatStart = mdatRanges.length > 0 ? mdatRanges[0].start - 8 : uint8.length;
-  const containerSlice = textDecoder.decode(uint8.subarray(0, mdatStart));
-  const containerLower = containerSlice.toLowerCase();
+  // 2. Direct container header scan outside ALL mdat boxes (handles both faststart moov and moov-at-EOF)
+  const nonMdatSlices: Uint8Array[] = [];
+  let nonMdatCursor = 0;
+  for (const r of mdatRanges) {
+    const boxHeaderStart = Math.max(0, r.start - 8);
+    if (boxHeaderStart > nonMdatCursor) {
+      nonMdatSlices.push(uint8.subarray(nonMdatCursor, boxHeaderStart));
+    }
+    nonMdatCursor = Math.max(nonMdatCursor, r.end);
+  }
+  if (nonMdatCursor < uint8.length) {
+    nonMdatSlices.push(uint8.subarray(nonMdatCursor, uint8.length));
+  }
+  const containerLower = nonMdatSlices
+    .map((slice) => textDecoder.decode(slice))
+    .join('\n')
+    .toLowerCase();
   for (const vs of VENDOR_SIGNATURES) {
     if (containerLower.includes(vs.toLowerCase()) && !rawVendors.includes(vs)) {
       rawVendors.push(vs);
@@ -1006,7 +1019,7 @@ export const MetaCleanerPro: React.FC = () => {
               : probe.format.tags?.make || probe.format.tags?.model
                 ? `BERSIH • OEM: ${[probe.format.tags?.make, probe.format.tags?.model].filter(Boolean).join(' ')} (${probe.videoStream?.handlerName || 'Handler'})`
                 : target === 'after'
-                  ? `${prev.encoder}`
+                  ? `BERSIH (${probe.videoStream?.handlerName || 'Standard Handler'} • Bebas Lavf)`
                   : `BERSIH (${probe.videoStream?.handlerName || 'Standard Handler'})`,
             encoderClean: probe.cleanliness.isZeroAiVendor,
             sei:
@@ -2631,10 +2644,21 @@ export const MetaCleanerPro: React.FC = () => {
 
               {previewUrlAfter && (!isServerCleanedUp || previewUrlAfter.startsWith('blob:')) && (
                 <div className="bg-slate-950 p-2.5 rounded-xl border border-emerald-800/40 space-y-1.5">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
                     <span>Preview Video Hasil Remux (Verifikasi Playback):</span>
-                    <span>
-                      ✓ {processedBlob ? `${(processedBlob.size / (1024 * 1024)).toFixed(2)} MB • ` : ''}100% Playable
+                    <span className="tabular-nums">
+                      {(() => {
+                        const outBytes = processedBlob?.size ?? cloudProgress?.outputSizeBytes ?? 0;
+                        if (outBytes > 0 && currentFile?.size) {
+                          const deltaPct = ((outBytes - currentFile.size) / currentFile.size) * 100;
+                          const sign = deltaPct >= 0 ? '+' : '';
+                          return `✓ ${(currentFile.size / (1024 * 1024)).toFixed(2)} MB → ${(outBytes / (1024 * 1024)).toFixed(2)} MB (${sign}${deltaPct.toFixed(0)}%) • Playable`;
+                        }
+                        if (outBytes > 0) {
+                          return `✓ ${(outBytes / (1024 * 1024)).toFixed(2)} MB • 100% Playable`;
+                        }
+                        return '✓ 100% Playable';
+                      })()}
                     </span>
                   </div>
                   <video
@@ -2845,41 +2869,67 @@ export const MetaCleanerPro: React.FC = () => {
             </div>
           </div>
 
-          {beforeProbe && (() => {
-            const humanizationReport = analyzeVideoHumanization(beforeProbe);
+          {(afterProbe || beforeProbe) && (() => {
+            const activeProbe = afterProbe || beforeProbe;
+            const humanizationReport = analyzeVideoHumanization(activeProbe);
+            const beforeReport = beforeProbe ? analyzeVideoHumanization(beforeProbe) : null;
+            const isEvaluatingAfter = Boolean(afterProbe);
             return (
-              <div className="bg-gradient-to-br from-slate-950 via-indigo-950/20 to-slate-950 rounded-2xl border border-indigo-500/30 p-5 space-y-4 shadow-xl mb-4">
+              <div className={`bg-gradient-to-br rounded-2xl border p-5 space-y-4 shadow-xl mb-4 ${
+                humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC'
+                  ? 'from-slate-950 via-emerald-950/20 to-slate-950 border-emerald-500/35'
+                  : 'from-slate-950 via-indigo-950/20 to-slate-950 border-indigo-500/30'
+              }`}>
                 <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-800 pb-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-extrabold text-lg">
+                    <div className={`w-12 h-12 rounded-xl border flex items-center justify-center font-extrabold text-lg tabular-nums ${
+                      humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC'
+                        ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-400'
+                        : 'bg-indigo-600/20 border-indigo-500/40 text-indigo-400'
+                    }`}>
                       {humanizationReport.humanizationScore}%
                     </div>
                     <div>
-                      <h3 className="text-sm font-extrabold text-slate-200 flex items-center gap-2">
-                        <span>Humanization Analyzer &amp; Organic Score</span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-indigo-300">
+                      <h3 className="text-sm font-extrabold text-slate-200 flex items-center gap-2 flex-wrap">
+                        <span>
+                          Humanization Analyzer &amp; Organic Score ({isEvaluatingAfter ? 'OUTPUT BERSIH' : 'INPUT ASLI'})
+                        </span>
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                          humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC'
+                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                            : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                        }`}>
                           {humanizationReport.aiRiskLevel}
                         </span>
+                        {isEvaluatingAfter && beforeReport && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-cyan-300 tabular-nums">
+                            {beforeReport.humanizationScore}% &rarr; {humanizationReport.humanizationScore}%
+                          </span>
+                        )}
                       </h3>
                       <p className="text-[11px] text-slate-400">
-                        Analisis bitstream byte-level terhadap signature AI &amp; rekomendasi preset humanisasi.
+                        {isEvaluatingAfter
+                          ? 'Skor humanisasi langsung dari file hasil sanitasi server (ffprobe + bitstream + audio-visual).'
+                          : 'Analisis bitstream byte-level terhadap signature AI input & rekomendasi preset humanisasi.'}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (humanizationReport.suggestions.length > 0 && humanizationReport.suggestions[0].recommendedPreset) {
-                          setHumanizationPreset(humanizationReport.suggestions[0].recommendedPreset as any);
-                          appendLog(`✓ [HUMANIZATION ANALYZER] Menerapkan preset rekomendasi: ${humanizationReport.suggestions[0].recommendedPreset.toUpperCase()}`, 'emerald');
-                        }
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-indigo-900/30 cursor-pointer"
-                    >
-                      <Zap className="w-3.5 h-3.5 text-amber-300" />
-                      <span>Terapkan Rekomendasi Preset</span>
-                    </button>
+                    {(!isEvaluatingAfter || humanizationReport.aiRiskLevel !== 'CLEAN_ORGANIC') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (humanizationReport.suggestions.length > 0 && humanizationReport.suggestions[0].recommendedPreset && humanizationReport.suggestions[0].recommendedPreset !== 'none') {
+                            setHumanizationPreset(humanizationReport.suggestions[0].recommendedPreset as any);
+                            appendLog(`✓ [HUMANIZATION ANALYZER] Menerapkan preset rekomendasi: ${humanizationReport.suggestions[0].recommendedPreset.toUpperCase()}`, 'emerald');
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-indigo-900/30 cursor-pointer"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Terapkan Rekomendasi Preset</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -2892,7 +2942,7 @@ export const MetaCleanerPro: React.FC = () => {
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-extrabold text-slate-200">{val} / 25</span>
                         <div className="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${(val / 25) * 100}%` }} />
+                          <div className={`h-full rounded-full ${humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC' ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${(val / 25) * 100}%` }} />
                         </div>
                       </div>
                     </div>
@@ -2900,11 +2950,13 @@ export const MetaCleanerPro: React.FC = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <span className="text-[11px] font-bold text-slate-300">Saran Tindakan &amp; Deteksi Marker AI:</span>
+                  <span className="text-[11px] font-bold text-slate-300">
+                    {isEvaluatingAfter ? 'Hasil Audit & Status Humanisasi Output:' : 'Saran Tindakan & Deteksi Marker AI:'}
+                  </span>
                   <div className="space-y-1.5">
                     {humanizationReport.suggestions.map((s) => (
                       <div key={s.id} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs">
-                        <CheckCircle2 className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                        <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC' ? 'text-emerald-400' : 'text-indigo-400'}`} />
                         <div className="space-y-0.5">
                           <div className="font-bold text-slate-200">{s.title}</div>
                           <div className="text-slate-400 text-[11px]">{s.description}</div>

@@ -453,8 +453,13 @@ interface OrganicJobProfile {
   wbG: number;
   wbB: number;
   psyRd: string;
+  aqMode: number;
   aqStrength: string;
   deblock: string;
+  keyint: number;
+  minKeyint: number;
+  bframes: number;
+  refs: number;
   crf: string;
   pitchRatio: number;
   seedL: number;
@@ -468,42 +473,62 @@ function randFloat(min: number, max: number, decimals: number): number {
   return Number((min + unit * (max - min)).toFixed(decimals));
 }
 
-function generateOrganicJobProfile(synthidScrambleMode: SynthIdScrambleMode = 'aggressive'): OrganicJobProfile {
+function generateOrganicJobProfile(
+  synthidScrambleMode: SynthIdScrambleMode = 'aggressive',
+  humanizationPreset = 'full_human'
+): OrganicJobProfile {
   const rotSign = crypto.randomInt(0, 2) === 0 ? -1 : 1;
   const pitchChoice =
     crypto.randomInt(0, 100) < 65 ? randFloat(0.976, 0.985, 4) : randFloat(1.014, 1.022, 4);
   const isAgg = synthidScrambleMode === 'aggressive';
+  const hasGrain = humanizationPreset === 'grain' || humanizationPreset === 'full_human';
+  const hasHandheld = humanizationPreset === 'handheld' || humanizationPreset === 'full_human';
+  const hasWarmth = humanizationPreset === 'warmth' || humanizationPreset === 'full_human';
+
+  const noiseY = hasGrain
+    ? randFloat(2.00, 2.40, 2)
+    : isAgg
+      ? randFloat(1.60, 1.90, 2)
+      : randFloat(1.40, 1.65, 2);
+  const noiseC = hasGrain ? randFloat(0.55, 0.80, 2) : randFloat(0.40, 0.60, 2);
+  const postNoiseY = hasGrain ? randFloat(1.55, 1.85, 2) : randFloat(1.30, 1.55, 2);
+
   return {
     trimStart: randFloat(0.03, 0.07, 3),
     speedPts: randFloat(0.970, 0.985, 4),
-    lensCx: randFloat(0.494, 0.506, 3),
-    lensCy: randFloat(0.494, 0.506, 3),
-    lensK1: randFloat(-0.026, -0.018, 4),
-    lensK2: randFloat(0.005, 0.009, 4),
-    rotBias: Number((rotSign * randFloat(0.0028, 0.0044, 4)).toFixed(4)),
-    rotA1: randFloat(0.0026, 0.0035, 4),
-    rotA2: randFloat(0.0014, 0.0021, 4),
-    rotA3: randFloat(0.0007, 0.0011, 4),
+    lensCx: randFloat(0.493, 0.507, 3),
+    lensCy: randFloat(0.493, 0.507, 3),
+    lensK1: randFloat(-0.032, -0.022, 4),
+    lensK2: randFloat(0.007, 0.012, 4),
+    rotBias: Number((rotSign * randFloat(0.0036, 0.0056, 4)).toFixed(4)),
+    rotA1: hasHandheld ? randFloat(0.0042, 0.0058, 4) : randFloat(0.0032, 0.0044, 4),
+    rotA2: randFloat(0.0018, 0.0028, 4),
+    rotA3: randFloat(0.0009, 0.0014, 4),
     freq1: randFloat(1.03, 1.37, 2),
     freq2: randFloat(2.47, 2.99, 2),
     freq3: randFloat(4.13, 4.87, 2),
-    cropRatio: isAgg ? randFloat(0.936, 0.946, 3) : randFloat(0.940, 0.948, 3),
-    casStrength: randFloat(0.17, 0.24, 2),
-    noiseY: isAgg ? randFloat(3.05, 3.65, 2) : randFloat(2.65, 3.15, 2),
-    noiseC: isAgg ? randFloat(1.20, 1.48, 2) : randFloat(1.00, 1.25, 2),
-    postNoiseY: isAgg ? randFloat(1.20, 1.48, 2) : randFloat(1.05, 1.30, 2),
+    cropRatio: isAgg ? randFloat(0.934, 0.944, 3) : randFloat(0.938, 0.948, 3),
+    casStrength: randFloat(0.16, 0.22, 2),
+    noiseY,
+    noiseC,
+    postNoiseY,
     hueAmp1: Number((rotSign * randFloat(0.32, 0.55, 3)).toFixed(3)),
     hueAmp2: Number((-rotSign * randFloat(0.24, 0.42, 3)).toFixed(3)),
-    contrast: randFloat(1.014, 1.022, 3),
-    saturation: randFloat(1.012, 1.024, 3),
+    contrast: randFloat(1.012, 1.022, 3),
+    saturation: hasWarmth ? randFloat(1.022, 1.038, 3) : randFloat(1.010, 1.022, 3),
     gamma: randFloat(1.004, 1.012, 3),
-    wbR: randFloat(1.006, 1.012, 3),
-    wbG: randFloat(1.004, 1.009, 3),
-    wbB: randFloat(1.005, 1.011, 3),
-    psyRd: `${randFloat(1.05, 1.20, 2)},${randFloat(0.10, 0.16, 2)}`,
-    aqStrength: String(randFloat(1.10, 1.24, 2)),
+    wbR: hasWarmth ? randFloat(1.014, 1.024, 3) : randFloat(1.006, 1.012, 3),
+    wbG: randFloat(1.005, 1.010, 3),
+    wbB: hasWarmth ? randFloat(0.992, 1.000, 3) : randFloat(1.004, 1.010, 3),
+    psyRd: `${randFloat(0.95, 1.15, 2)},${randFloat(0.08, 0.14, 2)}`,
+    aqMode: crypto.randomInt(2, 4),
+    aqStrength: String(randFloat(1.00, 1.18, 2)),
     deblock: `${crypto.randomInt(0, 2) === 0 ? -2 : -1},${crypto.randomInt(0, 2) === 0 ? -2 : -1}`,
-    crf: '18',
+    keyint: crypto.randomInt(48, 85),
+    minKeyint: crypto.randomInt(12, 25),
+    bframes: crypto.randomInt(2, 4),
+    refs: crypto.randomInt(2, 4),
+    crf: String(crypto.randomInt(20, 22)),
     pitchRatio: pitchChoice,
     seedL: crypto.randomInt(100000, 999999),
     seedR: crypto.randomInt(100000, 999999),
@@ -562,6 +587,7 @@ function buildSynthIdVideoFilter(
     'setpts=0.961538*(PTS-STARTPTS)',
     finish,
     'format=yuv420p',
+    "tmix=frames=2:weights='0.86 0.14'",
     'hqdn3d=1.1:0.9:1.6:1.2',
     `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${p.lensK1}:k2=${p.lensK2}`,
     `rotate=a='${p.rotBias}+${p.rotA1}*sin(t*${p.freq1})+${p.rotA2}*cos(t*${p.freq2})+${p.rotA3}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
@@ -601,6 +627,7 @@ function buildSafeModeVideoFilter(
     'setpts=PTS-STARTPTS',
     finish,
     'format=yuv420p',
+    "tmix=frames=2:weights='0.86 0.14'",
     'hqdn3d=1.0:0.8:1.5:1.1',
     `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${(p.lensK1 * 0.85).toFixed(4)}:k2=${p.lensK2}`,
     `rotate=a='${(p.rotBias * 0.85).toFixed(4)}+${(p.rotA1 * 0.85).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.85).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.85).toFixed(4)}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
@@ -645,6 +672,7 @@ function buildUnifiedVideoFilter(
     trimPrefix,
     finish,
     'format=yuv420p',
+    "tmix=frames=2:weights='0.86 0.14'",
     'hqdn3d=1.1:0.9:1.6:1.2',
     `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${p.lensK1}:k2=${p.lensK2}`,
     `rotate=a='${p.rotBias}+${p.rotA1}*sin(t*${p.freq1})+${p.rotA2}*cos(t*${p.freq2})+${p.rotA3}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
@@ -661,7 +689,7 @@ function buildUnifiedVideoFilter(
 }
 
 /**
- * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph V 2.3:
+ * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph V 2.4:
  * - True L/R stereo acoustic room reflection (zero pseudo-stereo mono duplicate)
  * - Per-job randomized pink/brown/15.8-20.8kHz thermal mic air bed (zero >17kHz brickwall cutoff)
  * - Nonlinear all-pass phase dispersion (aphaser) + dual-tap early reflections + 0.89 anti-clipping ceiling
@@ -672,21 +700,21 @@ function buildOrganicRoomAndVoiceChain(
   p: OrganicJobProfile,
   atempoVal: string,
   apadFilter: string,
-  extrastereoM = 1.18,
+  extrastereoM = 1.30,
   speechGainDb = 0
 ): string {
   const gainStep = Math.abs(speechGainDb) >= 0.4 ? `volume=${speechGainDb.toFixed(2)}dB,` : '';
   return [
-    `anoisesrc=color=pink:amplitude=0.0017:sample_rate=48000:seed=${p.seedL}[pL]`,
-    `anoisesrc=color=pink:amplitude=0.0017:sample_rate=48000:seed=${p.seedR}[pR]`,
-    `anoisesrc=color=brown:amplitude=0.0013:sample_rate=48000:seed=${p.seedB}[bRoom]`,
-    `anoisesrc=color=white:amplitude=0.0155:sample_rate=48000:seed=${p.seedAir}[wAir]`,
+    `anoisesrc=color=pink:amplitude=0.0008:sample_rate=48000:seed=${p.seedL}[pL]`,
+    `anoisesrc=color=pink:amplitude=0.0008:sample_rate=48000:seed=${p.seedR}[pR]`,
+    `anoisesrc=color=brown:amplitude=0.0006:sample_rate=48000:seed=${p.seedB}[bRoom]`,
+    `anoisesrc=color=white:amplitude=0.0170:sample_rate=48000:seed=${p.seedAir}[wAir]`,
     '[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt]',
-    '[wAir]highpass=f=15800,lowpass=f=20800,pan=stereo|c0=0.9*c0|c1=0.8*c0,adelay=0|7[airSt]',
+    '[wAir]highpass=f=16200,lowpass=f=20800,pan=stereo|c0=0.92*c0|c1=0.82*c0,adelay=0|7[airSt]',
     '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
     '[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
     `${voicePrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,${gainStep}asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.40:drive=2.5:blend=0:freq=8500:ceil=19900,aphaser=in_gain=0.85:out_gain=0.85:delay=2.4:decay=0.35:speed=0.7:type=t,asplit=2[vDry][vRef]`,
-    '[vRef]highpass=f=420,lowpass=f=7800,pan=stereo|c0=0.15*c0|c1=-0.15*c1,adelay=0|11[vSide]',
+    '[vRef]highpass=f=420,lowpass=f=7800,pan=stereo|c0=0.22*c0|c1=-0.22*c1,adelay=0|13[vSide]',
     `[vDry][vSide]amix=inputs=2:duration=first:normalize=0,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=${extrastereoM},acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,${apadFilter}[voice]`,
     `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
@@ -709,7 +737,7 @@ function buildSynthIdAudioFilterComplex(
     p,
     atempoVal,
     apadFilter,
-    1.18,
+    1.30,
     speechGainDb
   );
 }
@@ -731,7 +759,7 @@ function buildSafeModeAudioFilterComplex(
     p,
     atempoVal,
     apadFilter,
-    1.15,
+    1.26,
     speechGainDb
   );
 }
@@ -759,7 +787,7 @@ function buildUnifiedAudioFilterComplex(
     p,
     atempoVal,
     apadFilter,
-    1.18,
+    1.30,
     speechGainDb
   );
 }
@@ -976,7 +1004,7 @@ function compactMp4RemoveFreeBoxes(buf: Buffer): Buffer {
 function neutralizeContainerMetadataInPlace(buf: Buffer): Buffer {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const decoder = new TextDecoder('ascii', { fatal: false });
-  const macEpochCtime = Math.floor(Date.now() / 1000) + 2082844800 - 1620;
+  const macEpochCtime = Math.floor(Date.now() / 1000) + 2082844800 - crypto.randomInt(900, 86401);
   const macEpochMtime = macEpochCtime + 1;
   const badMarkers = [
     'c2pa',
@@ -1454,13 +1482,14 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     let allInOneCommandDisplay = '';
     let allInOneAppliedFilter = '';
 
-    const jobProfile = generateOrganicJobProfile(synthidScrambleMode);
+    const jobProfile = generateOrganicJobProfile(synthidScrambleMode, humanizationPreset);
     let probedDurationSec = 0;
     let probedAudioDurationSec = 0;
     let probedFrames = 0;
     let vidW = 0;
     let vidH = 0;
     let srcFps = 0;
+    let srcBitrate = 0;
     let pulldownDetected = false;
     let effectiveFps = 0;
     let hasAudio = false;
@@ -1476,6 +1505,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       ]);
       const parsed = JSON.parse(probeJsonOut || '{}');
       probedDurationSec = Number(parsed?.format?.duration) || 0;
+      srcBitrate = Number(parsed?.format?.bit_rate) || 0;
       const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
       for (const st of streams) {
         if (st?.codec_type === 'audio') {
@@ -1485,6 +1515,9 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
         } else if (st?.codec_type === 'video' && vidW === 0) {
           vidW = Math.floor(Number(st.width || 0) / 2) * 2;
           vidH = Math.floor(Number(st.height || 0) / 2) * 2;
+          if (srcBitrate <= 0) {
+            srcBitrate = Number(st.bit_rate) || 0;
+          }
           srcFps = Number(
             (
               parseFpsString(String(st.avg_frame_rate || '')) ||
@@ -1559,13 +1592,13 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
     const keyframeInsertionFlags = [
       '-g',
-      '60',
+      String(jobProfile.keyint),
       '-keyint_min',
-      '15',
+      String(jobProfile.minKeyint),
       '-sc_threshold',
       '40',
       '-refs',
-      '2',
+      String(jobProfile.refs),
       '-chroma_sample_location',
       'left',
       '-color_primaries',
@@ -1580,7 +1613,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
     const bAdaptMode = '1';
     const x264ParamString =
-      `ref=2:bframes=2:b-adapt=${bAdaptMode}:b-pyramid=normal:weightp=1:psy-rd=${jobProfile.psyRd}:aq-mode=2:aq-strength=${jobProfile.aqStrength}:deblock=${jobProfile.deblock}:no-dct-decimate=1:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=60:min-keyint=15`;
+      `ref=${jobProfile.refs}:bframes=${jobProfile.bframes}:b-adapt=${bAdaptMode}:b-pyramid=normal:weightp=1:psy-rd=${jobProfile.psyRd}:aq-mode=${jobProfile.aqMode}:aq-strength=${jobProfile.aqStrength}:deblock=${jobProfile.deblock}:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=${jobProfile.keyint}:min-keyint=${jobProfile.minKeyint}`;
 
     const movflagsStr = '+faststart';
 
@@ -1591,21 +1624,21 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           `[DEEP SCAN AI BITSTREAM] Analisis byte-level aktif (Preset: ${humanizationPreset.toUpperCase()}, Scramble: ${synthidScrambleMode.toUpperCase()}).`
         );
       }
-      let presetFilterAppend = '';
-      if (humanizationPreset === 'handheld') {
-        presetFilterAppend = ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih";
-      } else if (humanizationPreset === 'warmth') {
-        presetFilterAppend = ",colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015";
-      } else if (humanizationPreset === 'grain') {
-        presetFilterAppend = ",noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t";
-      } else if (humanizationPreset === 'full_human') {
-        presetFilterAppend = ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih,colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015,noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t";
-      }
+      const presetFilterAppend =
+        humanizationPreset === 'warmth' || humanizationPreset === 'full_human'
+          ? ',colorbalance=rs=0.02:gs=0.008:bs=-0.02'
+          : '';
       const scramblePhaseFilterAppend =
         synthidScrambleMode === 'aggressive'
           ? `,hue=h='${jobProfile.hueAmp1}*sin(t*1.17)+${jobProfile.hueAmp2}*cos(t*2.73)'`
           : '';
       const shouldUpscale = upscale1080p && cameraProfileField !== 'neutral';
+      const targetMaxBps = shouldUpscale
+        ? Math.max(3_000_000, Math.min(5_000_000, Math.round((srcBitrate || 4_000_000) * 1.15)))
+        : Math.max(2_000_000, Math.min(4_200_000, Math.round((srcBitrate || 3_600_000) * 0.95)));
+      const maxrateK = `${Math.max(2000, Math.floor(targetMaxBps / 1000))}k`;
+      const bufsizeK = `${Math.max(4000, Math.floor((targetMaxBps * 2) / 1000))}k`;
+
       const baseVideoFilter =
         isAllInOne || cleanerMode === 'unified'
           ? buildUnifiedVideoFilter(vidW, vidH, probedDurationSec, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
@@ -1613,7 +1646,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
             ? buildSafeModeVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
             : buildSynthIdVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile);
       const dynamicSynthIdVideoFilter = baseVideoFilter + presetFilterAppend + scramblePhaseFilterAppend;
-      const encodePreset = probedDurationSec > 10 ? 'superfast' : 'veryfast';
+      const encodePreset = probedDurationSec <= 12 ? 'fast' : 'faster';
       const expectedOutDur =
         probedDurationSec > 0
           ? isAllInOne || cleanerMode === 'unified'
@@ -1625,7 +1658,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
       if (isAllInOne) {
         serverLogs.push(
-          `[ALL-IN-ONE SINGLE PIPELINE V 2.3] ${pulldownDetected ? `Pulldown Repair (${effectiveFps}fps->30fps)` : srcFps > 0 && srcFps < 28.5 ? `Zero-Dup Motion Interp (${srcFps}fps->30fps)` : `Native ${srcFps || 30}fps`} + Anti-Diffusion hqdn3d + Asymmetric Warp + Dual-Scale Bayer CMOS Grain + AAC 256k 22.5kHz Stereo Room Air (${cameraProfileField.toUpperCase()})...`
+          `[ALL-IN-ONE SINGLE PIPELINE V 2.4] ${pulldownDetected ? `Pulldown Repair (${effectiveFps}fps->30fps)` : srcFps > 0 && srcFps < 28.5 ? `Zero-Dup Motion Interp (${srcFps}fps->30fps)` : `Native ${srcFps || 30}fps`} + 180° Shutter Blend + Warp + Calibrated CMOS Grain + AAC 192k 21.8kHz (CRF ${jobProfile.crf}, max ${maxrateK}, refs=${jobProfile.refs})...`
         );
 
         const langTag = cameraProfileField === 'neutral' ? 'und' : 'eng';
@@ -1660,11 +1693,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-crf',
           jobProfile.crf,
           '-maxrate',
-          '14M',
+          maxrateK,
           '-bufsize',
-          '28M',
+          bufsizeK,
           '-bf',
-          '2',
+          String(jobProfile.bframes),
           '-pix_fmt',
           'yuv420p',
           ...keyframeInsertionFlags,
@@ -1708,11 +1741,11 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-c:a',
           'aac',
           '-b:a',
-          '256k',
+          '192k',
           '-ar',
           '48000',
           '-cutoff',
-          '22500',
+          '21800',
           ...aioCommonTail,
           '-metadata:s:a:0',
           `handler_name=${audioHandlerName}`,
@@ -1848,8 +1881,12 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '4.1',
           '-crf',
           jobProfile.crf,
+          '-maxrate',
+          maxrateK,
+          '-bufsize',
+          bufsizeK,
           '-bf',
-          '2',
+          String(jobProfile.bframes),
           '-pix_fmt',
           'yuv420p',
           ...keyframeInsertionFlags,
@@ -1895,39 +1932,39 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '30',
           '-fps_mode',
           'cfr',
-              '-c:v',
-              'libx264',
-              '-preset',
-              encodePreset,
-              '-threads',
-              '0',
-              '-profile:v',
-              'high',
-              '-level',
-              '4.1',
-              '-crf',
-              jobProfile.crf,
-              '-maxrate',
-              '14M',
-              '-bufsize',
-              '28M',
-              '-bf',
-              '2',
-              '-pix_fmt',
-              'yuv420p',
-              ...keyframeInsertionFlags,
-              '-x264-params',
-              x264ParamString,
-              '-bsf:v',
-              'filter_units=remove_types=6',
-              '-c:a',
-              'aac',
-              '-b:a',
-              '256k',
-              '-ar',
-              '48000',
-              '-cutoff',
-              '22500',
+          '-c:v',
+          'libx264',
+          '-preset',
+          encodePreset,
+          '-threads',
+          '0',
+          '-profile:v',
+          'high',
+          '-level',
+          '4.1',
+          '-crf',
+          jobProfile.crf,
+          '-maxrate',
+          maxrateK,
+          '-bufsize',
+          bufsizeK,
+          '-bf',
+          String(jobProfile.bframes),
+          '-pix_fmt',
+          'yuv420p',
+          ...keyframeInsertionFlags,
+          '-x264-params',
+          x264ParamString,
+          '-bsf:v',
+          'filter_units=remove_types=6',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '192k',
+          '-ar',
+          '48000',
+          '-cutoff',
+          '21800',
               ...cameraMetadataArgs,
               '-metadata:s:v:0',
               `handler_name=${videoHandlerName}`,
@@ -2022,7 +2059,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
       }
     } else if (effectiveForceKeyframes) {
       serverLogs.push(
-        `[STEP 1/2 FORCE KEYFRAME INSERTION] Menyuntikkan IDR Keyframes & B-Frames (Closed-GOP, CRF 18) & menghapus SEI Type 6...`
+        `[STEP 1/2 FORCE KEYFRAME INSERTION] Menyuntikkan IDR Keyframes & B-Frames (Closed-GOP, CRF ${jobProfile.crf}) & menghapus SEI Type 6...`
       );
       try {
         const keyframeArgs = [
@@ -2036,21 +2073,23 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-c:v',
           'libx264',
           '-preset',
-          'superfast',
+          probedDurationSec <= 12 ? 'fast' : 'faster',
           '-profile:v',
           'high',
           '-level',
           '4.1',
           '-crf',
-          '18',
+          jobProfile.crf,
           '-bf',
-          '2',
+          String(jobProfile.bframes),
+          '-refs',
+          String(jobProfile.refs),
           '-pix_fmt',
           'yuv420p',
           '-g',
-          '45',
+          String(jobProfile.keyint),
           '-keyint_min',
-          '20',
+          String(jobProfile.minKeyint),
           '-sc_threshold',
           '40',
           '-color_primaries',
@@ -2060,7 +2099,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-colorspace',
           'bt709',
           '-x264-params',
-          'bframes=2:b-adapt=1:nal-hrd=none:force-cfr=1:deblock=1,1:aq-mode=2:open-gop=0:scenecut=40:keyint=45:min-keyint=20',
+          x264ParamString,
           '-bsf:v',
           'filter_units=remove_types=6',
           '-c:a',

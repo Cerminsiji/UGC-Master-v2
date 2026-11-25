@@ -53,9 +53,12 @@ export function analyzeVideoHumanization(probe: any): HumanizationAnalysisReport
   if (!cleanliness.isZeroAiVendor) markers.push('AI Generator / Encoder Vendor Tag');
   if (av.visual && av.visual.isPlasticZeroGrain) markers.push('Hiper-Smooth Plastic Background (Zero-Grain)');
   if (av.visual && av.visual.hasPulldownDuplicates) markers.push('AI Frame Interpolation / Pulldown Artifacts');
-  if (av.audio && av.audio.airCliffDb < -22) markers.push('Vocoder Audio High-Freq Cliff (>17.5kHz)');
+  if (av.audio && (av.audio.airCliffDb >= 32.5 || av.audio.highBand17kDb <= -56)) markers.push('Vocoder Audio High-Freq Cliff (>17.5kHz)');
 
-  let metadataScore = cleanliness.isZeroUuid && cleanliness.isZeroSei && cleanliness.isZeroJumbf ? 25 : 8;
+  let metadataScore =
+    cleanliness.isZeroUuid && cleanliness.isZeroSei && cleanliness.isZeroJumbf && cleanliness.isZeroAiVendor
+      ? 25
+      : 8;
   let entropyScore = av.visual && !av.visual.isPlasticZeroGrain ? 23 : 10;
   let motionScore = av.visual && av.visual.hasBFrames && !av.visual.hasPulldownDuplicates ? 24 : 12;
   let audioScore = av.audio && av.audio.audioClean ? 24 : 14;
@@ -72,12 +75,12 @@ export function analyzeVideoHumanization(probe: any): HumanizationAnalysisReport
 
   const suggestions: HumanizationSuggestion[] = [];
 
-  if (!cleanliness.isZeroSei || !cleanliness.isZeroUuid || !cleanliness.isZeroJumbf) {
+  if (!cleanliness.isZeroSei || !cleanliness.isZeroUuid || !cleanliness.isZeroJumbf || !cleanliness.isZeroAiVendor) {
     suggestions.push({
       id: 's_meta',
       category: 'metadata',
       title: 'Pembersihan Metadata & Zero-SEI Remux',
-      description: 'Ditemukan sisa signature SEI, UUID, atau C2PA. Disarankan menjalankan pembersihan metadata total.',
+      description: 'Ditemukan sisa signature SEI, UUID, vendor, atau C2PA. Disarankan menjalankan pembersihan metadata total.',
       recommendedPreset: 'full_human',
       priority: 'high',
     });
@@ -105,7 +108,7 @@ export function analyzeVideoHumanization(probe: any): HumanizationAnalysisReport
     });
   }
 
-  if (av.audio && (!av.audio.audioClean || av.audio.airCliffDb < -20)) {
+  if (av.audio && (!av.audio.audioClean || av.audio.airCliffDb >= 30 || av.audio.highBand17kDb <= -54)) {
     suggestions.push({
       id: 's_warmth',
       category: 'warmth',

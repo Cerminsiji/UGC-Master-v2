@@ -93,8 +93,11 @@ def _compute_target_dimensions(width: int, height: int, upscale_1080p: bool = Tr
     return even_w, even_h
 
 
-def generate_organic_job_profile(synthid_scramble: str = "aggressive") -> dict:
-    """Per-job randomized organic camera/ISP parameters & SynthID entropy weights."""
+def generate_organic_job_profile(
+    synthid_scramble: str = "aggressive",
+    humanization_preset: str = "full_human",
+) -> dict:
+    """Per-job randomized organic camera/ISP parameters, compact x264 entropy & SynthID weights."""
     rng = random.SystemRandom()
     rot_sign = rng.choice((-1.0, 1.0))
     pitch_choice = (
@@ -103,37 +106,61 @@ def generate_organic_job_profile(synthid_scramble: str = "aggressive") -> dict:
         else round(rng.uniform(1.014, 1.022), 4)
     )
     is_agg = synthid_scramble == "aggressive"
+    has_grain = humanization_preset in ("grain", "full_human")
+    has_handheld = humanization_preset in ("handheld", "full_human")
+    has_warmth = humanization_preset in ("warmth", "full_human")
+
+    noise_y = (
+        round(rng.uniform(2.00, 2.40), 2)
+        if has_grain
+        else (round(rng.uniform(1.60, 1.90), 2) if is_agg else round(rng.uniform(1.40, 1.65), 2))
+    )
+    noise_c = round(rng.uniform(0.55, 0.80), 2) if has_grain else round(rng.uniform(0.40, 0.60), 2)
+    post_noise_y = round(rng.uniform(1.55, 1.85), 2) if has_grain else round(rng.uniform(1.30, 1.55), 2)
+
+    keyint = rng.randint(48, 84)
+    min_keyint = rng.randint(12, 24)
+    bframes = rng.choice((2, 3))
+    refs = rng.choice((2, 3))
+    aq_mode = rng.choice((2, 3))
+    crf_val = str(rng.choice((20, 21)))
+
     return {
         "trim_start": round(rng.uniform(0.03, 0.07), 3),
         "speed_pts": round(rng.uniform(0.970, 0.985), 4),
-        "lens_cx": round(rng.uniform(0.494, 0.506), 3),
-        "lens_cy": round(rng.uniform(0.494, 0.506), 3),
-        "lens_k1": round(rng.uniform(-0.026, -0.018), 4),
-        "lens_k2": round(rng.uniform(0.005, 0.009), 4),
-        "rot_bias": round(rot_sign * rng.uniform(0.0028, 0.0044), 4),
-        "rot_a1": round(rng.uniform(0.0026, 0.0035), 4),
-        "rot_a2": round(rng.uniform(0.0014, 0.0021), 4),
-        "rot_a3": round(rng.uniform(0.0007, 0.0011), 4),
+        "lens_cx": round(rng.uniform(0.493, 0.507), 3),
+        "lens_cy": round(rng.uniform(0.493, 0.507), 3),
+        "lens_k1": round(rng.uniform(-0.032, -0.022), 4),
+        "lens_k2": round(rng.uniform(0.007, 0.012), 4),
+        "rot_bias": round(rot_sign * rng.uniform(0.0036, 0.0056), 4),
+        "rot_a1": round(rng.uniform(0.0042, 0.0058) if has_handheld else rng.uniform(0.0032, 0.0044), 4),
+        "rot_a2": round(rng.uniform(0.0018, 0.0028), 4),
+        "rot_a3": round(rng.uniform(0.0009, 0.0014), 4),
         "freq1": round(rng.uniform(1.03, 1.37), 2),
         "freq2": round(rng.uniform(2.47, 2.99), 2),
         "freq3": round(rng.uniform(4.13, 4.87), 2),
-        "crop_ratio": round(rng.uniform(0.936, 0.946) if is_agg else rng.uniform(0.940, 0.948), 3),
-        "cas_strength": round(rng.uniform(0.17, 0.24), 2),
-        "noise_y": round(rng.uniform(3.05, 3.65) if is_agg else rng.uniform(2.65, 3.15), 2),
-        "noise_c": round(rng.uniform(1.20, 1.48) if is_agg else rng.uniform(1.00, 1.25), 2),
-        "post_noise_y": round(rng.uniform(1.20, 1.48) if is_agg else rng.uniform(1.05, 1.30), 2),
+        "crop_ratio": round(rng.uniform(0.934, 0.944) if is_agg else rng.uniform(0.938, 0.948), 3),
+        "cas_strength": round(rng.uniform(0.16, 0.22), 2),
+        "noise_y": noise_y,
+        "noise_c": noise_c,
+        "post_noise_y": post_noise_y,
         "hue_amp1": round(rot_sign * rng.uniform(0.32, 0.55), 3),
         "hue_amp2": round(-rot_sign * rng.uniform(0.24, 0.42), 3),
-        "contrast": round(rng.uniform(1.014, 1.022), 3),
-        "saturation": round(rng.uniform(1.012, 1.024), 3),
+        "contrast": round(rng.uniform(1.012, 1.022), 3),
+        "saturation": round(rng.uniform(1.022, 1.038) if has_warmth else rng.uniform(1.010, 1.022), 3),
         "gamma": round(rng.uniform(1.004, 1.012), 3),
-        "wb_r": round(rng.uniform(1.006, 1.012), 3),
-        "wb_g": round(rng.uniform(1.004, 1.009), 3),
-        "wb_b": round(rng.uniform(1.005, 1.011), 3),
-        "psy_rd": f"{round(rng.uniform(1.05, 1.20), 2)},{round(rng.uniform(0.10, 0.16), 2)}",
-        "aq_strength": str(round(rng.uniform(1.10, 1.24), 2)),
+        "wb_r": round(rng.uniform(1.014, 1.024) if has_warmth else rng.uniform(1.006, 1.012), 3),
+        "wb_g": round(rng.uniform(1.005, 1.010), 3),
+        "wb_b": round(rng.uniform(0.992, 1.000) if has_warmth else rng.uniform(1.004, 1.010), 3),
+        "psy_rd": f"{round(rng.uniform(0.95, 1.15), 2)},{round(rng.uniform(0.08, 0.14), 2)}",
+        "aq_mode": aq_mode,
+        "aq_strength": str(round(rng.uniform(1.00, 1.18), 2)),
         "deblock": f"{rng.choice((-2, -1))},{rng.choice((-2, -1))}",
-        "crf": "18",
+        "keyint": keyint,
+        "min_keyint": min_keyint,
+        "bframes": bframes,
+        "refs": refs,
+        "crf": crf_val,
         "pitch_ratio": pitch_choice,
         "seed_l": rng.randint(100000, 999999),
         "seed_r": rng.randint(100000, 999999),
@@ -180,6 +207,7 @@ def build_synthid_video_filter(
         "setpts=0.961538*(PTS-STARTPTS),"
         f"{finish},"
         "format=yuv420p,"
+        "tmix=frames=2:weights='0.86 0.14',"
         "hqdn3d=1.1:0.9:1.6:1.2,"
         f"lenscorrection=cx={p['lens_cx']}:cy={p['lens_cy']}:k1={p['lens_k1']}:k2={p['lens_k2']},"
         f"rotate=a='{p['rot_bias']}+{p['rot_a1']}*sin(t*{p['freq1']})+{p['rot_a2']}*cos(t*{p['freq2']})+{p['rot_a3']}*sin(t*{p['freq3']})':bilinear=1:ow=iw:oh=ih,"
@@ -207,8 +235,8 @@ def build_safe_mode_video_filter(
     job_profile: dict | None = None,
 ) -> str:
     """
-    Safe Mode Temporal Re-Encoding Filtergraph V 2.2:
-    Zero-pulldown 30fps cadence + hqdn3d neural residual scrub + asymmetric optical warp + dual-scale Bayer CMOS grain.
+    Safe Mode Temporal Re-Encoding Filtergraph V 2.3:
+    Zero-pulldown 30fps cadence + 180-deg shutter blend + hqdn3d neural residual scrub + asymmetric optical warp + calibrated Bayer CMOS grain.
     """
     p = job_profile or generate_organic_job_profile()
     target_w, target_h = _compute_target_dimensions(width, height, upscale_1080p)
@@ -226,6 +254,7 @@ def build_safe_mode_video_filter(
         "setpts=PTS-STARTPTS,"
         f"{finish},"
         "format=yuv420p,"
+        "tmix=frames=2:weights='0.86 0.14',"
         "hqdn3d=1.0:0.8:1.5:1.1,"
         f"lenscorrection=cx={p['lens_cx']}:cy={p['lens_cy']}:k1={round(p['lens_k1']*0.85, 4)}:k2={p['lens_k2']},"
         f"rotate=a='{round(p['rot_bias']*0.85, 4)}+{p['rot_a1']*0.85:.4f}*sin(t*{p['freq1']})+{p['rot_a2']*0.85:.4f}*cos(t*{p['freq2']})+{p['rot_a3']*0.85:.4f}*sin(t*{p['freq3']})':bilinear=1:ow=iw:oh=ih,"
@@ -254,11 +283,11 @@ def build_unified_video_filter(
     job_profile: dict | None = None,
 ) -> str:
     """
-    Unified All-in-One Pipeline V 2.2 (Zero-Pulldown Organic Mobile Capture):
+    Unified All-in-One Pipeline V 2.3 (Zero-Pulldown Organic Mobile Capture):
     - Strips duplicate frames + temporal cadence shift (1.5-3.0%) + 30fps synthesis
-    - hqdn3d high-frequency diffusion residual scrub prior to optical warp
-    - Randomized asymmetric tilt + barrel lens distortion + ~5.5% dynamic crop (0.54 vertical bias)
-    - Dual-scale bicubic Bayer CMOS grain + micro post-scale luma dither (survives H.264 quantization)
+    - 180-deg shutter temporal blend (tmix) + hqdn3d diffusion residual scrub prior to optical warp
+    - Randomized asymmetric tilt + barrel lens distortion + ~6% dynamic crop (0.54 vertical bias)
+    - Calibrated Bayer CMOS grain + micro post-scale luma dither (clean size, passes grain forensics)
     """
     p = job_profile or generate_organic_job_profile()
     prep = _build_cadence_prep(pulldown_detected, effective_fps)
@@ -281,6 +310,7 @@ def build_unified_video_filter(
         f"{trim_step}"
         f"{finish},"
         "format=yuv420p,"
+        "tmix=frames=2:weights='0.86 0.14',"
         "hqdn3d=1.1:0.9:1.6:1.2,"
         f"lenscorrection=cx={p['lens_cx']}:cy={p['lens_cy']}:k1={p['lens_k1']}:k2={p['lens_k2']},"
         f"rotate=a='{p['rot_bias']}+{p['rot_a1']}*sin(t*{p['freq1']})+{p['rot_a2']}*cos(t*{p['freq2']})+{p['rot_a3']}*sin(t*{p['freq3']})':bilinear=1:ow=iw:oh=ih,"
@@ -304,17 +334,17 @@ def _build_organic_room_and_voice_chain(
     p: dict,
     atempo_val: float,
     apad_filter: str,
-    extrastereo_m: float = 1.18,
+    extrastereo_m: float = 1.30,
     speech_gain_db: float = 0.0,
 ) -> str:
     gain_step = f"volume={speech_gain_db:.2f}dB," if abs(speech_gain_db) >= 0.4 else ""
     return (
-        f"anoisesrc=color=pink:amplitude=0.0017:sample_rate=48000:seed={p['seed_l']}[pL];"
-        f"anoisesrc=color=pink:amplitude=0.0017:sample_rate=48000:seed={p['seed_r']}[pR];"
-        f"anoisesrc=color=brown:amplitude=0.0013:sample_rate=48000:seed={p['seed_b']}[bRoom];"
-        f"anoisesrc=color=white:amplitude=0.0155:sample_rate=48000:seed={p['seed_air']}[wAir];"
+        f"anoisesrc=color=pink:amplitude=0.0008:sample_rate=48000:seed={p['seed_l']}[pL];"
+        f"anoisesrc=color=pink:amplitude=0.0008:sample_rate=48000:seed={p['seed_r']}[pR];"
+        f"anoisesrc=color=brown:amplitude=0.0006:sample_rate=48000:seed={p['seed_b']}[bRoom];"
+        f"anoisesrc=color=white:amplitude=0.0170:sample_rate=48000:seed={p['seed_air']}[wAir];"
         "[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt];"
-        "[wAir]highpass=f=15800,lowpass=f=20800,pan=stereo|c0=0.9*c0|c1=0.8*c0,adelay=0|7[airSt];"
+        "[wAir]highpass=f=16200,lowpass=f=20800,pan=stereo|c0=0.92*c0|c1=0.82*c0,adelay=0|7[airSt];"
         "[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt];"
         "[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room];"
         f"{voice_prefix}aresample=48000:async=1:first_pts=0,"
@@ -327,7 +357,7 @@ def _build_organic_room_and_voice_chain(
         "aexciter=level_in=1:level_out=1:amount=1.40:drive=2.5:blend=0:freq=8500:ceil=19900,"
         "aphaser=in_gain=0.85:out_gain=0.85:delay=2.4:decay=0.35:speed=0.7:type=t,"
         "asplit=2[vDry][vRef];"
-        "[vRef]highpass=f=420,lowpass=f=7800,pan=stereo|c0=0.15*c0|c1=-0.15*c1,adelay=0|11[vSide];"
+        "[vRef]highpass=f=420,lowpass=f=7800,pan=stereo|c0=0.22*c0|c1=-0.22*c1,adelay=0|13[vSide];"
         "[vDry][vSide]amix=inputs=2:duration=first:normalize=0,"
         "aecho=0.95:0.92:7|13:0.022|0.012,"
         f"extrastereo=m={extrastereo_m},"
@@ -349,7 +379,7 @@ def build_synthid_audio_filter_complex(
     atempo_val = round(1.04 / p["pitch_ratio"], 5)
     apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
     return _build_organic_room_and_voice_chain(
-        f"{voice_label}asetpts=PTS-STARTPTS,", out_label, p, atempo_val, apad_filter, 1.18, speech_gain_db
+        f"{voice_label}asetpts=PTS-STARTPTS,", out_label, p, atempo_val, apad_filter, 1.30, speech_gain_db
     )
 
 
@@ -368,7 +398,7 @@ def build_safe_mode_audio_filter_complex(
     atempo_val = round(1.0 / p["pitch_ratio"], 5)
     apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
     return _build_organic_room_and_voice_chain(
-        f"{voice_label}asetpts=PTS-STARTPTS,", out_label, p, atempo_val, apad_filter, 1.15, speech_gain_db
+        f"{voice_label}asetpts=PTS-STARTPTS,", out_label, p, atempo_val, apad_filter, 1.26, speech_gain_db
     )
 
 
@@ -398,7 +428,7 @@ def build_unified_audio_filter_complex(
     atempo_val = round((1.0 / p["speed_pts"]) / p["pitch_ratio"], 5)
     apad_filter = f"apad=whole_dur={max(pad_target_dur + 0.35, 1.0):.3f}" if pad_target_dur > 0.2 else "apad=pad_dur=0.35"
     return _build_organic_room_and_voice_chain(
-        f"{voice_label}{atrim_prefix}", out_label, p, atempo_val, apad_filter, 1.18, speech_gain_db
+        f"{voice_label}{atrim_prefix}", out_label, p, atempo_val, apad_filter, 1.30, speech_gain_db
     )
 
 class ProgressTracker:
@@ -512,6 +542,7 @@ def probe_stream_metrics(input_file: str) -> dict:
         "duration_sec": 0.0,
         "total_frames": 0,
         "src_fps": 0.0,
+        "src_bitrate": 0,
         "pulldown_detected": False,
         "effective_fps": 0.0,
     }
@@ -529,6 +560,7 @@ def probe_stream_metrics(input_file: str) -> dict:
             data = json.loads(res.stdout)
             fmt = data.get("format") or {}
             info["duration_sec"] = float(fmt.get("duration") or 0.0)
+            info["src_bitrate"] = int(float(fmt.get("bit_rate") or 0))
             streams = data.get("streams") or []
             for st in streams:
                 ctype = st.get("codec_type")
@@ -546,6 +578,11 @@ def probe_stream_metrics(input_file: str) -> dict:
                     h = int(st.get("height") or 0)
                     info["width"] = (w // 2) * 2
                     info["height"] = (h // 2) * 2
+                    if info["src_bitrate"] <= 0:
+                        try:
+                            info["src_bitrate"] = int(float(st.get("bit_rate") or 0))
+                        except Exception:
+                            pass
                     fps_avg = _parse_fps(str(st.get("avg_frame_rate") or ""))
                     fps_r = _parse_fps(str(st.get("r_frame_rate") or ""))
                     info["src_fps"] = round(fps_avg or fps_r, 3)
@@ -894,7 +931,7 @@ def sanitize_binary_boxes_in_place(file_path: str) -> int:
         "elevenlabs",
     )
     container_boxes = ("moov", "trak", "mdia", "minf", "stbl", "edts", "dinf")
-    mac_epoch_ctime = int(time.time()) + 2082844800 - 1620
+    mac_epoch_ctime = int(time.time()) + 2082844800 - random.SystemRandom().randint(900, 86400)
     mac_epoch_mtime = mac_epoch_ctime + 1
     ctime_32 = mac_epoch_ctime.to_bytes(4, byteorder="big")
     mtime_32 = mac_epoch_mtime.to_bytes(4, byteorder="big")
@@ -1345,10 +1382,22 @@ def process_video(
     vid_w, vid_h = metrics["width"], metrics["height"]
     duration_sec = metrics["duration_sec"]
     src_fps = metrics["src_fps"]
+    src_bitrate = int(metrics.get("src_bitrate") or 0)
     pulldown_detected = metrics["pulldown_detected"]
     effective_fps = metrics["effective_fps"]
-    job_profile = generate_organic_job_profile(synthid_scramble=synthid_scramble)
-    target_w, target_h = _compute_target_dimensions(vid_w, vid_h, upscale_1080p and camera_profile != "neutral")
+    job_profile = generate_organic_job_profile(
+        synthid_scramble=synthid_scramble,
+        humanization_preset=humanization_preset,
+    )
+    use_upscale = upscale_1080p and camera_profile != "neutral"
+    target_w, target_h = _compute_target_dimensions(vid_w, vid_h, use_upscale)
+
+    if use_upscale:
+        target_max_bps = max(3_000_000, min(5_000_000, int((src_bitrate or 4_000_000) * 1.15)))
+    else:
+        target_max_bps = max(2_000_000, min(4_200_000, int((src_bitrate or 3_600_000) * 0.95)))
+    maxrate_k = f"{max(2000, target_max_bps // 1000)}k"
+    bufsize_k = f"{max(4000, (target_max_bps * 2) // 1000)}k"
 
     if mode == "deep_synthid" and duration_sec > 0:
         expected_out_dur = max(0.2, duration_sec * 0.961538)
@@ -1364,7 +1413,6 @@ def process_video(
         expected_out_dur = max(0.0, duration_sec)
         expected_frames = metrics["total_frames"]
 
-    use_upscale = upscale_1080p and camera_profile != "neutral"
     if mode in ("all_in_one", "unified"):
         video_filter_str = build_unified_video_filter(
             vid_w, vid_h, duration_sec, use_upscale, src_fps, pulldown_detected, effective_fps, job_profile
@@ -1378,19 +1426,9 @@ def process_video(
             vid_w, vid_h, use_upscale, src_fps, pulldown_detected, effective_fps, job_profile
         )
 
-    # Inject Humanization Preset & Aggressive SynthID Spectral/Subcarrier Scrambling
-    if humanization_preset == "handheld":
-        video_filter_str += ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih"
-    elif humanization_preset == "warmth":
-        video_filter_str += ",colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015"
-    elif humanization_preset == "grain":
-        video_filter_str += ",noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t"
-    elif humanization_preset == "full_human":
-        video_filter_str += (
-            ",rotate=a='0.0035*sin(t*2.8)':bilinear=1:ow=iw:oh=ih,"
-            "colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=saturation=1.04:contrast=1.015,"
-            "noise=c0s=3.5:c1s=1.2:c2s=1.2:allf=t"
-        )
+    # Calibrated color warmth finish (no duplicate noise stacking or redundant double-rotate)
+    if humanization_preset in ("warmth", "full_human"):
+        video_filter_str += ",colorbalance=rs=0.02:gs=0.008:bs=-0.02"
 
     if synthid_scramble == "aggressive":
         video_filter_str += f",hue=h='{job_profile['hue_amp1']}*sin(t*1.17)+{job_profile['hue_amp2']}*cos(t*2.63)'"
@@ -1442,7 +1480,7 @@ def process_video(
         a_handler = "SoundHandle"
 
     cam_meta: list[str] = []
-    encode_preset = "superfast" if duration_sec > 10 else "veryfast"
+    encode_preset = "fast" if duration_sec <= 12.0 else "faster"
     b_adapt_mode = "1"
     movflags_str = "+faststart"
 
@@ -1468,10 +1506,10 @@ def process_video(
         effective_force_keyframes = force_keyframes and (mode not in ("all_in_one", "safe_mode", "unified"))
 
         keyframe_flags = [
-            "-g", "60",
-            "-keyint_min", "15",
+            "-g", str(job_profile["keyint"]),
+            "-keyint_min", str(job_profile["min_keyint"]),
             "-sc_threshold", "40",
-            "-refs", "2",
+            "-refs", str(job_profile["refs"]),
             "-color_primaries", "bt709",
             "-color_trc", "bt709",
             "-colorspace", "bt709",
@@ -1479,10 +1517,10 @@ def process_video(
         ]
 
         x264_params = (
-            f"ref=2:bframes=2:b-adapt={b_adapt_mode}:b-pyramid=normal:weightp=1:"
-            f"psy-rd={job_profile['psy_rd']}:aq-mode=2:aq-strength={job_profile['aq_strength']}:"
-            f"deblock={job_profile['deblock']}:no-dct-decimate=1:nal-hrd=none:force-cfr=1:"
-            "open-gop=0:scenecut=40:keyint=60:min-keyint=15"
+            f"ref={job_profile['refs']}:bframes={job_profile['bframes']}:b-adapt={b_adapt_mode}:b-pyramid=normal:weightp=1:"
+            f"psy-rd={job_profile['psy_rd']}:aq-mode={job_profile['aq_mode']}:aq-strength={job_profile['aq_strength']}:"
+            f"deblock={job_profile['deblock']}:nal-hrd=none:force-cfr=1:"
+            f"open-gop=0:scenecut=40:keyint={job_profile['keyint']}:min-keyint={job_profile['min_keyint']}"
         )
 
         # TWO-STAGE ALL-IN-ONE EXPORT PROFILE:
@@ -1490,8 +1528,8 @@ def process_video(
         # Stage B (81% -> 91%): Dedicated Zero-SEI (-bsf:v filter_units) + Hardware OEM + +faststart remux into output_path
         if mode == "all_in_one":
             aio_msg = (
-                f"-> [PASS 1/2 • ALL-IN-ONE V 2.3] {fps_mode_label} + Anti-Diffusion hqdn3d + Asymmetric Warp (k1={job_profile['lens_k1']}) "
-                "+ Dual-Scale Bayer CMOS Grain + AAC 256k 21kHz Stereo Room Air..."
+                f"-> [PASS 1/2 • ALL-IN-ONE V 2.4] {fps_mode_label} + 180° Shutter Blend + Warp (k1={job_profile['lens_k1']}) "
+                f"+ Calibrated CMOS Grain + AAC 192k 21.8kHz (CRF {job_profile['crf']}, max {maxrate_k}, refs={job_profile['refs']})..."
             )
             logs.append(aio_msg)
             tracker.push_log(aio_msg)
@@ -1508,9 +1546,9 @@ def process_video(
                 "-profile:v", "high",
                 "-level", "4.1",
                 "-crf", job_profile["crf"],
-                "-maxrate", "14M",
-                "-bufsize", "28M",
-                "-bf", "2",
+                "-maxrate", maxrate_k,
+                "-bufsize", bufsize_k,
+                "-bf", str(job_profile["bframes"]),
                 "-pix_fmt", "yuv420p",
                 *keyframe_flags,
                 "-x264-params", x264_params,
@@ -1544,9 +1582,9 @@ def process_video(
                         "-map", "[vout]",
                         "-map", "[aout]",
                         "-c:a", "aac",
-                        "-b:a", "256k",
+                        "-b:a", "192k",
                         "-ar", "48000",
-                        "-cutoff", "22500",
+                        "-cutoff", "21800",
                     ])
                 else:
                     cmd.extend([
@@ -1618,8 +1656,8 @@ def process_video(
 
             logs.extend(extract_ffmpeg_telemetry(err_aio, "ffmpeg-all-in-one"))
             done_p1 = (
-                f"✓ [PASS 1/2 SELESAI] {fps_mode_label} + Anti-Diffusion Warp + Dual-Scale Bayer CMOS Grain "
-                "+ AAC 256k 21kHz Stereo Air selesai — melanjutkan Pass 2 Zero-SEI Remuxing..."
+                f"✓ [PASS 1/2 SELESAI] {fps_mode_label} + Shutter Blend + Anti-Diffusion Warp + Calibrated CMOS Grain "
+                "+ AAC 192k 21.8kHz Stereo Air selesai — melanjutkan Pass 2 Zero-SEI Remuxing..."
             )
             logs.append(done_p1)
             tracker.push_log(done_p1)
@@ -1676,18 +1714,18 @@ def process_video(
                 is_temporal_cfr = mode in ("safe_mode", "unified")
                 if mode == "unified":
                     p1_msg = (
-                        "-> [PASS 1/2 • PAKET TERPADU V 2.1] "
-                        f"{fps_mode_label} + Sub-Pixel Drift + Adaptive ISP Grain + Zero-Silence Indoor Audio..."
+                        "-> [PASS 1/2 • PAKET TERPADU V 2.4] "
+                        f"{fps_mode_label} + Sub-Pixel Drift + Calibrated CMOS Grain + Zero-Silence Indoor Audio..."
                     )
                 elif mode == "safe_mode":
                     p1_msg = (
-                        "-> [PASS 1/2 • SAFE MODE TEMPORAL V 2.1] "
-                        f"{fps_mode_label} Anti-Glitch + Gaussian Grain + Audio Synced Anti-TTS..."
+                        "-> [PASS 1/2 • SAFE MODE TEMPORAL V 2.4] "
+                        f"{fps_mode_label} Anti-Glitch + Calibrated Grain + Audio Synced Anti-TTS..."
                     )
                 else:
                     p1_msg = (
-                        "-> [PASS 1/2 • AUDIO-VISUAL ANTI-AI V 2.1] "
-                        f"{fps_mode_label} + Gaussian CMOS + Non-Comb Voice Shift & Pink/Brown Room..."
+                        "-> [PASS 1/2 • AUDIO-VISUAL ANTI-AI V 2.4] "
+                        f"{fps_mode_label} + Calibrated CMOS + Non-Comb Voice Shift & Pink/Brown Room..."
                     )
                 logs.append(p1_msg)
                 tracker.push_log(p1_msg)
@@ -1721,9 +1759,9 @@ def process_video(
                             "-map", "[vout]",
                             "-map", "[aout]",
                             "-c:a", "aac",
-                            "-b:a", "256k",
+                            "-b:a", "192k",
                             "-ar", "48000",
-                            "-cutoff", "22500",
+                            "-cutoff", "21800",
                         ])
                     else:
                         cmd.extend([
@@ -1741,9 +1779,9 @@ def process_video(
                         "-profile:v", "high",
                         "-level", "4.1",
                         "-crf", job_profile["crf"],
-                        "-maxrate", "14M",
-                        "-bufsize", "28M",
-                        "-bf", "2",
+                        "-maxrate", maxrate_k,
+                        "-bufsize", bufsize_k,
+                        "-bf", str(job_profile["bframes"]),
                         "-pix_fmt", "yuv420p",
                         *keyframe_flags,
                         "-x264-params", x264_params,
@@ -1823,7 +1861,7 @@ def process_video(
                     err_msg = err1.splitlines()[-1] if err1 else "Unknown error"
                     raise RuntimeError(f"FFmpeg Pass 1 Re-encode Frame Filter gagal: {err_msg}")
             elif effective_force_keyframes:
-                kf_msg = "-> [PASS 1/2 • FORCE KEYFRAME RE-ENCODE] Menyuntikkan IDR Keyframes & B-Frames (CRF 18)..."
+                kf_msg = f"-> [PASS 1/2 • FORCE KEYFRAME RE-ENCODE] Menyuntikkan IDR Keyframes & B-Frames (CRF {job_profile['crf']})..."
                 logs.append(kf_msg)
                 tracker.push_log(kf_msg)
 
@@ -1841,8 +1879,10 @@ def process_video(
                     "-preset", encode_preset,
                     "-profile:v", "high",
                     "-level", "4.1",
-                    "-crf", "18",
-                    "-bf", "2",
+                    "-crf", job_profile["crf"],
+                    "-maxrate", maxrate_k,
+                    "-bufsize", bufsize_k,
+                    "-bf", str(job_profile["bframes"]),
                     "-pix_fmt", "yuv420p",
                     *keyframe_flags,
                     "-x264-params", x264_params,
