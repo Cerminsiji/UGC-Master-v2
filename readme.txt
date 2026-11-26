@@ -4,25 +4,22 @@ V2.5 — Anti-AI Engine
 
 All-in-One UGC Creator Studio & Video Metadata Cleaner.
 
-![UGC Master](https://img.shields.io/badge/UGC%20Master-V2.5-blueviolet?style=for-the-badge)
+# UGC Master V2.5
+
+![UGC Master](https://img.shields.io/badge/UGC_Master-V2.5-blueviolet?style=for-the-badge)
 ![Anti-AI Engine](https://img.shields.io/badge/Engine-Anti--AI-ff6b6b?style=for-the-badge)
-[![GitHub Stars](https://img.shields.io/github/stars/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/stargazers)
 
-[![GitHub Forks](https://img.shields.io/github/forks/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/forks)
-
-[![GitHub Issues](https://img.shields.io/github/issues/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/issues)
-
+[![Stars](https://img.shields.io/github/stars/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/stargazers)
+[![Forks](https://img.shields.io/github/forks/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/forks)
+[![Issues](https://img.shields.io/github/issues/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/issues)
 [![Last Commit](https://img.shields.io/github/last-commit/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/commits/main)
 
 ![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white)
-
 ![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
-
-![FFmpeg](https://img.shields.io/badge/FFmpeg-Media%20Engine-007808?logo=ffmpeg&logoColor=white)
-
+![FFmpeg](https://img.shields.io/badge/FFmpeg-Media_Engine-007808?logo=ffmpeg&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker&logoColor=white)
+![Google_Cloud](https://img.shields.io/badge/Google_Cloud-Supported-4285F4?logo=googlecloud&logoColor=white)
 
-![Google Cloud](https://img.shields.io/badge/Google%20Cloud-Supported-4285F4?logo=googlecloud&logoColor=white)
 ---
 
 📌 Overview
