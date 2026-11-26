@@ -1,25 +1,26 @@
-UGC Master — Creator Studio & MetaCleaner AIO
+🚀 UGC Master — Creator Studio & MetaCleaner AIO
 
 <p align="center">
-  <strong>V2.5 — Anti-AI Engine</strong><br>
-  <em>All-in-One UGC Creator Studio & Video Metadata Cleaner</em>
+  <strong>V2.5 | Anti-AI Engine</strong><br>
+  All-in-One UGC Creator Studio & Video Metadata Cleaner
 </p><p align="center">
   <a href="https://github.com/Cerminsiji/UGC-Master-v2">
     <img src="https://img.shields.io/badge/UGC%20Master-V2.5-blueviolet?style=for-the-badge" alt="UGC Master V2.5">
   </a>
   <img src="https://img.shields.io/badge/Engine-Anti--AI-ff6b6b?style=for-the-badge" alt="Anti-AI Engine">
-  <img src="https://img.shields.io/badge/Status-Development-blue?style=for-the-badge" alt="Development">
 </p><p align="center">
   <a href="https://github.com/Cerminsiji/UGC-Master-v2/stargazers">
-    <img src="https://img.shields.io/github/stars/Cerminsiji/UGC-Master-v2?style=social" alt="GitHub Stars">
+    <img src="https://img.shields.io/github/stars/Cerminsiji/UGC-Master-v2?style=flat-square" alt="Stars">
   </a>
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2/network/members">
-    <img src="https://img.shields.io/github/forks/Cerminsiji/UGC-Master-v2?style=social" alt="GitHub Forks">
+  <a href="https://github.com/Cerminsiji/UGC-Master-v2/forks">
+    <img src="https://img.shields.io/github/forks/Cerminsiji/UGC-Master-v2?style=flat-square" alt="Forks">
   </a>
   <a href="https://github.com/Cerminsiji/UGC-Master-v2/issues">
-    <img src="https://img.shields.io/github/issues/Cerminsiji/UGC-Master-v2" alt="GitHub Issues">
+    <img src="https://img.shields.io/github/issues/Cerminsiji/UGC-Master-v2?style=flat-square" alt="Issues">
   </a>
-  <img src="https://img.shields.io/github/last-commit/Cerminsiji/UGC-Master-v2" alt="Last Commit">
+  <a href="https://github.com/Cerminsiji/UGC-Master-v2">
+    <img src="https://img.shields.io/github/last-commit/Cerminsiji/UGC-Master-v2?style=flat-square" alt="Last Commit">
+  </a>
 </p><p align="center">
   <img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js">
   <img src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white" alt="Python">
@@ -30,58 +31,55 @@ UGC Master — Creator Studio & MetaCleaner AIO
 
 📌 Overview
 
-UGC Master adalah platform All-in-One Creator Studio yang dirancang untuk membantu proses pembuatan konten UGC (User Generated Content), pengolahan video, dan pengelolaan metadata media dalam satu sistem.
+UGC Master adalah platform All-in-One Creator Studio yang dirancang untuk mendukung proses pembuatan konten UGC (User Generated Content), pengolahan video, dan pengelolaan metadata media dalam satu sistem.
 
-Dikembangkan untuk mendukung workflow kreator konten, affiliate marketer, dan pembuat video pendek yang membutuhkan proses produksi konten lebih praktis dan terstruktur.
+Platform ini ditujukan untuk kreator konten, affiliate marketer, dan pembuat video pendek yang membutuhkan workflow produksi konten yang lebih praktis dan terstruktur.
 
-Versi V2.5 — Anti-AI Engine menggabungkan dua modul utama:
+🎯 Main Modules
 
-Modul| Fungsi
+Module| Description
 🎬 UGC Creator Studio| Workspace untuk membuat dan mengelola konten UGC
-🧹 MetaCleaner AIO| Tool pengolahan dan pembersihan metadata media
+🧹 MetaCleaner AIO| Tool untuk pemeriksaan dan pengolahan metadata media
 
 ✨ Highlights
 
 - 🎥 UGC Creator Studio
 - 🧹 MetaCleaner AIO
-- ⚙️ Integrated media-processing workflow
-- 🚀 Deployment-ready architecture
-- 🐳 Docker & Docker Compose support
-- ☁️ Google Cloud deployment support
+- 🎞️ Media processing workflow
+- ⚙️ Modular application architecture
+- 🐳 Docker and Docker Compose support
+- ☁️ Google Cloud deployment options
 - 🔄 GitHub Actions CI/CD integration
 - 📦 GitHub Container Registry support
 
 ---
 
-🧭 Table of Contents
+📚 Table of Contents
 
-- "Overview" (#-overview)
-- "Main Modules" (#-main-modules)
-- "Features" (#-features)
-- "Technology Stack" (#-technology-stack)
-- "System Requirements" (#-system-requirements)
-- "Installation" (#-installation)
-- "Environment Variables" (#-environment-variables)
-- "Development" (#-development)
-- "Deployment" (#-deployment)
-  - "VPS Deployment" (#1-vps-deployment)
-  - "Docker Deployment" (#2-docker-deployment)
-  - "Google Cloud Run" (#3-google-cloud-run)
-  - "Google Compute Engine" (#4-google-compute-engine)
-- "CI/CD Pipeline" (#-cicd-pipeline)
-- "MetaCleaner Workflow" (#-metacleaner-workflow)
-- "Troubleshooting" (#-troubleshooting)
-- "Project Structure" (#-project-structure)
-- "Security Notes" (#-security-notes)
-- "Contributing" (#-contributing)
-- "License" (#-license)
+1. "Overview" (#-overview)
+2. "Main Modules" (#-main-modules)
+3. "Features" (#-features)
+4. "Technology Stack" (#-technology-stack)
+5. "System Requirements" (#-system-requirements)
+6. "Installation" (#-installation)
+7. "Environment Variables" (#-environment-variables)
+8. "Development" (#-development)
+9. "Deployment" (#-deployment)
+10. "CI/CD Pipeline" (#-cicd-pipeline)
+11. "MetaCleaner Workflow" (#-metacleaner-workflow)
+12. "Troubleshooting" (#-troubleshooting)
+13. "Project Structure" (#-project-structure)
+14. "Security" (#-security)
+15. "Contributing" (#-contributing)
+16. "License" (#-license)
 
 ---
 
 🎬 Main Modules
 
-<details>
-<summary><strong>1. UGC Creator Studio</strong></summary><br>Modul untuk mendukung workflow pembuatan konten UGC dan produksi video pendek.
+1. UGC Creator Studio
+
+Modul untuk mendukung workflow pembuatan konten UGC dan produksi video pendek.
 
 Use cases:
 
@@ -92,7 +90,7 @@ Use cases:
 - Product showcase
 - Short-form promotional video
 
-Workflow umum:
+General workflow:
 
 1. Menentukan produk atau konsep konten.
 2. Menyiapkan ide dan struktur video.
@@ -100,26 +98,27 @@ Workflow umum:
 4. Mengelola proses produksi konten.
 5. Menyiapkan hasil untuk kebutuhan publikasi.
 
-</details><details>
-<summary><strong>2. MetaCleaner AIO</strong></summary><br>Modul untuk membantu pengelolaan metadata file media.
+2. MetaCleaner AIO
 
-Tujuan penggunaan:
+Modul untuk membantu pengelolaan metadata file media.
+
+General capabilities:
 
 - Memeriksa metadata file.
 - Menghapus atau membersihkan metadata yang tidak diperlukan.
 - Mengolah file media melalui workflow yang tersedia.
-- Membantu menyiapkan file untuk proses distribusi.
+- Menyiapkan file untuk proses distribusi.
 
-Catatan: MetaCleaner merupakan alat pengolahan metadata, bukan jaminan bahwa suatu platform akan menganggap video sebagai rekaman kamera asli atau tidak dibuat menggunakan AI.
+«Note: Pembersihan metadata bukan jaminan bahwa suatu platform akan menganggap video sebagai rekaman kamera asli atau tidak dibuat menggunakan AI.»
 
-</details>---
+---
 
 ⚡ Features
 
 Feature| Description
 🎬 Creator Studio| Workspace pembuatan konten UGC
 🧹 MetaCleaner AIO| Pengelolaan metadata media
-🎞️ Video Processing| Dukungan workflow pengolahan video
+🎞️ Video Processing| Workflow pengolahan video
 🧩 Modular Architecture| Pemisahan fungsi berdasarkan modul
 🐳 Docker Support| Deployment menggunakan container
 ☁️ Cloud Ready| Opsi deployment di Google Cloud
@@ -129,8 +128,6 @@ Feature| Description
 ---
 
 🛠️ Technology Stack
-
-Teknologi yang digunakan atau didukung dalam workflow proyek:
 
 Technology| Purpose
 Node.js| Runtime aplikasi
@@ -151,7 +148,7 @@ GHCR| Container image registry
 Minimum Requirements
 
 Component| Requirement
-Operating System| Linux / Windows / macOS
+Operating System| Linux, Windows, or macOS
 Node.js| 20+
 Python| 3.8+
 FFmpeg| Installed and accessible from PATH
@@ -159,9 +156,7 @@ Git| Latest stable version
 RAM| Sesuai kebutuhan pemrosesan
 Storage| Menyesuaikan ukuran media
 
-«Pastikan versi dan dependensi sesuai dengan konfigurasi aktual pada repository.»
-
-Check Installed Dependencies
+Check Dependencies
 
 node --version
 npm --version
@@ -181,7 +176,7 @@ cd UGC-Master-v2
 
 2. Install Dependencies
 
-Jika menggunakan npm:
+Untuk project berbasis Node.js:
 
 npm install
 
@@ -191,31 +186,27 @@ python3 -m pip install -r requirements.txt
 
 3. Configure Environment
 
-Buat file ".env" berdasarkan ".env.example" jika file tersebut tersedia:
+Jika tersedia file ".env.example", buat konfigurasi lokal:
 
 cp .env.example .env
 
 Kemudian sesuaikan konfigurasi dengan kebutuhan aplikasi.
 
-4. Run Application
-
-Periksa script yang tersedia:
+4. Check Available Scripts
 
 npm run
 
-Jalankan script development yang disediakan oleh project. Contoh:
+Jalankan script yang tersedia di "package.json". Contoh:
 
 npm run dev
 
-«Nama script dapat berbeda. Gunakan script yang benar-benar tercantum pada "package.json".»
+«Nama script dapat berbeda sesuai konfigurasi project.»
 
 ---
 
 🔐 Environment Variables
 
-Konfigurasi environment digunakan untuk menyimpan pengaturan aplikasi dan integrasi layanan.
-
-Contoh template:
+Berikut contoh template environment:
 
 NODE_ENV=production
 PORT=3000
@@ -226,7 +217,7 @@ GEMINI_API_KEY=
 # Application
 APP_URL=
 
-Penting:
+Security recommendations:
 
 - Jangan memasukkan API key asli ke repository.
 - Jangan membagikan file ".env".
@@ -237,7 +228,7 @@ Penting:
 
 🧑‍💻 Development
 
-Untuk pengembangan lokal:
+Clone repository:
 
 git clone https://github.com/Cerminsiji/UGC-Master-v2.git
 
@@ -245,17 +236,15 @@ cd UGC-Master-v2
 
 npm install
 
-Periksa perintah yang tersedia:
+Periksa script yang tersedia:
 
 npm run
 
-Jalankan perintah development sesuai konfigurasi proyek.
-
-Untuk memeriksa perubahan:
+Periksa perubahan:
 
 git status
 
-Untuk mengirim perubahan:
+Commit dan push perubahan:
 
 git add .
 
@@ -279,7 +268,7 @@ Install Dependencies
 
 sudo apt install -y git nginx ffmpeg python3 python3-pip
 
-Install Node.js 20+ menggunakan metode instalasi resmi yang sesuai dengan distribusi Linux.
+Install Node.js 20+ menggunakan metode resmi yang sesuai dengan distribusi Linux.
 
 Verifikasi:
 
@@ -300,11 +289,11 @@ sudo npm install -g pm2
 
 Start Application
 
-Sesuaikan perintah dengan entry point atau script aplikasi:
+Sesuaikan dengan script aplikasi:
 
 pm2 start npm --name ugc-master -- start
 
-Simpan konfigurasi PM2:
+Simpan konfigurasi:
 
 pm2 save
 
@@ -312,7 +301,7 @@ pm2 startup
 
 Nginx Reverse Proxy
 
-Buat konfigurasi:
+Buat file konfigurasi:
 
 sudo nano /etc/nginx/sites-available/ugc-master
 
@@ -326,7 +315,6 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:3000;
-
         proxy_http_version 1.1;
 
         proxy_set_header Host $host;
@@ -361,7 +349,7 @@ sudo certbot --nginx -d your-domain.com
 
 Pastikan Docker dan Docker Compose sudah terpasang.
 
-Build Image
+Build Docker Image
 
 docker build -t ugc-master .
 
@@ -396,13 +384,13 @@ docker compose down
 
 3. Google Cloud Run
 
-Deployment ke Google Cloud Run dapat digunakan untuk menjalankan aplikasi berbasis container.
+Google Cloud Run dapat digunakan untuk menjalankan aplikasi berbasis container.
 
 Requirements
 
 - Google Cloud account
 - Google Cloud CLI
-- Project Google Cloud
+- Google Cloud project
 - Billing aktif
 - Container image yang dapat diakses Cloud Run
 
@@ -479,15 +467,13 @@ Secret| Description
 "DEPLOY_USER"| Username server
 "DEPLOY_SSH_KEY"| SSH private key deployment
 
-«Tambahkan hanya secret yang benar-benar digunakan workflow. Jangan menyimpan credential di dalam source code.»
+Tambahkan hanya secret yang benar-benar digunakan oleh workflow.
 
 GitHub Actions Badge
 
-Jika workflow Docker menggunakan nama file "docker-build.yml", tambahkan badge berikut:
+Jika workflow Docker menggunakan file ".github/workflows/docker-build.yml", tambahkan badge berikut:
 
 ![Docker Build](https://github.com/Cerminsiji/UGC-Master-v2/actions/workflows/docker-build.yml/badge.svg)
-
-Badge akan aktif setelah workflow dengan nama file tersebut tersedia di repository.
 
 ---
 
@@ -518,8 +504,6 @@ Recommended Workflow
 5. Periksa kembali file hasil.
 6. Pastikan kualitas video dan audio tetap sesuai kebutuhan.
 
-Catatan: Pembersihan metadata tidak menjamin penghapusan seluruh jejak asal-usul media. Metadata tertentu dapat dibuat ulang oleh aplikasi atau platform saat proses ekspor dan upload.
-
 ---
 
 🧰 Troubleshooting
@@ -533,14 +517,12 @@ npm -v
 Kemudian coba:
 
 npm cache verify
-
 npm install
 
 </details><details>
 <summary><strong>2. FFmpeg tidak ditemukan</strong></summary>Ubuntu/Debian:
 
 sudo apt update
-
 sudo apt install ffmpeg -y
 
 Verifikasi:
@@ -568,7 +550,7 @@ Restart:
 pm2 restart ugc-master
 
 </details><details>
-<summary><strong>5. Docker container tidak berjalan</strong></summary>Periksa:
+<summary><strong>5. Docker container tidak berjalan</strong></summary>Periksa container:
 
 docker ps -a
 
@@ -593,7 +575,7 @@ sudo systemctl status nginx
 
 📁 Project Structure
 
-Struktur direktori berikut merupakan gambaran konseptual. Sesuaikan dengan struktur aktual repository.
+Struktur berikut merupakan contoh gambaran direktori. Sesuaikan dengan struktur aktual repository.
 
 UGC-Master-v2/
 │
@@ -615,9 +597,7 @@ UGC-Master-v2/
 
 ---
 
-🔒 Security Notes
-
-Keamanan aplikasi dan data pengguna perlu diperhatikan.
+🔒 Security
 
 - Jangan commit file ".env".
 - Jangan expose API key di frontend atau repository publik.
@@ -626,7 +606,7 @@ Keamanan aplikasi dan data pengguna perlu diperhatikan.
 - Validasi file yang diunggah.
 - Batasi ukuran file upload sesuai kapasitas server.
 - Gunakan HTTPS untuk deployment publik.
-- Lakukan pembaruan dependency secara berkala.
+- Perbarui dependency secara berkala.
 - Terapkan autentikasi dan pembatasan akses jika aplikasi digunakan secara publik.
 
 ---
@@ -652,7 +632,7 @@ git commit -m "Add new feature"
 
 git push origin feature/new-feature
 
-Silakan gunakan GitHub Issues untuk melaporkan bug, memberikan masukan, atau mengusulkan fitur baru.
+Gunakan GitHub Issues untuk melaporkan bug, memberikan masukan, atau mengusulkan fitur baru.
 
 ---
 
@@ -673,14 +653,14 @@ Jika project ini bermanfaat, dukung pengembangannya dengan memberikan Star di Gi
     <img src="https://img.shields.io/badge/GitHub-View%20Repository-181717?style=for-the-badge&logo=github" alt="View Repository">
   </a>
   <a href="https://github.com/Cerminsiji/UGC-Master-v2/stargazers">
-    <img src="https://img.shields.io/badge/⭐-Star%20Project-yellow?style=for-the-badge" alt="Star Project">
+    <img src="https://img.shields.io/badge/Star-Project-yellow?style=for-the-badge&logo=github" alt="Star Project">
   </a>
   <a href="https://github.com/Cerminsiji/UGC-Master-v2/issues">
     <img src="https://img.shields.io/badge/Report-Bug-red?style=for-the-badge&logo=github" alt="Report Bug">
   </a>
 </p><p align="center">
   <strong>UGC Master V2.5</strong><br>
-  <em>Create • Process • Optimize</em>
+  Create • Process • Optimize
 </p><p align="center">
   Made with ❤️ for Content Creators
 </p>
