@@ -1671,22 +1671,28 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
     ),
   ];
 
-  let totalRiskScore = avForensics.aiRiskScore;
-  if (totalSeiUnits > 0) totalRiskScore += 30;
-  if (bmff.jumbfManifests.length > 0 || bmff.uuidClaims.length > 0) totalRiskScore += 30;
-  if (flaggedVendorEntries.length > 0 || combinedAsciiTraces.length > 0) totalRiskScore += 25;
-  avForensics.aiRiskScore = Math.min(100, totalRiskScore);
-  avForensics.aiVerdict =
-    avForensics.aiRiskScore >= 40
-      ? 'HIGH_AI_RISK'
-      : avForensics.aiRiskScore >= 15
-        ? 'SUSPICIOUS_SIGNALS'
-        : 'CLEAN_ORGANIC';
-
   const isZeroSei = totalSeiUnits === 0;
   const isZeroUuid = bmff.uuidClaims.length === 0;
   const isZeroJumbf = bmff.jumbfManifests.length === 0;
   const isZeroAiVendor = flaggedVendorEntries.length === 0 && combinedAsciiTraces.length === 0;
+
+  if (isZeroSei && isZeroUuid && isZeroJumbf && isZeroAiVendor) {
+    avForensics.aiRiskScore = 0;
+    avForensics.aiVerdict = 'CLEAN_ORGANIC';
+  } else {
+    let totalRiskScore = avForensics.aiRiskScore;
+    if (totalSeiUnits > 0) totalRiskScore += 30;
+    if (bmff.jumbfManifests.length > 0 || bmff.uuidClaims.length > 0) totalRiskScore += 30;
+    if (flaggedVendorEntries.length > 0 || combinedAsciiTraces.length > 0) totalRiskScore += 25;
+    avForensics.aiRiskScore = Math.min(100, totalRiskScore);
+    avForensics.aiVerdict =
+      avForensics.aiRiskScore >= 40
+        ? 'HIGH_AI_RISK'
+        : avForensics.aiRiskScore >= 15
+          ? 'SUSPICIOUS_SIGNALS'
+          : 'CLEAN_ORGANIC';
+  }
+
   const isVisualAiClean = avForensics.visual.visualClean;
   const isAudioAiClean = avForensics.audio.audioClean;
 
