@@ -1,33 +1,24 @@
-🚀 UGC Master — Creator Studio & MetaCleaner AIO
+UGC Master — Creator Studio & MetaCleaner AIO
 
-<p align="center">
-  <strong>V2.5 | Anti-AI Engine</strong><br>
-  All-in-One UGC Creator Studio & Video Metadata Cleaner
-</p><p align="center">
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2">
-    <img src="https://img.shields.io/badge/UGC%20Master-V2.5-blueviolet?style=for-the-badge" alt="UGC Master V2.5">
-  </a>
-  <img src="https://img.shields.io/badge/Engine-Anti--AI-ff6b6b?style=for-the-badge" alt="Anti-AI Engine">
-</p><p align="center">
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2/stargazers">
-    <img src="https://img.shields.io/github/stars/Cerminsiji/UGC-Master-v2?style=flat-square" alt="Stars">
-  </a>
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2/forks">
-    <img src="https://img.shields.io/github/forks/Cerminsiji/UGC-Master-v2?style=flat-square" alt="Forks">
-  </a>
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2/issues">
-    <img src="https://img.shields.io/github/issues/Cerminsiji/UGC-Master-v2?style=flat-square" alt="Issues">
-  </a>
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2">
-    <img src="https://img.shields.io/github/last-commit/Cerminsiji/UGC-Master-v2?style=flat-square" alt="Last Commit">
-  </a>
-</p><p align="center">
-  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js">
-  <img src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/FFmpeg-Media%20Engine-007808?logo=ffmpeg&logoColor=white" alt="FFmpeg">
-  <img src="https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/Google%20Cloud-Supported-4285F4?logo=googlecloud&logoColor=white" alt="Google Cloud">
-</p>---
+V2.5 — Anti-AI Engine
+
+All-in-One UGC Creator Studio & Video Metadata Cleaner.
+
+"UGC Master" (https://img.shields.io/badge/UGC%20Master-V2.5-blueviolet?style=for-the-badge)
+"Anti-AI Engine" (https://img.shields.io/badge/Engine-Anti--AI-ff6b6b?style=for-the-badge)
+
+""GitHub Stars" (https://img.shields.io/github/stars/Cerminsiji/UGC-Master-v2?style=flat-square)" (https://github.com/Cerminsiji/UGC-Master-v2/stargazers)
+""GitHub Forks" (https://img.shields.io/github/forks/Cerminsiji/UGC-Master-v2?style=flat-square)" (https://github.com/Cerminsiji/UGC-Master-v2/forks)
+""GitHub Issues" (https://img.shields.io/github/issues/Cerminsiji/UGC-Master-v2?style=flat-square)" (https://github.com/Cerminsiji/UGC-Master-v2/issues)
+""Last Commit" (https://img.shields.io/github/last-commit/Cerminsiji/UGC-Master-v2?style=flat-square)" (https://github.com/Cerminsiji/UGC-Master-v2/commits/main)
+
+"Node.js" (https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white)
+"Python" (https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
+"FFmpeg" (https://img.shields.io/badge/FFmpeg-Media%20Engine-007808?logo=ffmpeg&logoColor=white)
+"Docker" (https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker&logoColor=white)
+"Google Cloud" (https://img.shields.io/badge/Google%20Cloud-Supported-4285F4?logo=googlecloud&logoColor=white)
+
+---
 
 📌 Overview
 
@@ -56,22 +47,22 @@ Module| Description
 
 📚 Table of Contents
 
-1. "Overview" (#-overview)
-2. "Main Modules" (#-main-modules)
-3. "Features" (#-features)
-4. "Technology Stack" (#-technology-stack)
-5. "System Requirements" (#-system-requirements)
-6. "Installation" (#-installation)
-7. "Environment Variables" (#-environment-variables)
-8. "Development" (#-development)
-9. "Deployment" (#-deployment)
-10. "CI/CD Pipeline" (#-cicd-pipeline)
-11. "MetaCleaner Workflow" (#-metacleaner-workflow)
-12. "Troubleshooting" (#-troubleshooting)
-13. "Project Structure" (#-project-structure)
-14. "Security" (#-security)
-15. "Contributing" (#-contributing)
-16. "License" (#-license)
+- "Overview" (#-overview)
+- "Main Modules" (#-main-modules)
+- "Features" (#-features)
+- "Technology Stack" (#-technology-stack)
+- "System Requirements" (#-system-requirements)
+- "Installation" (#-installation)
+- "Environment Variables" (#-environment-variables)
+- "Development" (#-development)
+- "Deployment" (#-deployment)
+- "CI/CD Pipeline" (#-cicd-pipeline)
+- "MetaCleaner Workflow" (#-metacleaner-workflow)
+- "Troubleshooting" (#-troubleshooting)
+- "Project Structure" (#-project-structure)
+- "Security" (#-security)
+- "Contributing" (#-contributing)
+- "License" (#-license)
 
 ---
 
@@ -473,7 +464,7 @@ GitHub Actions Badge
 
 Jika workflow Docker menggunakan file ".github/workflows/docker-build.yml", tambahkan badge berikut:
 
-![Docker Build](https://github.com/Cerminsiji/UGC-Master-v2/actions/workflows/docker-build.yml/badge.svg)
+"Docker Build" (https://github.com/Cerminsiji/UGC-Master-v2/actions/workflows/docker-build.yml/badge.svg)
 
 ---
 
@@ -508,8 +499,9 @@ Recommended Workflow
 
 🧰 Troubleshooting
 
-<details>
-<summary><strong>1. npm install gagal</strong></summary>Periksa versi Node.js dan npm:
+1. npm install gagal
+
+Periksa versi Node.js dan npm:
 
 node -v
 npm -v
@@ -519,8 +511,9 @@ Kemudian coba:
 npm cache verify
 npm install
 
-</details><details>
-<summary><strong>2. FFmpeg tidak ditemukan</strong></summary>Ubuntu/Debian:
+2. FFmpeg tidak ditemukan
+
+Ubuntu/Debian:
 
 sudo apt update
 sudo apt install ffmpeg -y
@@ -529,15 +522,17 @@ Verifikasi:
 
 ffmpeg -version
 
-</details><details>
-<summary><strong>3. Port sudah digunakan</strong></summary>Periksa proses yang menggunakan port:
+3. Port sudah digunakan
+
+Periksa proses yang menggunakan port:
 
 sudo lsof -i :3000
 
 Sesuaikan port aplikasi atau hentikan proses yang tidak diperlukan.
 
-</details><details>
-<summary><strong>4. PM2 application error</strong></summary>Periksa status:
+4. PM2 application error
+
+Periksa status:
 
 pm2 status
 
@@ -549,8 +544,9 @@ Restart:
 
 pm2 restart ugc-master
 
-</details><details>
-<summary><strong>5. Docker container tidak berjalan</strong></summary>Periksa container:
+5. Docker container tidak berjalan
+
+Periksa container:
 
 docker ps -a
 
@@ -562,8 +558,9 @@ Restart:
 
 docker restart ugc-master
 
-</details><details>
-<summary><strong>6. Nginx configuration error</strong></summary>Validasi konfigurasi:
+6. Nginx configuration error
+
+Validasi konfigurasi:
 
 sudo nginx -t
 
@@ -571,7 +568,7 @@ Periksa status:
 
 sudo systemctl status nginx
 
-</details>---
+---
 
 📁 Project Structure
 
@@ -648,19 +645,16 @@ Jika belum tersedia, tambahkan file lisensi dan tentukan ketentuan penggunaan se
 
 Jika project ini bermanfaat, dukung pengembangannya dengan memberikan Star di GitHub.
 
-<p align="center">
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2">
-    <img src="https://img.shields.io/badge/GitHub-View%20Repository-181717?style=for-the-badge&logo=github" alt="View Repository">
-  </a>
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2/stargazers">
-    <img src="https://img.shields.io/badge/Star-Project-yellow?style=for-the-badge&logo=github" alt="Star Project">
-  </a>
-  <a href="https://github.com/Cerminsiji/UGC-Master-v2/issues">
-    <img src="https://img.shields.io/badge/Report-Bug-red?style=for-the-badge&logo=github" alt="Report Bug">
-  </a>
-</p><p align="center">
-  <strong>UGC Master V2.5</strong><br>
-  Create • Process • Optimize
-</p><p align="center">
-  Made with ❤️ for Content Creators
-</p>
+""View Repository" (https://img.shields.io/badge/GitHub-View%20Repository-181717?style=for-the-badge&logo=github)" (https://github.com/Cerminsiji/UGC-Master-v2)
+
+""Star Project" (https://img.shields.io/badge/Star-Project-yellow?style=for-the-badge&logo=github)" (https://github.com/Cerminsiji/UGC-Master-v2/stargazers)
+
+""Report Bug" (https://img.shields.io/badge/Report-Bug-red?style=for-the-badge&logo=github)" (https://github.com/Cerminsiji/UGC-Master-v2/issues)
+
+---
+
+UGC Master V2.5
+
+Create • Process • Optimize
+
+Made with ❤️ for Content Creators
