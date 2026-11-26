@@ -1,0 +1,28 @@
+services:
+  ugc-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ugc-master-metacleaner:latest
+    container_name: ugc_master_cleaner
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - APP_URL=${APP_URL:-http://localhost:3000}
+    volumes:
+      # Persistent temp space for high-volume video processing
+      - temp_cleaner_data:/tmp
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
+volumes:
+  temp_cleaner_data:
