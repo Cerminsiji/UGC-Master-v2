@@ -100,10 +100,15 @@ def generate_organic_job_profile(
     """Per-job randomized organic camera/ISP parameters, compact x264 entropy & SynthID weights."""
     rng = random.SystemRandom()
     rot_sign = rng.choice((-1.0, 1.0))
-    pitch_choice = (
-        round(rng.uniform(0.976, 0.985), 4)
+    speed_pts = (
+        round(rng.uniform(0.968, 0.985), 4)
         if rng.random() < 0.65
-        else round(rng.uniform(1.014, 1.022), 4)
+        else round(rng.uniform(1.014, 1.028), 4)
+    )
+    pitch_choice = (
+        round(rng.uniform(0.976, 0.986), 4)
+        if rng.random() < 0.60
+        else round(rng.uniform(1.014, 1.024), 4)
     )
     is_agg = synthid_scramble == "aggressive"
     has_grain = humanization_preset in ("grain", "full_human")
@@ -111,47 +116,47 @@ def generate_organic_job_profile(
     has_warmth = humanization_preset in ("warmth", "full_human")
 
     noise_y = (
-        round(rng.uniform(2.00, 2.40), 2)
+        round(rng.uniform(2.15, 2.55), 2)
         if has_grain
-        else (round(rng.uniform(1.60, 1.90), 2) if is_agg else round(rng.uniform(1.40, 1.65), 2))
+        else (round(rng.uniform(1.75, 2.05), 2) if is_agg else round(rng.uniform(1.45, 1.75), 2))
     )
-    noise_c = round(rng.uniform(0.55, 0.80), 2) if has_grain else round(rng.uniform(0.40, 0.60), 2)
-    post_noise_y = round(rng.uniform(1.55, 1.85), 2) if has_grain else round(rng.uniform(1.30, 1.55), 2)
+    noise_c = round(rng.uniform(0.60, 0.85), 2) if has_grain else round(rng.uniform(0.45, 0.65), 2)
+    post_noise_y = round(rng.uniform(1.45, 1.75), 2) if has_grain else round(rng.uniform(1.25, 1.50), 2)
 
-    keyint = rng.randint(48, 84)
-    min_keyint = rng.randint(12, 24)
+    keyint = rng.randint(52, 88)
+    min_keyint = rng.randint(14, 24)
     bframes = rng.choice((2, 3))
     refs = rng.choice((2, 3))
     aq_mode = rng.choice((2, 3))
-    crf_val = str(rng.choice((20, 21)))
+    crf_val = str(rng.choice((21, 22)))
 
     return {
-        "trim_start": round(rng.uniform(0.03, 0.07), 3),
-        "speed_pts": round(rng.uniform(0.970, 0.985), 4),
-        "lens_cx": round(rng.uniform(0.493, 0.507), 3),
-        "lens_cy": round(rng.uniform(0.493, 0.507), 3),
-        "lens_k1": round(rng.uniform(-0.032, -0.022), 4),
-        "lens_k2": round(rng.uniform(0.007, 0.012), 4),
-        "rot_bias": round(rot_sign * rng.uniform(0.0036, 0.0056), 4),
-        "rot_a1": round(rng.uniform(0.0042, 0.0058) if has_handheld else rng.uniform(0.0032, 0.0044), 4),
-        "rot_a2": round(rng.uniform(0.0018, 0.0028), 4),
-        "rot_a3": round(rng.uniform(0.0009, 0.0014), 4),
-        "freq1": round(rng.uniform(1.03, 1.37), 2),
-        "freq2": round(rng.uniform(2.47, 2.99), 2),
-        "freq3": round(rng.uniform(4.13, 4.87), 2),
-        "crop_ratio": round(rng.uniform(0.934, 0.944) if is_agg else rng.uniform(0.938, 0.948), 3),
+        "trim_start": round(rng.uniform(0.04, 0.09), 3),
+        "speed_pts": speed_pts,
+        "lens_cx": round(rng.uniform(0.488, 0.512), 3),
+        "lens_cy": round(rng.uniform(0.488, 0.512), 3),
+        "lens_k1": round(rng.uniform(-0.046, -0.032), 4),
+        "lens_k2": round(rng.uniform(0.009, 0.016), 4),
+        "rot_bias": round(rot_sign * rng.uniform(0.0068, 0.0108), 4),
+        "rot_a1": round(rng.uniform(0.0052, 0.0072) if has_handheld else rng.uniform(0.0038, 0.0052), 4),
+        "rot_a2": round(rng.uniform(0.0022, 0.0034), 4),
+        "rot_a3": round(rng.uniform(0.0010, 0.0017), 4),
+        "freq1": round(rng.uniform(1.03, 1.39), 2),
+        "freq2": round(rng.uniform(2.43, 2.97), 2),
+        "freq3": round(rng.uniform(4.11, 4.89), 2),
+        "crop_ratio": round(rng.uniform(0.918, 0.928) if is_agg else rng.uniform(0.926, 0.936), 3),
         "cas_strength": round(rng.uniform(0.16, 0.22), 2),
         "noise_y": noise_y,
         "noise_c": noise_c,
         "post_noise_y": post_noise_y,
-        "hue_amp1": round(rot_sign * rng.uniform(0.32, 0.55), 3),
-        "hue_amp2": round(-rot_sign * rng.uniform(0.24, 0.42), 3),
-        "contrast": round(rng.uniform(1.012, 1.022), 3),
+        "hue_amp1": round(rot_sign * rng.uniform(0.38, 0.62), 3),
+        "hue_amp2": round(-rot_sign * rng.uniform(0.28, 0.48), 3),
+        "contrast": round(rng.uniform(1.012, 1.024), 3),
         "saturation": round(rng.uniform(1.022, 1.038) if has_warmth else rng.uniform(1.010, 1.022), 3),
         "gamma": round(rng.uniform(1.004, 1.012), 3),
         "wb_r": round(rng.uniform(1.014, 1.024) if has_warmth else rng.uniform(1.006, 1.012), 3),
         "wb_g": round(rng.uniform(1.005, 1.010), 3),
-        "wb_b": round(rng.uniform(0.992, 1.000) if has_warmth else rng.uniform(1.004, 1.010), 3),
+        "wb_b": round(rng.uniform(0.990, 0.999) if has_warmth else rng.uniform(1.004, 1.010), 3),
         "psy_rd": f"{round(rng.uniform(0.95, 1.15), 2)},{round(rng.uniform(0.08, 0.14), 2)}",
         "aq_mode": aq_mode,
         "aq_strength": str(round(rng.uniform(1.00, 1.18), 2)),
@@ -268,18 +273,19 @@ def build_unified_video_filter(
         f"{trim_step}"
         f"{finish},"
         "format=yuv420p,"
-        "tmix=frames=2:weights='0.86 0.14',"
-        "hqdn3d=1.1:0.9:1.6:1.2,"
+        "tmix=frames=2:weights='0.83 0.17',"
+        "hqdn3d=1.3:1.0:1.9:1.3,"
         f"lenscorrection=cx={p['lens_cx']}:cy={p['lens_cy']}:k1={p['lens_k1']}:k2={p['lens_k2']},"
         f"rotate=a='{p['rot_bias']}+{p['rot_a1']}*sin(t*{p['freq1']})+{p['rot_a2']}*cos(t*{p['freq2']})+{p['rot_a3']}*sin(t*{p['freq3']})':bilinear=1:ow=iw:oh=ih,"
         f"crop=w=trunc(iw*{p['crop_ratio']}/2)*2:h=trunc(ih*{p['crop_ratio']}/2)*2:"
-        f"x='(iw-ow)/2+iw*({p['rot_a1']*0.78:.4f}*sin(t*{p['freq1']})+{p['rot_a2']*0.75:.4f}*cos(t*{p['freq2']})+{p['rot_a3']*0.75:.4f}*sin(t*{p['freq3']}))':"
-        f"y='(ih-oh)*0.54+ih*({p['rot_a1']*0.65:.4f}*cos(t*0.93)+{p['rot_a2']*0.65:.4f}*sin(t*2.41)+{p['rot_a3']*0.65:.4f}*cos(t*3.97))',"
+        f"x='(iw-ow)/2+iw*({p['rot_a1']*0.75:.4f}*sin(t*{p['freq1']})+{p['rot_a2']*0.72:.4f}*cos(t*{p['freq2']})+{p['rot_a3']*0.72:.4f}*sin(t*{p['freq3']}))':"
+        f"y='(ih-oh)*0.54+ih*({p['rot_a1']*0.62:.4f}*cos(t*0.93)+{p['rot_a2']*0.62:.4f}*sin(t*2.41)+{p['rot_a3']*0.62:.4f}*cos(t*3.97))',"
+        "vignette=angle=0.14:eval=init,"
         f"noise=c0s={p['noise_y']}:c1s={p['noise_c']}:c2s={p['noise_c']}:allf=t,"
         f"{scale_step}"
         "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,"
         f"colorchannelmixer=rr={p['wb_r']}:rg=-0.006:rb=-0.002:gr=-0.003:gg={p['wb_g']}:gb=-0.002:br=-0.003:bg=-0.004:bb={p['wb_b']},"
-        f"eq=contrast={p['contrast']}:brightness='0.0017*sin(t*0.85)+0.0010*cos(t*2.01)':saturation={p['saturation']}:gamma={p['gamma']}:eval=frame,"
+        f"eq=contrast={p['contrast']}:brightness='0.0020*sin(t*0.85)+0.0012*cos(t*2.01)':saturation={p['saturation']}:gamma={p['gamma']}:eval=frame,"
         f"cas=strength={p['cas_strength']},"
         f"noise=c0s={p['post_noise_y']}:c1s=0:c2s=0:allf=t,"
         "setsar=1"
@@ -292,18 +298,20 @@ def _build_organic_room_and_voice_chain(
     p: dict,
     atempo_val: float,
     apad_filter: str,
-    extrastereo_m: float = 1.30,
+    extrastereo_m: float = 1.55,
     speech_gain_db: float = 0.0,
 ) -> str:
     gain_step = f"volume={speech_gain_db:.2f}dB," if abs(speech_gain_db) >= 0.4 else ""
     return (
-        f"anoisesrc=color=pink:amplitude=0.0008:sample_rate=48000:seed={p['seed_l']}[pL];"
-        f"anoisesrc=color=pink:amplitude=0.0008:sample_rate=48000:seed={p['seed_r']}[pR];"
-        f"anoisesrc=color=brown:amplitude=0.0006:sample_rate=48000:seed={p['seed_b']}[bRoom];"
-        f"anoisesrc=color=white:amplitude=0.0170:sample_rate=48000:seed={p['seed_air']}[wAir];"
-        "[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt];"
-        "[wAir]highpass=f=16200,lowpass=f=20800,pan=stereo|c0=0.92*c0|c1=0.82*c0,adelay=0|7[airSt];"
-        "[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt];"
+        f"anoisesrc=color=pink:amplitude=0.00065:sample_rate=48000:seed={p['seed_l']}[pL];"
+        f"anoisesrc=color=pink:amplitude=0.00065:sample_rate=48000:seed={p['seed_r']}[pR];"
+        f"anoisesrc=color=brown:amplitude=0.00035:sample_rate=48000:seed={p['seed_b']}[bRoom];"
+        f"anoisesrc=color=white:amplitude=0.0062:sample_rate=48000:seed={p['seed_air']}[wAirL];"
+        f"anoisesrc=color=white:amplitude=0.0062:sample_rate=48000:seed={p['seed_air'] + 731}[wAirR];"
+        "[bRoom]lowpass=f=300,pan=stereo|c0=c0|c1=c0[bSt];"
+        "[wAirL][wAirR]amerge=inputs=2,highpass=f=9000:poles=1,lowpass=f=21600:poles=1,"
+        "equalizer=f=15000:t=q:w=0.65:g=2.5,equalizer=f=18800:t=q:w=0.75:g=7.0,adelay=0|3[airSt];"
+        "[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=19500,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt];"
         "[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room];"
         f"{voice_prefix}aresample=48000:async=1:first_pts=0,"
         "aformat=channel_layouts=stereo,"
@@ -312,12 +320,12 @@ def _build_organic_room_and_voice_chain(
         "highpass=f=75,"
         "equalizer=f=210:t=q:w=1.0:g=0.9,"
         "equalizer=f=3100:t=q:w=1.4:g=-0.7,"
-        "aexciter=level_in=1:level_out=1:amount=1.40:drive=2.5:blend=0:freq=8500:ceil=19900,"
-        "aphaser=in_gain=0.85:out_gain=0.85:delay=2.4:decay=0.35:speed=0.7:type=t,"
+        "aexciter=level_in=1:level_out=1:amount=1.35:drive=2.2:blend=0.8:freq=6800:ceil=19900,"
         "asplit=2[vDry][vRef];"
-        "[vRef]highpass=f=420,lowpass=f=7800,pan=stereo|c0=0.22*c0|c1=-0.22*c1,adelay=0|13[vSide];"
+        "[vRef]highpass=f=260,lowpass=f=11500,equalizer=f=2200:t=q:w=1.1:g=1.4,"
+        "pan=stereo|c0=0.45*c0|c1=-0.45*c1,adelay=0|5[vSide];"
         "[vDry][vSide]amix=inputs=2:duration=first:normalize=0,"
-        "aecho=0.95:0.92:7|13:0.022|0.012,"
+        "aecho=0.94:0.90:8:0.055,"
         f"extrastereo=m={extrastereo_m},"
         "acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,"
         f"{apad_filter}[voice];"
@@ -1317,9 +1325,9 @@ def process_video(
     target_w, target_h = _compute_target_dimensions(vid_w, vid_h, use_upscale)
 
     if use_upscale:
-        target_max_bps = max(3_000_000, min(5_000_000, int((src_bitrate or 4_000_000) * 1.15)))
+        target_max_bps = max(2_800_000, min(4_500_000, int((src_bitrate or 3_800_000) * 0.90)))
     else:
-        target_max_bps = max(2_000_000, min(4_200_000, int((src_bitrate or 3_600_000) * 0.95)))
+        target_max_bps = max(2_000_000, min(3_800_000, int((src_bitrate or 3_400_000) * 0.85)))
     maxrate_k = f"{max(2000, target_max_bps // 1000)}k"
     bufsize_k = f"{max(4000, (target_max_bps * 2) // 1000)}k"
 
@@ -1456,8 +1464,8 @@ def process_video(
         # Stage B (81% -> 91%): Dedicated Zero-SEI (-bsf:v filter_units) + Hardware OEM + +faststart remux into output_path
         if mode == "all_in_one":
             aio_msg = (
-                f"-> [PASS 1/2 • ALL-IN-ONE V 2.4] {fps_mode_label} + 180° Shutter Blend + Warp (k1={job_profile['lens_k1']}) "
-                f"+ Calibrated CMOS Grain + AAC 192k 21.8kHz (CRF {job_profile['crf']}, max {maxrate_k}, refs={job_profile['refs']})..."
+                f"-> [PASS 1/2 • ALL-IN-ONE V 2.5] {fps_mode_label} + 180° Shutter Blend + Warp (k1={job_profile['lens_k1']}) "
+                f"+ Vignette + CMOS Grain + Dual-Mic Stereo Air (CRF {job_profile['crf']}, max {maxrate_k})..."
             )
             logs.append(aio_msg)
             tracker.push_log(aio_msg)
@@ -1512,7 +1520,7 @@ def process_video(
                         "-c:a", "aac",
                         "-b:a", "192k",
                         "-ar", "48000",
-                        "-cutoff", "21800",
+                        "-cutoff", "22050",
                     ])
                 else:
                     cmd.extend([

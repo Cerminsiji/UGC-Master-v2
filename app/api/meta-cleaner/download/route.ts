@@ -9,6 +9,7 @@ import {
   getResultFilePath,
   readProgressSafe,
   sanitizeJobId,
+  sweepDormantServerFiles,
   sweepExpiredMetaCleanerFiles,
 } from '@/lib/meta-cleaner-progress';
 
@@ -109,10 +110,11 @@ export async function DELETE(req: NextRequest) {
   const url = new URL(req.url);
   const jobId = sanitizeJobId(url.searchParams.get('jobId'));
   const uploadId = sanitizeJobId(url.searchParams.get('uploadId'));
+  const sweepMode = url.searchParams.get('sweep');
 
-  if (!jobId && !uploadId) {
+  if (!jobId && !uploadId && sweepMode !== 'dormant') {
     return NextResponse.json(
-      { error: 'Parameter jobId atau uploadId diperlukan.' },
+      { error: 'Parameter jobId, uploadId, atau sweep=dormant diperlukan.' },
       { status: 400 }
     );
   }
@@ -126,8 +128,17 @@ export async function DELETE(req: NextRequest) {
     await cleanupUploadArtifacts(uploadId);
   }
 
+  const sweepResult =
+    sweepMode === 'dormant'
+      ? await sweepDormantServerFiles({ force: true, aggressiveTemp: true })
+      : null;
+
   return NextResponse.json(
-    { success: true, cleaned: true },
+    {
+      success: true,
+      cleaned: true,
+      ...(sweepResult ? sweepResult : {}),
+    },
     { status: 200, headers: { 'Cache-Control': 'no-store' } }
   );
 }

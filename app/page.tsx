@@ -182,13 +182,13 @@ const RateCardCalculator = dynamic(
 const MetaCleanerPro = dynamic(
   loadDynamicWithRetry(
     () => import('@/components/MetaCleanerPro').then((mod) => mod.MetaCleanerPro),
-    'MetaCleaner V 2.0'
+    'MetaCleaner AIO'
   ),
   {
     ssr: false,
     loading: () => (
       <div className="bg-[#0e1422] border border-[#1d273e] rounded-2xl p-10 text-center space-y-2 animate-pulse">
-        <div className="text-sm font-bold text-white">Memuat MetaCleaner V 2.0...</div>
+        <div className="text-sm font-bold text-white">Memuat MetaCleaner AIO...</div>
         <div className="text-xs text-slate-400">Menyiapkan engine inspeksi & pembersihan metadata video</div>
       </div>
     ),

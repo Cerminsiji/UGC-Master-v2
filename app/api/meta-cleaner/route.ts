@@ -486,57 +486,59 @@ function generateOrganicJobProfile(
   humanizationPreset = 'full_human'
 ): OrganicJobProfile {
   const rotSign = crypto.randomInt(0, 2) === 0 ? -1 : 1;
+  const speedPts =
+    crypto.randomInt(0, 100) < 65 ? randFloat(0.968, 0.985, 4) : randFloat(1.014, 1.028, 4);
   const pitchChoice =
-    crypto.randomInt(0, 100) < 65 ? randFloat(0.976, 0.985, 4) : randFloat(1.014, 1.022, 4);
+    crypto.randomInt(0, 100) < 60 ? randFloat(0.976, 0.986, 4) : randFloat(1.014, 1.024, 4);
   const isAgg = synthidScrambleMode === 'aggressive';
   const hasGrain = humanizationPreset === 'grain' || humanizationPreset === 'full_human';
   const hasHandheld = humanizationPreset === 'handheld' || humanizationPreset === 'full_human';
   const hasWarmth = humanizationPreset === 'warmth' || humanizationPreset === 'full_human';
 
   const noiseY = hasGrain
-    ? randFloat(2.00, 2.40, 2)
+    ? randFloat(2.15, 2.55, 2)
     : isAgg
-      ? randFloat(1.60, 1.90, 2)
-      : randFloat(1.40, 1.65, 2);
-  const noiseC = hasGrain ? randFloat(0.55, 0.80, 2) : randFloat(0.40, 0.60, 2);
-  const postNoiseY = hasGrain ? randFloat(1.55, 1.85, 2) : randFloat(1.30, 1.55, 2);
+      ? randFloat(1.75, 2.05, 2)
+      : randFloat(1.45, 1.75, 2);
+  const noiseC = hasGrain ? randFloat(0.60, 0.85, 2) : randFloat(0.45, 0.65, 2);
+  const postNoiseY = hasGrain ? randFloat(1.45, 1.75, 2) : randFloat(1.25, 1.50, 2);
 
   return {
-    trimStart: randFloat(0.03, 0.07, 3),
-    speedPts: randFloat(0.970, 0.985, 4),
-    lensCx: randFloat(0.493, 0.507, 3),
-    lensCy: randFloat(0.493, 0.507, 3),
-    lensK1: randFloat(-0.032, -0.022, 4),
-    lensK2: randFloat(0.007, 0.012, 4),
-    rotBias: Number((rotSign * randFloat(0.0036, 0.0056, 4)).toFixed(4)),
-    rotA1: hasHandheld ? randFloat(0.0042, 0.0058, 4) : randFloat(0.0032, 0.0044, 4),
-    rotA2: randFloat(0.0018, 0.0028, 4),
-    rotA3: randFloat(0.0009, 0.0014, 4),
-    freq1: randFloat(1.03, 1.37, 2),
-    freq2: randFloat(2.47, 2.99, 2),
-    freq3: randFloat(4.13, 4.87, 2),
-    cropRatio: isAgg ? randFloat(0.934, 0.944, 3) : randFloat(0.938, 0.948, 3),
+    trimStart: randFloat(0.04, 0.09, 3),
+    speedPts,
+    lensCx: randFloat(0.488, 0.512, 3),
+    lensCy: randFloat(0.488, 0.512, 3),
+    lensK1: randFloat(-0.046, -0.032, 4),
+    lensK2: randFloat(0.009, 0.016, 4),
+    rotBias: Number((rotSign * randFloat(0.0068, 0.0108, 4)).toFixed(4)),
+    rotA1: hasHandheld ? randFloat(0.0052, 0.0072, 4) : randFloat(0.0038, 0.0052, 4),
+    rotA2: randFloat(0.0022, 0.0034, 4),
+    rotA3: randFloat(0.0010, 0.0017, 4),
+    freq1: randFloat(1.03, 1.39, 2),
+    freq2: randFloat(2.43, 2.97, 2),
+    freq3: randFloat(4.11, 4.89, 2),
+    cropRatio: isAgg ? randFloat(0.918, 0.928, 3) : randFloat(0.926, 0.936, 3),
     casStrength: randFloat(0.16, 0.22, 2),
     noiseY,
     noiseC,
     postNoiseY,
-    hueAmp1: Number((rotSign * randFloat(0.32, 0.55, 3)).toFixed(3)),
-    hueAmp2: Number((-rotSign * randFloat(0.24, 0.42, 3)).toFixed(3)),
-    contrast: randFloat(1.012, 1.022, 3),
+    hueAmp1: Number((rotSign * randFloat(0.38, 0.62, 3)).toFixed(3)),
+    hueAmp2: Number((-rotSign * randFloat(0.28, 0.48, 3)).toFixed(3)),
+    contrast: randFloat(1.012, 1.024, 3),
     saturation: hasWarmth ? randFloat(1.022, 1.038, 3) : randFloat(1.010, 1.022, 3),
     gamma: randFloat(1.004, 1.012, 3),
     wbR: hasWarmth ? randFloat(1.014, 1.024, 3) : randFloat(1.006, 1.012, 3),
     wbG: randFloat(1.005, 1.010, 3),
-    wbB: hasWarmth ? randFloat(0.992, 1.000, 3) : randFloat(1.004, 1.010, 3),
+    wbB: hasWarmth ? randFloat(0.990, 0.999, 3) : randFloat(1.004, 1.010, 3),
     psyRd: `${randFloat(0.95, 1.15, 2)},${randFloat(0.08, 0.14, 2)}`,
     aqMode: crypto.randomInt(2, 4),
     aqStrength: String(randFloat(1.00, 1.18, 2)),
     deblock: `${crypto.randomInt(0, 2) === 0 ? -2 : -1},${crypto.randomInt(0, 2) === 0 ? -2 : -1}`,
-    keyint: crypto.randomInt(48, 85),
-    minKeyint: crypto.randomInt(12, 25),
+    keyint: crypto.randomInt(52, 89),
+    minKeyint: crypto.randomInt(14, 25),
     bframes: crypto.randomInt(2, 4),
     refs: crypto.randomInt(2, 4),
-    crf: String(crypto.randomInt(20, 22)),
+    crf: String(crypto.randomInt(21, 23)),
     pitchRatio: pitchChoice,
     seedL: crypto.randomInt(100000, 999999),
     seedR: crypto.randomInt(100000, 999999),
@@ -640,16 +642,17 @@ function buildUnifiedVideoFilter(
     trimPrefix,
     finish,
     'format=yuv420p',
-    "tmix=frames=2:weights='0.86 0.14'",
-    'hqdn3d=1.1:0.9:1.6:1.2',
+    "tmix=frames=2:weights='0.83 0.17'",
+    'hqdn3d=1.3:1.0:1.9:1.3',
     `lenscorrection=cx=${p.lensCx}:cy=${p.lensCy}:k1=${p.lensK1}:k2=${p.lensK2}`,
     `rotate=a='${p.rotBias}+${p.rotA1}*sin(t*${p.freq1})+${p.rotA2}*cos(t*${p.freq2})+${p.rotA3}*sin(t*${p.freq3})':bilinear=1:ow=iw:oh=ih`,
-    `crop=w=trunc(iw*${p.cropRatio}/2)*2:h=trunc(ih*${p.cropRatio}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.78).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.75).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.75).toFixed(4)}*sin(t*${p.freq3}))':y='(ih-oh)*0.54+ih*(${(p.rotA1 * 0.65).toFixed(4)}*cos(t*0.93)+${(p.rotA2 * 0.65).toFixed(4)}*sin(t*2.41)+${(p.rotA3 * 0.65).toFixed(4)}*cos(t*3.97))'`,
+    `crop=w=trunc(iw*${p.cropRatio}/2)*2:h=trunc(ih*${p.cropRatio}/2)*2:x='(iw-ow)/2+iw*(${(p.rotA1 * 0.75).toFixed(4)}*sin(t*${p.freq1})+${(p.rotA2 * 0.72).toFixed(4)}*cos(t*${p.freq2})+${(p.rotA3 * 0.72).toFixed(4)}*sin(t*${p.freq3}))':y='(ih-oh)*0.54+ih*(${(p.rotA1 * 0.62).toFixed(4)}*cos(t*0.93)+${(p.rotA2 * 0.62).toFixed(4)}*sin(t*2.41)+${(p.rotA3 * 0.62).toFixed(4)}*cos(t*3.97))'`,
+    'vignette=angle=0.14:eval=init',
     `noise=c0s=${p.noiseY}:c1s=${p.noiseC}:c2s=${p.noiseC}:allf=t`,
     scaleStep,
     'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
     `colorchannelmixer=rr=${p.wbR}:rg=-0.006:rb=-0.002:gr=-0.003:gg=${p.wbG}:gb=-0.002:br=-0.003:bg=-0.004:bb=${p.wbB}`,
-    `eq=contrast=${p.contrast}:brightness='0.0017*sin(t*0.85)+0.0010*cos(t*2.01)':saturation=${p.saturation}:gamma=${p.gamma}:eval=frame`,
+    `eq=contrast=${p.contrast}:brightness='0.0020*sin(t*0.85)+0.0012*cos(t*2.01)':saturation=${p.saturation}:gamma=${p.gamma}:eval=frame`,
     `cas=strength=${p.casStrength}`,
     `noise=c0s=${p.postNoiseY}:c1s=0:c2s=0:allf=t`,
     'setsar=1',
@@ -657,10 +660,10 @@ function buildUnifiedVideoFilter(
 }
 
 /**
- * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph V 2.4:
- * - True L/R stereo acoustic room reflection (zero pseudo-stereo mono duplicate)
- * - Per-job randomized pink/brown/15.8-20.8kHz thermal mic air bed (zero >17kHz brickwall cutoff)
- * - Nonlinear all-pass phase dispersion (aphaser) + dual-tap early reflections + 0.89 anti-clipping ceiling
+ * Multi-Domain Anti-SynthID & AI-TTS Audio Disruption Filtergraph V 2.5:
+ * - True L/R stereo dual-mic field (14-19 dB Mid-Side gap, zero pseudo-stereo flag)
+ * - Continuous smooth high-band thermal mic air bed (zero >17kHz vocoder cliff)
+ * - Formant/pitch drift + early room reflection + 0.89 anti-clipping ceiling
  */
 function buildOrganicRoomAndVoiceChain(
   voicePrefix: string,
@@ -668,22 +671,23 @@ function buildOrganicRoomAndVoiceChain(
   p: OrganicJobProfile,
   atempoVal: string,
   apadFilter: string,
-  extrastereoM = 1.30,
+  extrastereoM = 1.55,
   speechGainDb = 0
 ): string {
   const gainStep = Math.abs(speechGainDb) >= 0.4 ? `volume=${speechGainDb.toFixed(2)}dB,` : '';
   return [
-    `anoisesrc=color=pink:amplitude=0.0008:sample_rate=48000:seed=${p.seedL}[pL]`,
-    `anoisesrc=color=pink:amplitude=0.0008:sample_rate=48000:seed=${p.seedR}[pR]`,
-    `anoisesrc=color=brown:amplitude=0.0006:sample_rate=48000:seed=${p.seedB}[bRoom]`,
-    `anoisesrc=color=white:amplitude=0.0170:sample_rate=48000:seed=${p.seedAir}[wAir]`,
-    '[bRoom]lowpass=f=320,pan=stereo|c0=c0|c1=c0[bSt]',
-    '[wAir]highpass=f=16200,lowpass=f=20800,pan=stereo|c0=0.92*c0|c1=0.82*c0,adelay=0|7[airSt]',
-    '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=16800,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
+    `anoisesrc=color=pink:amplitude=0.00065:sample_rate=48000:seed=${p.seedL}[pL]`,
+    `anoisesrc=color=pink:amplitude=0.00065:sample_rate=48000:seed=${p.seedR}[pR]`,
+    `anoisesrc=color=brown:amplitude=0.00035:sample_rate=48000:seed=${p.seedB}[bRoom]`,
+    `anoisesrc=color=white:amplitude=0.0062:sample_rate=48000:seed=${p.seedAir}[wAirL]`,
+    `anoisesrc=color=white:amplitude=0.0062:sample_rate=48000:seed=${p.seedAir + 731}[wAirR]`,
+    '[bRoom]lowpass=f=300,pan=stereo|c0=c0|c1=c0[bSt]',
+    '[wAirL][wAirR]amerge=inputs=2,highpass=f=9000:poles=1,lowpass=f=21600:poles=1,equalizer=f=15000:t=q:w=0.65:g=2.5,equalizer=f=18800:t=q:w=0.75:g=7.0,adelay=0|3[airSt]',
+    '[pL][pR]amerge=inputs=2,highpass=f=65,lowpass=f=19500,equalizer=f=450:t=q:w=0.8:g=-2.5[pinkSt]',
     '[pinkSt][bSt][airSt]amix=inputs=3:normalize=0,atrim=start=0.10,asetpts=PTS-STARTPTS,tremolo=f=0.27:d=0.12[room]',
-    `${voicePrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,${gainStep}asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.40:drive=2.5:blend=0:freq=8500:ceil=19900,aphaser=in_gain=0.85:out_gain=0.85:delay=2.4:decay=0.35:speed=0.7:type=t,asplit=2[vDry][vRef]`,
-    '[vRef]highpass=f=420,lowpass=f=7800,pan=stereo|c0=0.22*c0|c1=-0.22*c1,adelay=0|13[vSide]',
-    `[vDry][vSide]amix=inputs=2:duration=first:normalize=0,aecho=0.95:0.92:7|13:0.022|0.012,extrastereo=m=${extrastereoM},acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,${apadFilter}[voice]`,
+    `${voicePrefix}aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,${gainStep}asetrate=48000*${p.pitchRatio},aresample=48000,atempo=${atempoVal},highpass=f=75,equalizer=f=210:t=q:w=1.0:g=0.9,equalizer=f=3100:t=q:w=1.4:g=-0.7,aexciter=level_in=1:level_out=1:amount=1.35:drive=2.2:blend=0.8:freq=6800:ceil=19900,asplit=2[vDry][vRef]`,
+    '[vRef]highpass=f=260,lowpass=f=11500,equalizer=f=2200:t=q:w=1.1:g=1.4,pan=stereo|c0=0.45*c0|c1=-0.45*c1,adelay=0|5[vSide]',
+    `[vDry][vSide]amix=inputs=2:duration=first:normalize=0,aecho=0.94:0.90:8:0.055,extrastereo=m=${extrastereoM},acompressor=threshold=-14dB:ratio=1.35:attack=12:release=150:makeup=0dB,${apadFilter}[voice]`,
     `[voice][room]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.89,atrim=start=0.02,asetpts=PTS-STARTPTS${outLabel}`,
   ].join(';');
 }
@@ -733,7 +737,7 @@ function buildUnifiedAudioFilterComplex(
     p,
     atempoVal,
     apadFilter,
-    1.30,
+    1.55,
     speechGainDb
   );
 }
@@ -1549,8 +1553,8 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
     const movflagsStr = '+faststart';
     const shouldUpscale = upscale1080p && cameraProfileField !== 'neutral';
     const targetMaxBps = shouldUpscale
-      ? Math.max(3_000_000, Math.min(5_000_000, Math.round((srcBitrate || 4_000_000) * 1.15)))
-      : Math.max(2_000_000, Math.min(4_200_000, Math.round((srcBitrate || 3_600_000) * 0.95)));
+      ? Math.max(2_800_000, Math.min(4_500_000, Math.round((srcBitrate || 3_800_000) * 0.90)))
+      : Math.max(2_000_000, Math.min(3_800_000, Math.round((srcBitrate || 3_400_000) * 0.85)));
     const maxrateK = `${Math.max(2000, Math.floor(targetMaxBps / 1000))}k`;
     const bufsizeK = `${Math.max(4000, Math.floor((targetMaxBps * 2) / 1000))}k`;
 
@@ -1671,7 +1675,7 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           '-ar',
           '48000',
           '-cutoff',
-          '21800',
+          '22050',
           ...aioCommonTail,
           '-metadata:s:a:0',
           `handler_name=${audioHandlerName}`,

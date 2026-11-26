@@ -31,8 +31,7 @@ import {
 import type { ExternalProbeReport } from '@/lib/video-probe';
 import type { CleanerProgressState } from '@/lib/meta-cleaner-progress';
 import { WatermarkNoiseVisualizer } from './WatermarkNoiseVisualizer';
-import { analyzeVideoHumanization, HumanizationAnalysisReport } from '@/lib/humanization-analyzer';
-import type { SynthIdScrambleMode } from '@/lib/bitstream-scrambler';
+import { analyzeVideoHumanization } from '@/lib/humanization-analyzer';
 
 interface LogEntry {
   id: string;
@@ -56,8 +55,6 @@ interface InspectionState {
   hex: string;
   containerType: string;
   containerClean: boolean | null;
-  falsePositiveCheck: string;
-  falsePositiveClean: boolean | null;
   riskText: string;
   riskClean: boolean | null;
   badgeText: string;
@@ -65,22 +62,20 @@ interface InspectionState {
 }
 
 const INITIAL_BEFORE_STATE: InspectionState = {
-  synthId: 'Menunggu Berkas...',
+  synthId: 'Menunggu berkas...',
   synthIdClean: null,
-  c2pa: 'Menunggu Berkas...',
+  c2pa: 'Menunggu berkas...',
   c2paClean: null,
-  uuid: 'Menunggu Berkas...',
+  uuid: 'Menunggu berkas...',
   uuidClean: null,
-  encoder: 'Menunggu Berkas...',
+  encoder: 'Menunggu berkas...',
   encoderClean: null,
-  sei: 'Menunggu Berkas...',
+  sei: 'Menunggu berkas...',
   seiClean: null,
   seiCount: 0,
   hex: '-',
-  containerType: 'Menunggu Berkas...',
+  containerType: 'Menunggu berkas...',
   containerClean: null,
-  falsePositiveCheck: 'Menunggu Berkas...',
-  falsePositiveClean: null,
   riskText: 'Belum Dianalisis',
   riskClean: null,
   badgeText: 'STANDBY',
@@ -88,22 +83,20 @@ const INITIAL_BEFORE_STATE: InspectionState = {
 };
 
 const INITIAL_AFTER_STATE: InspectionState = {
-  synthId: 'Menunggu Proses...',
+  synthId: 'Menunggu proses...',
   synthIdClean: null,
-  c2pa: 'Menunggu Proses...',
+  c2pa: 'Menunggu proses...',
   c2paClean: null,
-  uuid: 'Menunggu Proses...',
+  uuid: 'Menunggu proses...',
   uuidClean: null,
-  encoder: 'Menunggu Proses...',
+  encoder: 'Menunggu proses...',
   encoderClean: null,
-  sei: 'Menunggu Proses...',
+  sei: 'Menunggu proses...',
   seiClean: null,
   seiCount: 0,
   hex: '-',
-  containerType: 'Menunggu Proses...',
+  containerType: 'Menunggu proses...',
   containerClean: null,
-  falsePositiveCheck: 'Menunggu Proses...',
-  falsePositiveClean: null,
   riskText: 'Belum Diproses',
   riskClean: null,
   badgeText: 'MENUNGGU PROSES',
@@ -159,30 +152,8 @@ const SEI_ASCII_SIGNATURES = [
   'SynthID',
 ];
 
-const CONTAINER_BOX_TYPES = new Set([
-  'moov',
-  'trak',
-  'mdia',
-  'minf',
-  'stbl',
-  'edts',
-  'dinf',
-]);
+const VALID_TOP_BOXES = new Set(['ftyp', 'moov', 'mdat', 'free', 'wide', 'styp', 'skip']);
 
-const VALID_TOP_BOXES = new Set([
-  'ftyp',
-  'moov',
-  'mdat',
-  'free',
-  'wide',
-  'styp',
-  'skip',
-]);
-
-/**
- * Validates that a candidate output buffer is a genuine, playable MP4 video
- * and NOT an HTML error/redirect page (such as cookie_check.html or proxy timeout HTML).
- */
 function validateMp4Buffer(
   bytes: Uint8Array,
   sourceByteLength: number
@@ -195,8 +166,6 @@ function validateMp4Buffer(
   }
 
   const decoder = new TextDecoder('ascii', { fatal: false });
-
-  // Reject HTML error/redirect responses (e.g. <!DOCTYPE or <html)
   if (
     bytes[0] === 0x3c ||
     (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf && bytes[3] === 0x3c)
@@ -204,30 +173,21 @@ function validateMp4Buffer(
     const snippet = decoder.decode(bytes.subarray(0, 120)).replace(/\s+/g, ' ').trim();
     return {
       valid: false,
-      reason: `Server/Proxy mengembalikan halaman HTML bukan MP4 (${snippet.slice(0, 80)}...).`,
+      reason: `Server mengembalikan respons non-MP4 (${snippet.slice(0, 70)}...).`,
     };
   }
 
-  // Reject JSON error payloads accidentally returned as 200
   if (bytes[0] === 0x7b || bytes[0] === 0x5b) {
     try {
       const parsed = JSON.parse(new TextDecoder('utf-8').decode(bytes));
-      if (parsed?.error) {
-        return { valid: false, reason: String(parsed.error) };
-      }
+      if (parsed?.error) return { valid: false, reason: String(parsed.error) };
     } catch {}
-    return {
-      valid: false,
-      reason: 'Server mengembalikan respons JSON/teks, bukan stream MP4 biner.',
-    };
+    return { valid: false, reason: 'Respons server bukan stream MP4 biner.' };
   }
 
   const firstBoxType = decoder.decode(bytes.subarray(4, 8));
   if (!VALID_TOP_BOXES.has(firstBoxType)) {
-    return {
-      valid: false,
-      reason: `Header top-level atom tidak valid ("${firstBoxType.replace(/[^\x20-\x7e]/g, '?')}").`,
-    };
+    return { valid: false, reason: `Header MP4 tidak valid ("${firstBoxType}").` };
   }
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -239,27 +199,16 @@ function validateMp4Buffer(
     let size = view.getUint32(offset, false);
     const type = decoder.decode(bytes.subarray(offset + 4, offset + 8));
     let headerSize = 8;
-
     if (size === 1) {
       if (offset + 16 > bytes.byteLength) break;
-      const high = view.getUint32(offset + 8, false);
-      const low = view.getUint32(offset + 12, false);
-      size = high * 4294967296 + low;
+      size = view.getUint32(offset + 8, false) * 4294967296 + view.getUint32(offset + 12, false);
       headerSize = 16;
     } else if (size === 0) {
       size = bytes.byteLength - offset;
     }
-
-    if (size < headerSize || offset + size > bytes.byteLength) {
-      break;
-    }
-
-    if (type === 'moov') {
-      hasMoov = true;
-    } else if (type === 'mdat') {
-      hasMdat = true;
-    }
-
+    if (size < headerSize || offset + size > bytes.byteLength) break;
+    if (type === 'moov') hasMoov = true;
+    else if (type === 'mdat') hasMdat = true;
     offset += size;
   }
 
@@ -268,10 +217,7 @@ function validateMp4Buffer(
     return { valid: false, reason: 'Atom moov/mdat tidak ditemukan dalam output MP4.' };
   }
   if (bytes.byteLength < minRequiredBytes) {
-    return {
-      valid: false,
-      reason: `Ukuran MP4 output (${bytes.byteLength}B) di bawah batas minimum (${minRequiredBytes}B).`,
-    };
+    return { valid: false, reason: `Ukuran output (${bytes.byteLength}B) di bawah batas minimum.` };
   }
   return { valid: true };
 }
@@ -286,72 +232,45 @@ function findMdatRanges(bytes: Uint8Array): Array<{ start: number; end: number }
     let size = view.getUint32(offset, false);
     const type = decoder.decode(bytes.subarray(offset + 4, offset + 8));
     let headerSize = 8;
-
     if (size === 1) {
       if (offset + 16 > bytes.length) break;
-      const high = view.getUint32(offset + 8, false);
-      const low = view.getUint32(offset + 12, false);
-      size = high * 4294967296 + low;
+      size = view.getUint32(offset + 8, false) * 4294967296 + view.getUint32(offset + 12, false);
       headerSize = 16;
     } else if (size === 0) {
       size = bytes.length - offset;
     }
-
-    if (size < headerSize || offset + size > bytes.length) {
-      break;
-    }
-
-    if (type === 'mdat') {
-      ranges.push({ start: offset + headerSize, end: offset + size });
-    }
-
+    if (size < headerSize || offset + size > bytes.length) break;
+    if (type === 'mdat') ranges.push({ start: offset + headerSize, end: offset + size });
     offset += size;
   }
 
   return ranges;
 }
 
-// Bitstream & container scrambling handled via scrambleWatermarkBitstreamsInPlace (@/lib/bitstream-scrambler)
-
-/**
- * Inspects an ArrayBuffer/Uint8Array for SynthID carriers, C2PA, UUID boxes, vendor encoder strings, and H.264 SEI NAL Unit Type 6 packets.
- */
 async function inspectVideoBuffer(
   uint8: Uint8Array,
   isAfter = false,
   cameraProfile: 'samsung' | 'apple' | 'xiaomi' | 'neutral' = 'samsung'
 ): Promise<InspectionState> {
   let hexStr = '';
-  for (let i = 0; i < Math.min(32, uint8.length); i++) {
+  for (let i = 0; i < Math.min(24, uint8.length); i++) {
     hexStr += uint8[i].toString(16).padStart(2, '0').toUpperCase() + ' ';
   }
 
-  // CRITICAL RULE V3: Hex 00 00 00 20 66 74 79 70 69 = FTYP ISOM = NEVER SEI.
   const isFtypHeader =
     uint8.length >= 12 &&
-    uint8[4] === 0x66 && // 'f'
-    uint8[5] === 0x74 && // 't'
-    uint8[6] === 0x79 && // 'y'
-    uint8[7] === 0x70;   // 'p'
+    uint8[4] === 0x66 &&
+    uint8[5] === 0x74 &&
+    uint8[6] === 0x79 &&
+    uint8[7] === 0x70;
 
   const textDecoder = new TextDecoder('ascii', { fatal: false });
   let detectedBrand = 'isom';
   if (isFtypHeader && uint8.length >= 12) {
     const rawBrand = textDecoder.decode(uint8.subarray(8, 12)).replace(/[^a-zA-Z0-9]/g, '');
-    if (rawBrand.length >= 3) {
-      detectedBrand = rawBrand;
-    }
+    if (rawBrand.length >= 3) detectedBrand = rawBrand;
   }
 
-  const containerTypeDesc = isFtypHeader
-    ? `NORMAL (ftyp ${detectedBrand} standard)`
-    : 'NORMAL (ISO Base Media)';
-
-  const falsePositiveCheck = isFtypHeader
-    ? `Lolos (ftyp ${detectedBrand} BUKAN SEI - Container Normal)`
-    : 'Lolos Validasi Header Container';
-
-  // Synchronous raw atom scan across container to ensure 0% missed boxes
   let rawC2paFound = false;
   let rawUuidFound = false;
   let rawUdtaMetaFound = false;
@@ -390,23 +309,20 @@ async function inspectVideoBuffer(
       const uuidHex = Array.from(uint8.subarray(atomPos + hdr, Math.min(atomPos + hdr + 16, uint8.length)))
         .map((x) => x.toString(16).padStart(2, '0'))
         .join('');
-      if (uuidHex.toLowerCase().includes('d8fec3d3')) {
-        rawC2paFound = true;
-      }
+      if (uuidHex.toLowerCase().includes('d8fec3d3')) rawC2paFound = true;
     } else if (type === 'c2pa' || type === 'jumb' || type === 'c2ma' || type === 'c2cl') {
       rawC2paFound = true;
     } else if (type === 'moov') {
       const moovEnd = atomPos + size;
       let mPos = atomPos + hdr;
       while (mPos + 8 <= moovEnd) {
-        let mSize =
+        const mSize =
           ((uint8[mPos] << 24) >>> 0) +
           ((uint8[mPos + 1] << 16) >>> 0) +
           ((uint8[mPos + 2] << 8) >>> 0) +
           (uint8[mPos + 3] >>> 0);
         const mType = textDecoder.decode(uint8.subarray(mPos + 4, mPos + 8));
         if (mSize < 8 || mPos + mSize > moovEnd) break;
-
         if (mType === 'udta' || mType === 'meta') {
           const sampleSlice = textDecoder.decode(uint8.subarray(mPos + 8, Math.min(mPos + mSize, mPos + 2048)));
           for (const vs of VENDOR_SIGNATURES) {
@@ -422,7 +338,6 @@ async function inspectVideoBuffer(
     atomPos += size;
   }
 
-  // 1. Direct synchronous mdat bitstream NAL scanner for SEI Type 6 (zero async lag, 100% deterministic)
   const mdatRanges = findMdatRanges(uint8);
   let directMdatSeiCount = 0;
   const detectedSeiDetails: string[] = [];
@@ -436,15 +351,12 @@ async function inspectVideoBuffer(
         ((uint8[pos + 1] << 16) >>> 0) +
         ((uint8[pos + 2] << 8) >>> 0) +
         (uint8[pos + 3] >>> 0);
-
       if (nalLen < 4 || pos + 4 + nalLen > range.end) {
         pos++;
         continue;
       }
-
       const nalHdr = uint8[pos + 4];
       const nalType = nalHdr & 0x1f;
-
       if ((nalType === 6 && (nalHdr & 0xe0) === 0) || nalType === 39 || nalType === 40) {
         const payloadType = uint8[pos + 5];
         if (payloadType === 5 || payloadType === 4 || payloadType === 0) {
@@ -461,30 +373,19 @@ async function inspectVideoBuffer(
     }
   }
 
-  // 2. Direct container header scan outside ALL mdat boxes (handles both faststart moov and moov-at-EOF)
   const nonMdatSlices: Uint8Array[] = [];
   let nonMdatCursor = 0;
   for (const r of mdatRanges) {
     const boxHeaderStart = Math.max(0, r.start - 8);
-    if (boxHeaderStart > nonMdatCursor) {
-      nonMdatSlices.push(uint8.subarray(nonMdatCursor, boxHeaderStart));
-    }
+    if (boxHeaderStart > nonMdatCursor) nonMdatSlices.push(uint8.subarray(nonMdatCursor, boxHeaderStart));
     nonMdatCursor = Math.max(nonMdatCursor, r.end);
   }
-  if (nonMdatCursor < uint8.length) {
-    nonMdatSlices.push(uint8.subarray(nonMdatCursor, uint8.length));
-  }
-  const containerLower = nonMdatSlices
-    .map((slice) => textDecoder.decode(slice))
-    .join('\n')
-    .toLowerCase();
+  if (nonMdatCursor < uint8.length) nonMdatSlices.push(uint8.subarray(nonMdatCursor, uint8.length));
+  const containerLower = nonMdatSlices.map((s) => textDecoder.decode(s)).join('\n').toLowerCase();
   for (const vs of VENDOR_SIGNATURES) {
-    if (containerLower.includes(vs.toLowerCase()) && !rawVendors.includes(vs)) {
-      rawVendors.push(vs);
-    }
+    if (containerLower.includes(vs.toLowerCase()) && !rawVendors.includes(vs)) rawVendors.push(vs);
   }
 
-  // mp4box.js Atom Parser & H.264 Annex B / mdat Video Sample Demuxer
   const mp4Analysis = await new Promise<{
     c2paFound: boolean;
     uuidFound: boolean;
@@ -524,26 +425,16 @@ async function inspectVideoBuffer(
       };
 
       mp4boxfile.onError = () => finish();
-
       mp4boxfile.onReady = (info: any) => {
-        // Deep scan track handlers
-        if (info.tracks && Array.isArray(info.tracks)) {
+        if (Array.isArray(info.tracks)) {
           for (const trk of info.tracks) {
             const trkName = String(trk.name || '');
-            if (
-              trkName.includes('Google') ||
-              trkName.includes('Veo') ||
-              trkName.includes('SynthID') ||
-              trkName.includes('com.ai.generator') ||
-              trkName.includes('SHOPEE')
-            ) {
+            if (/Google|Veo|SynthID|com\.ai\.generator|SHOPEE/i.test(trkName)) {
               detectedVendors.push('Google/Veo Handler');
             }
           }
         }
-
-        // Demux H.264 video samples strictly from mdat to scan SEI NAL Type 6
-        const vTrack = info.tracks ? info.tracks.find((t: any) => t.video) : null;
+        const vTrack = info.tracks?.find((t: any) => t.video);
         if (vTrack) {
           mp4boxfile.setExtractionOptions(vTrack.id, null, { nbSamples: 200 });
           mp4boxfile.start();
@@ -552,39 +443,33 @@ async function inspectVideoBuffer(
         }
       };
 
-      mp4boxfile.onSamples = (track_id: number, ref: any, samples: any[]) => {
+      mp4boxfile.onSamples = (_trackId: number, _ref: any, samples: any[]) => {
         samplesProcessed += samples.length;
         for (const sample of samples) {
           const d = sample.data as Uint8Array;
           if (!d) continue;
-          let offset = 0;
-          while (offset + 4 < d.length) {
+          let off = 0;
+          while (off + 4 < d.length) {
             const nalLen =
-              ((d[offset] << 24) >>> 0) +
-              ((d[offset + 1] << 16) >>> 0) +
-              ((d[offset + 2] << 8) >>> 0) +
-              (d[offset + 3] >>> 0);
-            if (nalLen <= 0 || offset + 4 + nalLen > d.length) break;
-            const nalHdr = d[offset + 4];
-            const nalType = nalHdr & 0x1f;
+              ((d[off] << 24) >>> 0) +
+              ((d[off + 1] << 16) >>> 0) +
+              ((d[off + 2] << 8) >>> 0) +
+              (d[off + 3] >>> 0);
+            if (nalLen <= 0 || off + 4 + nalLen > d.length) break;
+            const nalType = d[off + 4] & 0x1f;
             if (nalType === 6 || nalType === 39 || nalType === 40) {
-              const payloadType = d[offset + 5];
-              // Payload type 5: user_data_unregistered, 4: user_data_registered
-              if (payloadType === 5 || payloadType === 4 || payloadType === 0) {
-                seiNalCount++;
-              }
+              const pt = d[off + 5];
+              if (pt === 5 || pt === 4 || pt === 0) seiNalCount++;
             }
-            offset += 4 + nalLen;
+            off += 4 + nalLen;
           }
         }
-        if (samplesProcessed >= 150) {
-          finish();
-        }
+        if (samplesProcessed >= 150) finish();
       };
 
       mp4boxfile.appendBuffer(ab);
       mp4boxfile.flush();
-      setTimeout(finish, 800);
+      setTimeout(finish, 700);
     } catch {
       resolve({
         c2paFound: rawC2paFound,
@@ -597,89 +482,66 @@ async function inspectVideoBuffer(
     }
   });
 
-  const c2paFound = mp4Analysis.c2paFound;
-  const uuidFound = mp4Analysis.uuidFound;
-  const udtaMetaFound = mp4Analysis.udtaMetaFound;
   const totalSeiUnits = mp4Analysis.samplesProcessed > 0 ? mp4Analysis.seiNalCount : directMdatSeiCount;
   const allVendors = Array.from(new Set([...mp4Analysis.uniqueVendors, ...rawVendors]));
   const seiFound = totalSeiUnits > 0;
-
-  const synthIdDetected =
-    c2paFound ||
-    uuidFound ||
-    udtaMetaFound ||
+  const hasThreat =
+    mp4Analysis.c2paFound ||
+    mp4Analysis.uuidFound ||
+    mp4Analysis.udtaMetaFound ||
     seiFound ||
     allVendors.length > 0;
-
-  const hasThreat = synthIdDetected;
 
   let encoderStatusText = 'BERSIH (Standard Handler)';
   if (allVendors.length > 0) {
     encoderStatusText = `TERDETEKSI (${allVendors.join(', ')})`;
   } else if (isAfter) {
-    if (cameraProfile === 'apple') {
-      encoderStatusText = 'BERSIH • Hardware: Apple iPhone 15 Pro (Core Media Video)';
-    } else if (cameraProfile === 'samsung') {
-      encoderStatusText = 'BERSIH • Hardware: Samsung Galaxy S24 Ultra (VideoHandle)';
-    } else if (cameraProfile === 'xiaomi') {
-      encoderStatusText = 'BERSIH • Hardware: Xiaomi 14 Ultra (HyperOS / Leica)';
-    } else {
-      encoderStatusText = 'BERSIH (Standard Handler / Bebas Lavf)';
-    }
+    encoderStatusText =
+      cameraProfile === 'apple'
+        ? 'Apple iPhone 15 Pro (Core Media Video)'
+        : cameraProfile === 'samsung'
+          ? 'Samsung Galaxy S24 Ultra (VideoHandle)'
+          : cameraProfile === 'xiaomi'
+            ? 'Xiaomi 14 Ultra (HyperOS / Leica)'
+            : 'Standar Bitexact Clean';
   }
 
   return {
-    synthId: synthIdDetected
-      ? 'TERDETEKSI (SynthID / AI Carrier)'
+    synthId: hasThreat
+      ? 'TERDETEKSI (SynthID / Marker AI)'
       : isAfter
-        ? 'BERSIH (SynthID & Carrier Dihapus)'
-        : 'BERSIH / TIDAK TERDETEKSI',
-    synthIdClean: !synthIdDetected,
-    c2pa: c2paFound
-      ? 'TERDETEKSI (c2pa/jumb UUID)'
-      : 'TIDAK TERDETEKSI',
-    c2paClean: !c2paFound,
-    uuid: uuidFound
-      ? 'TERDETEKSI (uuid / C2PA Manifest)'
-      : udtaMetaFound
-        ? 'TERDETEKSI (udta AI Provenance)'
-        : 'BERSIH (Bebas Klaim UUID & Manifes)',
-    uuidClean: !uuidFound && !udtaMetaFound,
+        ? 'BERSIH (Watermark & Marker Dihapus)'
+        : 'BERSIH / TIDAK TERDETEKSI HEADER',
+    synthIdClean: !hasThreat,
+    c2pa: mp4Analysis.c2paFound ? 'TERDETEKSI (c2pa/jumb)' : '0 Box (Bersih)',
+    c2paClean: !mp4Analysis.c2paFound,
+    uuid: mp4Analysis.uuidFound
+      ? 'TERDETEKSI (uuid Manifest)'
+      : mp4Analysis.udtaMetaFound
+        ? 'TERDETEKSI (udta AI Tag)'
+        : '0 Box (Bersih)',
+    uuidClean: !mp4Analysis.uuidFound && !mp4Analysis.udtaMetaFound,
     encoder: encoderStatusText,
     encoderClean: allVendors.length === 0,
     sei: seiFound
-      ? `TERDETEKSI (SEI NAL Unit Type 6 • ${detectedSeiDetails.length > 0 ? detectedSeiDetails.join('/') : totalSeiUnits + ' Unit'})`
-      : isAfter
-        ? 'BERSIH (SEI NAL Type 6 Dihapus)'
-        : 'BERSIH (Tidak Ada SEI NAL Type 6)',
+      ? `TERDETEKSI (${totalSeiUnits} unit${detectedSeiDetails.length > 0 ? ` • ${detectedSeiDetails.join('/')}` : ''})`
+      : '0 Unit SEI (Bersih)',
     seiClean: !seiFound,
     seiCount: totalSeiUnits,
     hex: hexStr.trim() || '-',
-    containerType: containerTypeDesc,
+    containerType: isFtypHeader ? `ftyp ${detectedBrand}` : 'ISO Base Media',
     containerClean: true,
-    falsePositiveCheck,
-    falsePositiveClean: true,
     riskText: hasThreat
-      ? `Terdeteksi AI (${
-          detectedSeiDetails.includes('SHOPEE')
-            ? 'Shopee Video'
-            : seiFound
-              ? 'SEI Type 6 Bitstream'
-              : c2paFound || uuidFound || udtaMetaFound
-                ? 'C2PA / Provenance Box'
-                : allVendors.some((v) => v === 'Lavf' || v === 'Lavc' || v === 'x264 - core')
-                  ? 'Lavc/Lavf Encoder Stamp'
-                  : 'SynthID / Metadata Marker'
-        })`
+      ? `Terdeteksi AI (${seiFound ? 'SEI Bitstream' : mp4Analysis.c2paFound || mp4Analysis.uuidFound ? 'C2PA / UUID' : 'Vendor Tag'})`
       : isAfter
-        ? `AMAN / LOLOS DETEKTOR AI (${cameraProfile.toUpperCase()} CAM)`
-        : 'AMAN / LOLOS DETEKTOR V3 (BUKAN AI)',
+        ? `AMAN / LOLOS DETEKTOR AI (${cameraProfile.toUpperCase()})`
+        : 'AMAN HEADER (Menunggu Audit Audio-Visual)',
     riskClean: !hasThreat,
     badgeText: hasThreat
-      ? 'BAHAYA: KONTEN AI TERDETEKSI'
+      ? 'JEJAK AI TERDETEKSI'
       : isAfter
-        ? '100% BERSIH & LOLOS DETEKTOR AI'
-        : '100% BERSIH (LOLOS DETEKTOR V3)',
+        ? 'CLEAN ORGANIC (100%)'
+        : 'HEADER BERSIH',
     badgeClean: !hasThreat,
   };
 }
@@ -691,11 +553,6 @@ export const MetaCleanerPro: React.FC = () => {
   const [previewUrlAfter, setPreviewUrlAfter] = useState<string | null>(null);
   const [cameraProfile, setCameraProfile] = useState<'samsung' | 'apple' | 'xiaomi' | 'neutral'>('samsung');
   const [upscale1080p, setUpscale1080p] = useState<boolean>(true);
-  const [deepScanEnabled, setDeepScanEnabled] = useState<boolean>(true);
-  const [humanizationPreset, setHumanizationPreset] = useState<'none' | 'handheld' | 'warmth' | 'grain' | 'full_human'>('full_human');
-  const [synthidScrambleMode, setSynthidScrambleMode] = useState<SynthIdScrambleMode>('aggressive');
-  const [processingMode, setProcessingMode] = useState<'all_in_one' | 'safe_mode' | 'remux_only'>('all_in_one');
-  const [forceKeyframeReencode, setForceKeyframeReencode] = useState<boolean>(true);
 
   const [fileStatus, setFileStatus] = useState<{ text: string; color: 'amber' | 'emerald' | 'rose' }>({
     text: 'Menunggu Berkas',
@@ -708,22 +565,20 @@ export const MetaCleanerPro: React.FC = () => {
   const [beforeState, setBeforeState] = useState<InspectionState>(INITIAL_BEFORE_STATE);
   const [afterState, setAfterState] = useState<InspectionState>(INITIAL_AFTER_STATE);
 
-  // External ffprobe + trace_headers verification states (Before & After)
   const [beforeProbe, setBeforeProbe] = useState<ExternalProbeReport | null>(null);
   const [afterProbe, setAfterProbe] = useState<ExternalProbeReport | null>(null);
   const [isProbingBefore, setIsProbingBefore] = useState(false);
   const [isProbingAfter, setIsProbingAfter] = useState(false);
   const [probeErrorBefore, setProbeErrorBefore] = useState<string | null>(null);
   const [probeErrorAfter, setProbeErrorAfter] = useState<string | null>(null);
-  const [showRawProbeJson, setShowRawProbeJson] = useState(false);
 
-  // FFprobe SEI & C2PA/UUID Diagnostic Tool states
-  const [diagTarget, setDiagTarget] = useState<'before' | 'after'>('before');
-  const [diagFilter, setDiagFilter] = useState<'all' | 'triggers' | 'sei' | 'meta'>('all');
-  const [showFfprobeConsole, setShowFfprobeConsole] = useState(false);
+  // Single collapsed Forensic Audit & Log drawer (collapsed by default for clean AIO UX)
+  const [showAuditDrawer, setShowAuditDrawer] = useState(false);
+  const [auditTab, setAuditTab] = useState<'av' | 'diag' | 'heatmap' | 'logs'>('av');
+  const [diagTarget, setDiagTarget] = useState<'before' | 'after'>('after');
+  const [showRawProbeJson, setShowRawProbeJson] = useState(false);
   const [copiedDiag, setCopiedDiag] = useState(false);
 
-  // Resilient chunked server upload states
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
   const [uploadPercent, setUploadPercent] = useState<number>(0);
   const [uploadedBytes, setUploadedBytes] = useState<number>(0);
@@ -731,7 +586,6 @@ export const MetaCleanerPro: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [serverUploadId, setServerUploadId] = useState<string | null>(null);
 
-  // Server processing telemetry & 5-minute auto-clean states (Non-streaming)
   const [cloudProgress, setCloudProgress] = useState<CleanerProgressState | null>(null);
   const [displayedPercent, setDisplayedPercent] = useState<number>(0);
   const [serverDownloadUrl, setServerDownloadUrl] = useState<string | null>(null);
@@ -742,43 +596,14 @@ export const MetaCleanerPro: React.FC = () => {
   const [autoCleanRemainingSec, setAutoCleanRemainingSec] = useState<number | null>(null);
   const [isServerCleanedUp, setIsServerCleanedUp] = useState(false);
   const [isCleaningServerNow, setIsCleaningServerNow] = useState(false);
-
-  useEffect(() => {
-    const target = cloudProgress ? Math.min(100, Math.max(0, cloudProgress.percent || 0)) : 0;
-    if (!cloudProgress) {
-      setDisplayedPercent(0);
-      return;
-    }
-    if (cloudProgress.stage === 'failed' || cloudProgress.stage === 'completed') {
-      setDisplayedPercent(target);
-      return;
-    }
-    if (displayedPercent >= target) return;
-    const step = target - displayedPercent > 8 ? 2 : 1;
-    const t = setTimeout(() => {
-      setDisplayedPercent((prev) => Math.min(target, prev + step));
-    }, 85);
-    return () => clearTimeout(t);
-  }, [cloudProgress, displayedPercent]);
-
-  useEffect(() => {
-    setSupportsNativeShare(
-      typeof navigator !== 'undefined' && typeof navigator.share === 'function'
-    );
-  }, []);
+  const [isSweepingDormant, setIsSweepingDormant] = useState(false);
 
   const [logs, setLogs] = useState<LogEntry[]>([
     {
       id: 'init-1',
       time: '--:--:--',
-      text: "[MetaCleaner V 2.0 Server Upload Pipeline] Ready: Upload Resumable ke Server -> Proses FFmpeg Non-Streaming -> Auto-Clean 5 Menit.",
+      text: '[MetaCleaner AIO] Pipeline terpadu aktif: Deep Scrambler + Zero-SEI Remux + Organic CMOS Grain + Dual-Mic Stereo Air.',
       color: 'indigo',
-    },
-    {
-      id: 'init-2',
-      time: '--:--:--',
-      text: 'Membersihkan 4 lapisan jejak AI & editan di server secara penuh (Zero-Tombstone MP4, Zero-SEI Type 6, Bayer Grain, Audio 22.5kHz) tanpa putus saat internet lambat.',
-      color: 'slate',
     },
   ]);
 
@@ -799,32 +624,43 @@ export const MetaCleanerPro: React.FC = () => {
     lastJobIdRef.current = lastJobId;
   }, [lastJobId]);
 
-  const appendLog = useCallback(
-    (text: string, color: LogEntry['color'] = 'slate') => {
-      const time = new Date().toLocaleTimeString('id-ID');
-      setLogs((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          time,
-          text,
-          color,
-        },
-      ]);
-    },
-    []
-  );
+  useEffect(() => {
+    setSupportsNativeShare(
+      typeof navigator !== 'undefined' && typeof navigator.share === 'function'
+    );
+  }, []);
 
-  const getStatusColor = (isClean: boolean | null) => {
-    if (isClean === null) return 'text-slate-500 font-medium';
-    return isClean ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold';
-  };
+  useEffect(() => {
+    const target = cloudProgress ? Math.min(100, Math.max(0, cloudProgress.percent || 0)) : 0;
+    if (!cloudProgress) {
+      setDisplayedPercent(0);
+      return;
+    }
+    if (cloudProgress.stage === 'failed' || cloudProgress.stage === 'completed') {
+      setDisplayedPercent(target);
+      return;
+    }
+    if (displayedPercent >= target) return;
+    const step = target - displayedPercent > 8 ? 2 : 1;
+    const t = setTimeout(() => {
+      setDisplayedPercent((prev) => Math.min(target, prev + step));
+    }, 85);
+    return () => clearTimeout(t);
+  }, [cloudProgress, displayedPercent]);
+
+  const appendLog = useCallback((text: string, color: LogEntry['color'] = 'slate') => {
+    const time = new Date().toLocaleTimeString('id-ID');
+    setLogs((prev) => [
+      ...prev.slice(-120),
+      { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, time, text, color },
+    ]);
+  }, []);
 
   useEffect(() => {
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [logs]);
+  }, [logs, showAuditDrawer, auditTab]);
 
   useEffect(() => {
     return () => {
@@ -859,10 +695,7 @@ export const MetaCleanerPro: React.FC = () => {
           try {
             sessionStorage.removeItem('metacleaner_active_job');
           } catch {}
-          appendLog(
-            '✓ [SERVER CLEANED] File video input & hasil telah dibersihkan dari server.',
-            'emerald'
-          );
+          appendLog('✓ [SERVER CLEANED] File input & hasil dibersihkan dari server.', 'emerald');
         }
       } finally {
         if (!opts?.silent) setIsCleaningServerNow(false);
@@ -871,16 +704,41 @@ export const MetaCleanerPro: React.FC = () => {
     [appendLog]
   );
 
-  // Live 5-minute auto-clean countdown timer
+  const sweepDormantServerNow = useCallback(async () => {
+    setIsSweepingDormant(true);
+    try {
+      const res = await fetch('/api/meta-cleaner/download?sweep=dormant', {
+        method: 'DELETE',
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        appendLog('⚠️ Gagal membersihkan file dormant pada server.', 'amber');
+        return;
+      }
+      const data = (await res.json()) as { removedCount?: number; freedBytes?: number };
+      const count = data.removedCount ?? 0;
+      const freedMb = ((data.freedBytes ?? 0) / (1024 * 1024)).toFixed(2);
+      appendLog(
+        count > 0
+          ? `✓ [SERVER SWEEP] ${count} file dormant (${freedMb} MB) dibersihkan dari server.`
+          : '✓ [SERVER SWEEP] Direktori temporary server sudah bersih (0 file dormant).',
+        'emerald'
+      );
+    } catch {
+      appendLog('⚠️ Gagal menghubungi server saat sweeping dormant.', 'amber');
+    } finally {
+      setIsSweepingDormant(false);
+    }
+  }, [appendLog]);
+
   useEffect(() => {
     if (!autoCleanExpiresAt || isServerCleanedUp) return;
-
     const updateTimer = () => {
       const expiresMs = Date.parse(autoCleanExpiresAt);
       if (!Number.isFinite(expiresMs)) return;
       const diffSec = Math.max(0, Math.ceil((expiresMs - Date.now()) / 1000));
       setAutoCleanRemainingSec(diffSec);
-
       if (diffSec <= 0) {
         setIsServerCleanedUp(true);
         setServerDownloadUrl(null);
@@ -890,7 +748,6 @@ export const MetaCleanerPro: React.FC = () => {
         try {
           sessionStorage.removeItem('metacleaner_active_job');
         } catch {}
-
         const expiredJobId = lastJobIdRef.current;
         if (expiredJobId) {
           void fetch(`/api/meta-cleaner/progress?jobId=${encodeURIComponent(expiredJobId)}`, {
@@ -898,13 +755,9 @@ export const MetaCleanerPro: React.FC = () => {
             credentials: 'include',
           }).catch(() => {});
         }
-        appendLog(
-          '✓ [AUTO-CLEAN 5 MENIT] Masa simpan 5 menit selesai — file video input & output di server telah dihapus otomatis.',
-          'emerald'
-        );
+        appendLog('✓ [AUTO-CLEAN 5 MENIT] File video di server telah dihapus otomatis.', 'emerald');
       }
     };
-
     updateTimer();
     const timer = window.setInterval(updateTimer, 1000);
     return () => window.clearInterval(timer);
@@ -913,9 +766,7 @@ export const MetaCleanerPro: React.FC = () => {
   const formatCountdown = (seconds: number | null): string => {
     if (seconds === null || !Number.isFinite(seconds)) return '05:00';
     const s = Math.max(0, Math.floor(seconds));
-    const mins = String(Math.floor(s / 60)).padStart(2, '0');
-    const secs = String(s % 60).padStart(2, '0');
-    return `${mins}:${secs}`;
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   };
 
   const runExternalProbe = useCallback(
@@ -934,8 +785,6 @@ export const MetaCleanerPro: React.FC = () => {
       try {
         let data: any = null;
         let lastErr: Error | null = null;
-
-        // Retry up to 3 times on transient network hiccups
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
             let res: Response;
@@ -961,7 +810,7 @@ export const MetaCleanerPro: React.FC = () => {
                 signal: AbortSignal.timeout(60000),
               });
             } else {
-              throw new Error('Sumber video untuk probe tidak tersedia.');
+              throw new Error('Sumber video probe tidak tersedia.');
             }
 
             const json = await res.json();
@@ -972,16 +821,11 @@ export const MetaCleanerPro: React.FC = () => {
             break;
           } catch (err: any) {
             lastErr = err instanceof Error ? err : new Error(String(err));
-            if (attempt < 3) {
-              await new Promise((r) => setTimeout(r, attempt * 1200));
-            }
+            if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1200));
           }
         }
 
-        if (!data?.probe) {
-          throw lastErr || new Error('Gagal menjalankan ffprobe server.');
-        }
-
+        if (!data?.probe) throw lastErr || new Error('Gagal menjalankan ffprobe server.');
         const probe = data.probe as ExternalProbeReport;
         const av = probe.audioVisualForensics;
 
@@ -1002,39 +846,25 @@ export const MetaCleanerPro: React.FC = () => {
                   ? 'BERSIH TOTAL (Visual + Audio Organik)'
                   : 'BERSIH / ORGANIK',
             synthIdClean: av.visual.visualClean && av.audio.audioClean,
-            c2pa: probe.cleanliness.isZeroJumbf
-              ? 'TIDAK TERDETEKSI'
-              : `TERDETEKSI (${probe.jumbfManifests.length} manifes)`,
+            c2pa: probe.cleanliness.isZeroJumbf ? '0 Box (Bersih)' : `TERDETEKSI (${probe.jumbfManifests.length} manifes)`,
             c2paClean: probe.cleanliness.isZeroJumbf,
-            uuid: probe.cleanliness.isZeroUuid
-              ? 'BERSIH (0 UUID Claim)'
-              : `TERDETEKSI (${probe.uuidClaims.length} UUID box)`,
+            uuid: probe.cleanliness.isZeroUuid ? '0 Box (Bersih)' : `TERDETEKSI (${probe.uuidClaims.length} UUID)`,
             uuidClean: probe.cleanliness.isZeroUuid,
             encoder: !probe.cleanliness.isZeroAiVendor
-              ? `TERDETEKSI (${probe.cleanliness.flaggedReasons.find((r) => r.includes('vendor') || r.includes('ASCII')) || 'Vendor/Handler Tag'})`
-              : probe.format.tags?.make || probe.format.tags?.model
-                ? `BERSIH • OEM: ${[probe.format.tags?.make, probe.format.tags?.model].filter(Boolean).join(' ')} (${probe.videoStream?.handlerName || 'Handler'})`
-                : target === 'after'
-                  ? `BERSIH (${probe.videoStream?.handlerName || 'Standard Handler'} • Bebas Lavf)`
-                  : `BERSIH (${probe.videoStream?.handlerName || 'Standard Handler'})`,
+              ? `TERDETEKSI (${probe.cleanliness.flaggedReasons.find((r) => r.includes('vendor') || r.includes('ASCII')) || 'Vendor Tag'})`
+              : `${probe.videoStream?.handlerName || 'VideoHandle'} • Bebas Lavf`,
             encoderClean: probe.cleanliness.isZeroAiVendor,
             sei:
               seiTotal > 0
                 ? `TERDETEKSI (${seiTotal} unit${asciiHint ? ` • ${asciiHint}` : ''})`
-                : target === 'after'
-                  ? 'BERSIH (0 Unit SEI NAL Type 6)'
-                  : 'BERSIH (0 Unit SEI)',
+                : '0 Unit SEI (Bersih)',
             seiClean: seiTotal === 0,
             seiCount: seiTotal,
-            riskText: isOverallClean
-              ? `100% LOLOS AUDIO-VISUAL (${avSummary})`
-              : `TERDETEKSI AI • ${avSummary}`,
+            riskText: isOverallClean ? `LOLOS 100% (${avSummary})` : `TERDETEKSI AI • ${avSummary}`,
             riskClean: isOverallClean,
             badgeText: isOverallClean
-              ? '100% BERSIH & LOLOS AUDIO-VISUAL AI'
-              : av.aiVerdict === 'HIGH_AI_RISK'
-                ? `BAHAYA: TERDETEKSI AI (${av.aiRiskScore}/100)`
-                : `TERDETEKSI SINYAL AI (${av.aiRiskScore}/100)`,
+              ? 'CLEAN ORGANIC (0 RISK)'
+              : `${av.aiVerdict} (${av.aiRiskScore}/100)`,
             badgeClean: isOverallClean,
           };
         };
@@ -1042,7 +872,6 @@ export const MetaCleanerPro: React.FC = () => {
         if (target === 'before') {
           setBeforeProbe(probe);
           setBeforeState((prev) => mapProbeState(prev));
-          setDiagTarget('before');
         } else {
           setAfterProbe(probe);
           setAfterState((prev) => mapProbeState(prev));
@@ -1050,29 +879,23 @@ export const MetaCleanerPro: React.FC = () => {
         }
 
         appendLog(
-          `[FFPROBE SERVER (${target.toUpperCase()})] AI Risk=${av.aiRiskScore}/100 (${av.aiVerdict}) | SEI=${probe.seiReport.totalSeiUnits} | FPS=${av.visual.fps} (B-Frame=${probe.videoStream?.hasBFrames ?? 0}) | Silence=${av.audio.digitalSilenceCount} | Air>17kHz=${av.audio.highBand17kDb}dB (Cliff=${av.audio.airCliffDb}dB) | Verdict: ${probe.cleanliness.overallClean ? 'BERSIH TOTAL' : 'TERDETEKSI JEJAK AI'}`,
+          `[PROBE ${target.toUpperCase()}] AI Risk=${av.aiRiskScore}/100 (${av.aiVerdict}) | SEI=${probe.seiReport.totalSeiUnits} | FPS=${av.visual.fps} | Silence=${av.audio.digitalSilenceCount} | Air>17k=${av.audio.highBand17kDb}dB | Cliff=${av.audio.airCliffDb}dB | SideGap=${av.audio.stereoSideGapDb}dB`,
           probe.cleanliness.overallClean ? 'emerald' : 'amber'
         );
       } catch (err: any) {
         const msg = err?.message || 'Gagal menjalankan ffprobe server';
-        if (target === 'before') {
-          setProbeErrorBefore(msg);
-        } else {
-          setProbeErrorAfter(msg);
-        }
-        appendLog(`[FFPROBE WARNING (${target.toUpperCase()})] ${msg}`, 'amber');
+        if (target === 'before') setProbeErrorBefore(msg);
+        else setProbeErrorAfter(msg);
+        appendLog(`[PROBE WARNING (${target.toUpperCase()})] ${msg}`, 'amber');
       } finally {
-        if (target === 'before') {
-          setIsProbingBefore(false);
-        } else {
-          setIsProbingAfter(false);
-        }
+        if (target === 'before') setIsProbingBefore(false);
+        else setIsProbingAfter(false);
       }
     },
     [appendLog]
   );
 
-  // Restore active or recently-completed server job after page reload
+  // Restore session after reload
   useEffect(() => {
     let cancelled = false;
     const restoreSessionJob = async () => {
@@ -1083,7 +906,6 @@ export const MetaCleanerPro: React.FC = () => {
         return;
       }
       if (!savedRaw) return;
-
       let parsed: { jobId?: string; uploadId?: string; fileName?: string } | null = null;
       try {
         parsed = JSON.parse(savedRaw);
@@ -1093,14 +915,11 @@ export const MetaCleanerPro: React.FC = () => {
       if (!parsed?.jobId) return;
 
       try {
-        const res = await fetch(
-          `/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`,
-          {
-            cache: 'no-store',
-            credentials: 'include',
-            signal: AbortSignal.timeout(12000),
-          }
-        );
+        const res = await fetch(`/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`, {
+          cache: 'no-store',
+          credentials: 'include',
+          signal: AbortSignal.timeout(12000),
+        });
         if (!res.ok || cancelled) return;
         const pData = (await res.json()) as CleanerProgressState;
         if (cancelled || !pData || pData.expired) {
@@ -1109,20 +928,15 @@ export const MetaCleanerPro: React.FC = () => {
           } catch {}
           return;
         }
-
         const outName = parsed.fileName
           ? `${parsed.fileName.replace(/\.[^/.]+$/, '')}_output_bersih.mp4`
           : 'video_output_bersih.mp4';
-
-        let maxRestorePct = pData.percent || 0;
         setLastJobId(parsed.jobId);
         if (parsed.uploadId) setServerUploadId(parsed.uploadId);
         setCloudProgress(pData);
 
         if (pData.resultReady || (pData.stage === 'completed' && Boolean(pData.downloadUrl))) {
-          const expiresAtIso =
-            pData.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
-          setAutoCleanExpiresAt(expiresAtIso);
+          setAutoCleanExpiresAt(pData.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString());
           setIsServerCleanedUp(false);
           setServerDownloadUrl(
             `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&filename=${encodeURIComponent(outName)}`
@@ -1131,147 +945,46 @@ export const MetaCleanerPro: React.FC = () => {
             `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&inline=1&t=${Date.now()}`
           );
           setProgressText('SELESAI 100%');
-          appendLog(
-            `✓ [SESSION PULIH] Hasil video Job ${parsed.jobId} masih tersedia di server hingga masa Auto-Clean 5 menit berakhir.`,
-            'emerald'
-          );
           void runExternalProbe({ jobId: parsed.jobId, filename: outName }, 'after');
-        } else if (pData.stage !== 'failed') {
-          setIsProcessing(true);
-          activeJobIdRef.current = parsed.jobId;
-          abortPollingRef.current = false;
-          setProgressText(`${maxRestorePct || 5}%`);
-          appendLog(
-            `[SESSION PULIH] Menyambung kembali pemantauan proses server Job ${parsed.jobId}...`,
-            'indigo'
-          );
-
-          while (!cancelled && !abortPollingRef.current) {
-            await new Promise((r) => setTimeout(r, maxRestorePct >= 75 ? 350 : 600));
-            if (cancelled || abortPollingRef.current) break;
-            try {
-              const pollRes = await fetch(
-                `/api/meta-cleaner/progress?jobId=${encodeURIComponent(parsed.jobId)}`,
-                {
-                  cache: 'no-store',
-                  credentials: 'include',
-                  signal: AbortSignal.timeout(12000),
-                }
-              );
-              if (!pollRes.ok) {
-                setNetworkWarning(
-                  `Koneksi lambat (HTTP ${pollRes.status}) — pemrosesan tetap berjalan di server...`
-                );
-                continue;
-              }
-              setNetworkWarning(null);
-              const nextData = (await pollRes.json()) as CleanerProgressState;
-              if (cancelled || abortPollingRef.current) break;
-              const isTerminalReady =
-                Boolean(nextData.resultReady) &&
-                nextData.stage === 'completed' &&
-                Boolean(nextData.downloadUrl);
-
-              if (nextData.stage !== 'failed') {
-                const boundedPct = isTerminalReady
-                  ? 100
-                  : Math.min(99, Math.max(maxRestorePct, nextData.percent || 0));
-                maxRestorePct = boundedPct;
-                nextData.percent = boundedPct;
-              }
-
-              if (nextData.expired) {
-                setIsServerCleanedUp(true);
-                setIsProcessing(false);
-                break;
-              }
-              if (isTerminalReady) {
-                setCloudProgress({
-                  ...nextData,
-                  stage: 'binary_sanitize',
-                  percent: 99,
-                  message: 'Memverifikasi integritas hasil & kesiapan download...',
-                });
-                setProgressText('VERIFIKASI AKHIR (99%)...');
-                await runExternalProbe({ jobId: parsed.jobId, filename: outName }, 'after');
-                if (cancelled || abortPollingRef.current) break;
-                const expIso =
-                  nextData.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
-                setAutoCleanExpiresAt(expIso);
-                setIsServerCleanedUp(false);
-                setServerDownloadUrl(
-                  `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&filename=${encodeURIComponent(outName)}`
-                );
-                setPreviewUrlAfter(
-                  `/api/meta-cleaner/download?jobId=${encodeURIComponent(parsed.jobId)}&inline=1&t=${Date.now()}`
-                );
-                setCloudProgress({ ...nextData, stage: 'completed', percent: 100 });
-                setProgressText('SELESAI 100%');
-                setIsProcessing(false);
-                break;
-              }
-              setCloudProgress(nextData);
-              setProgressText(`${nextData.percent}%`);
-              if (nextData.stage === 'failed') {
-                setProgressText('GAGAL');
-                setIsProcessing(false);
-                break;
-              }
-            } catch {
-              setNetworkWarning(
-                'Koneksi internet terganggu — pekerjaan tetap berjalan di server, menunggu jaringan kembali...'
-              );
-            }
-          }
         }
       } catch {}
     };
-
     void restoreSessionJob();
     return () => {
       cancelled = true;
     };
-  }, [appendLog, runExternalProbe]);
+  }, [runExternalProbe]);
 
-
-  // Resilient chunked uploader with resume & per-chunk retries on bad internet
   const uploadVideoToServer = useCallback(
     async (file: File, reuseUploadId?: string): Promise<string> => {
       uploadAbortRef.current?.abort();
       const abortCtrl = new AbortController();
       uploadAbortRef.current = abortCtrl;
 
-      const uploadId =
-        reuseUploadId ||
-        `up_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
+      const uploadId = reuseUploadId || `up_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       setServerUploadId(uploadId);
       setUploadStatus('uploading');
       setUploadError(null);
       setIsServerCleanedUp(false);
 
-      const CHUNK_SIZE =
-        file.size > 12 * 1024 * 1024 ? 1 * 1024 * 1024 : 2 * 1024 * 1024;
+      const CHUNK_SIZE = file.size > 12 * 1024 * 1024 ? 1 * 1024 * 1024 : 2 * 1024 * 1024;
       const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
       setUploadChunkInfo({ current: 0, total: totalChunks });
 
       const buildVerifySignal = (ms: number): AbortSignal => {
         const timeoutSig = AbortSignal.timeout(ms);
         const abortSigAny = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
-        if (typeof abortSigAny === 'function') {
-          return abortSigAny([abortCtrl.signal, timeoutSig]);
-        }
-        return timeoutSig;
+        return typeof abortSigAny === 'function' ? abortSigAny([abortCtrl.signal, timeoutSig]) : timeoutSig;
       };
 
-      // Check if server already has partial/complete chunks (resume support)
       const alreadyReceived = new Set<number>();
       if (reuseUploadId) {
         try {
-          const checkRes = await fetch(
-            `/api/meta-cleaner/upload?uploadId=${encodeURIComponent(uploadId)}`,
-            { cache: 'no-store', credentials: 'include', signal: buildVerifySignal(10000) }
-          );
+          const checkRes = await fetch(`/api/meta-cleaner/upload?uploadId=${encodeURIComponent(uploadId)}`, {
+            cache: 'no-store',
+            credentials: 'include',
+            signal: buildVerifySignal(10000),
+          });
           if (checkRes.ok) {
             const checkData = await checkRes.json();
             if (checkData?.assembled) {
@@ -1279,43 +992,26 @@ export const MetaCleanerPro: React.FC = () => {
               setUploadPercent(100);
               setUploadStatus('uploaded');
               setUploadChunkInfo({ current: totalChunks, total: totalChunks });
-              appendLog(
-                `✓ [SERVER UPLOAD READY] Berkas "${file.name}" sudah siap di server (resume terverifikasi).`,
-                'emerald'
-              );
               return uploadId;
             }
             if (Array.isArray(checkData?.receivedChunks)) {
-              for (const idx of checkData.receivedChunks) {
-                alreadyReceived.add(Number(idx));
-              }
+              for (const idx of checkData.receivedChunks) alreadyReceived.add(Number(idx));
             }
           }
         } catch {}
       }
 
-      appendLog(
-        `[UPLOAD KE SERVER] Mengunggah "${file.name}" (${(file.size / (1024 * 1024)).toFixed(2)} MB) dalam ${totalChunks} bagian (${alreadyReceived.size > 0 ? `resume dari ${alreadyReceived.size}/${totalChunks}` : 'resilient chunked upload'})...`,
-        'indigo'
-      );
-
       let completedBytes = 0;
       for (let i = 0; i < totalChunks; i++) {
         if (alreadyReceived.has(i)) {
-          const start = i * CHUNK_SIZE;
-          const end = Math.min(file.size, start + CHUNK_SIZE);
-          completedBytes += end - start;
+          completedBytes += Math.min(file.size, (i + 1) * CHUNK_SIZE) - i * CHUNK_SIZE;
         }
       }
       setUploadedBytes(completedBytes);
       setUploadPercent(Math.min(99, Math.round((completedBytes / file.size) * 100)));
 
-      const sendChunkXhr = (
-        chunkIndex: number,
-        chunkBlob: Blob,
-        chunkStartBytes: number
-      ): Promise<any> => {
-        return new Promise((resolve, reject) => {
+      const sendChunkXhr = (chunkIndex: number, chunkBlob: Blob, chunkStartBytes: number): Promise<any> =>
+        new Promise((resolve, reject) => {
           if (abortCtrl.signal.aborted) {
             reject(new DOMException('Aborted', 'AbortError'));
             return;
@@ -1323,21 +1019,16 @@ export const MetaCleanerPro: React.FC = () => {
           const xhr = new XMLHttpRequest();
           const onAbort = () => xhr.abort();
           abortCtrl.signal.addEventListener('abort', onAbort, { once: true });
-
           xhr.open('POST', '/api/meta-cleaner/upload', true);
           xhr.withCredentials = true;
           xhr.timeout = 60000;
-
           xhr.upload.onprogress = (ev) => {
             if (ev.lengthComputable) {
               const currentTotal = chunkStartBytes + ev.loaded;
               setUploadedBytes(Math.min(file.size, currentTotal));
-              setUploadPercent(
-                Math.min(99, Math.max(1, Math.round((currentTotal / file.size) * 100)))
-              );
+              setUploadPercent(Math.min(99, Math.max(1, Math.round((currentTotal / file.size) * 100))));
             }
           };
-
           xhr.onload = () => {
             abortCtrl.signal.removeEventListener('abort', onAbort);
             if (xhr.status >= 200 && xhr.status < 300) {
@@ -1355,17 +1046,14 @@ export const MetaCleanerPro: React.FC = () => {
               reject(new Error(msg));
             }
           };
-
           xhr.onerror = () => {
             abortCtrl.signal.removeEventListener('abort', onAbort);
-            reject(new Error('Koneksi terputus saat mengunggah chunk ke server.'));
+            reject(new Error('Koneksi terputus saat upload chunk.'));
           };
-
           xhr.ontimeout = () => {
             abortCtrl.signal.removeEventListener('abort', onAbort);
-            reject(new Error('Timeout koneksi saat mengunggah chunk ke server.'));
+            reject(new Error('Timeout saat upload chunk.'));
           };
-
           const fd = new FormData();
           fd.append('uploadId', uploadId);
           fd.append('chunkIndex', String(chunkIndex));
@@ -1375,18 +1063,14 @@ export const MetaCleanerPro: React.FC = () => {
           fd.append('chunk', chunkBlob, file.name);
           xhr.send(fd);
         });
-      };
 
       try {
         for (let idx = 0; idx < totalChunks; idx++) {
-          if (abortCtrl.signal.aborted) {
-            throw new DOMException('Aborted', 'AbortError');
-          }
+          if (abortCtrl.signal.aborted) throw new DOMException('Aborted', 'AbortError');
           if (alreadyReceived.has(idx)) {
             setUploadChunkInfo({ current: idx + 1, total: totalChunks });
             continue;
           }
-
           const start = idx * CHUNK_SIZE;
           const end = Math.min(file.size, start + CHUNK_SIZE);
           const chunkBlob = file.slice(start, end);
@@ -1394,12 +1078,8 @@ export const MetaCleanerPro: React.FC = () => {
 
           let chunkUploaded = false;
           let lastChunkErr: Error | null = null;
-          const maxRetries = 8;
-
-          for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            if (abortCtrl.signal.aborted) {
-              throw new DOMException('Aborted', 'AbortError');
-            }
+          for (let attempt = 1; attempt <= 8; attempt++) {
+            if (abortCtrl.signal.aborted) throw new DOMException('Aborted', 'AbortError');
             try {
               await sendChunkXhr(idx, chunkBlob, completedBytes);
               chunkUploaded = true;
@@ -1407,43 +1087,27 @@ export const MetaCleanerPro: React.FC = () => {
             } catch (err: any) {
               if (err?.name === 'AbortError') throw err;
               lastChunkErr = err instanceof Error ? err : new Error(String(err));
-
-              // Before retrying, check if server actually received this chunk before disconnect
               try {
-                const verifyRes = await fetch(
-                  `/api/meta-cleaner/upload?uploadId=${encodeURIComponent(uploadId)}`,
-                  { cache: 'no-store', credentials: 'include', signal: buildVerifySignal(10000) }
-                );
+                const verifyRes = await fetch(`/api/meta-cleaner/upload?uploadId=${encodeURIComponent(uploadId)}`, {
+                  cache: 'no-store',
+                  credentials: 'include',
+                  signal: buildVerifySignal(10000),
+                });
                 if (verifyRes.ok) {
                   const vData = await verifyRes.json();
-                  if (
-                    vData?.assembled ||
-                    (Array.isArray(vData?.receivedChunks) && vData.receivedChunks.includes(idx))
-                  ) {
+                  if (vData?.assembled || (Array.isArray(vData?.receivedChunks) && vData.receivedChunks.includes(idx))) {
                     chunkUploaded = true;
                     break;
                   }
                 }
               } catch {}
-
-              if (attempt < maxRetries) {
-                const waitMs = Math.min(10000, attempt * 1500);
-                setUploadError(
-                  `Internet lambat pada bagian ${idx + 1}/${totalChunks} — mencoba ulang (${attempt}/${maxRetries})...`
-                );
-                appendLog(
-                  `[UPLOAD RETRY ${attempt}/${maxRetries}] Bagian ${idx + 1}/${totalChunks} gagal (${lastChunkErr.message}), mencoba ulang dalam ${(waitMs / 1000).toFixed(1)}d...`,
-                  'amber'
-                );
-                await new Promise((r) => setTimeout(r, waitMs));
+              if (attempt < 8) {
+                setUploadError(`Koneksi lambat bagian ${idx + 1}/${totalChunks} — retry ${attempt}/8...`);
+                await new Promise((r) => setTimeout(r, Math.min(10000, attempt * 1500)));
               }
             }
           }
-
-          if (!chunkUploaded) {
-            throw lastChunkErr || new Error(`Gagal mengunggah bagian ${idx + 1}/${totalChunks}.`);
-          }
-
+          if (!chunkUploaded) throw lastChunkErr || new Error(`Gagal upload bagian ${idx + 1}/${totalChunks}.`);
           setUploadError(null);
           completedBytes += end - start;
           setUploadedBytes(completedBytes);
@@ -1454,19 +1118,14 @@ export const MetaCleanerPro: React.FC = () => {
         setUploadedBytes(file.size);
         setUploadStatus('uploaded');
         setUploadError(null);
-        appendLog(
-          `✓ [UPLOAD SELESAI 100%] "${file.name}" tersimpan aman di server (ID: ${uploadId}). Siap diproses tanpa streaming!`,
-          'emerald'
-        );
+        appendLog(`✓ [UPLOAD SELESAI] "${file.name}" siap di server.`, 'emerald');
         return uploadId;
       } catch (err: any) {
-        if (err?.name === 'AbortError') {
-          throw err;
-        }
+        if (err?.name === 'AbortError') throw err;
         const msg = err?.message || 'Gagal mengunggah video ke server.';
         setUploadStatus('error');
         setUploadError(msg);
-        appendLog(`[UPLOAD ERROR] ${msg} — klik "Lanjutkan Upload" untuk melanjutkan bagian yang tersisa.`, 'rose');
+        appendLog(`[UPLOAD ERROR] ${msg}`, 'rose');
         throw err;
       }
     },
@@ -1476,7 +1135,6 @@ export const MetaCleanerPro: React.FC = () => {
   const handleFileSelected = async (file: File | null | undefined) => {
     if (!file) return;
 
-    // Abort any running upload or polling from previous file and clean previous server files
     uploadAbortRef.current?.abort();
     abortPollingRef.current = true;
     activeJobIdRef.current = null;
@@ -1509,45 +1167,31 @@ export const MetaCleanerPro: React.FC = () => {
     setProbeErrorAfter(null);
     setCloudProgress(null);
     setPreviewUrlBefore(URL.createObjectURL(file));
-
-    setFileStatus({ text: 'Membaca ke RAM...', color: 'amber' });
+    setFileStatus({ text: 'Memindai Header...', color: 'amber' });
 
     try {
       const inspectSlice = file.slice(0, 16 * 1024 * 1024);
       const buffer = await inspectSlice.arrayBuffer();
       setFileStatus({ text: 'Siap Upload ke Server', color: 'emerald' });
 
-      const uint8 = new Uint8Array(buffer);
-      const inspected = await inspectVideoBuffer(uint8, false);
+      const inspected = await inspectVideoBuffer(new Uint8Array(buffer), false);
       setBeforeState(inspected);
+      appendLog(`[FILE LOADED] "${file.name}" (${(file.size / (1024 * 1024)).toFixed(2)} MB)`, 'indigo');
 
-      appendLog(
-        `[FILE LOADED] Berkas "${file.name}" (${(file.size / (1024 * 1024)).toFixed(2)} MB) siap diunggah ke server.`,
-        'indigo'
-      );
-      appendLog(
-        `[INSPECTION] SynthID: ${inspected.synthId} | C2PA: ${inspected.c2pa} | UUID: ${inspected.uuid} | Vendor: ${inspected.encoder} | SEI: ${inspected.sei}`,
-        inspected.riskClean ? 'emerald' : 'amber'
-      );
-
-      // Immediately upload video in resilient chunks, then run server-side probe using uploadId (no duplicate transfer!)
       try {
         const upId = await uploadVideoToServer(file);
         void runExternalProbe({ uploadId: upId, filename: file.name }, 'before');
       } catch (upErr: any) {
-        if (upErr?.name !== 'AbortError') {
-          setFileStatus({ text: 'Upload Tertunda', color: 'amber' });
-        }
+        if (upErr?.name !== 'AbortError') setFileStatus({ text: 'Upload Tertunda', color: 'amber' });
       }
     } catch (err: any) {
       setFileStatus({ text: 'Gagal Membaca', color: 'rose' });
-      appendLog(`[ERROR] Gagal membaca berkas: ${err?.message || 'Unknown error'}`, 'rose');
+      appendLog(`[ERROR] ${err?.message || 'Gagal membaca berkas'}`, 'rose');
     }
   };
 
   const executeAutoSanitization = async () => {
-    if (!currentFile) return;
-    if (isProcessing) return;
+    if (!currentFile || isProcessing) return;
 
     abortPollingRef.current = false;
     setIsProcessing(true);
@@ -1577,15 +1221,13 @@ export const MetaCleanerPro: React.FC = () => {
           : holdAtVerification
             ? Math.min(99, Math.max(maxUiPercent, pData.percent || 0))
             : Math.max(maxUiPercent, pData.percent || 0);
-      if (pData.stage !== 'failed') {
-        maxUiPercent = clampedPct;
-      }
+      if (pData.stage !== 'failed') maxUiPercent = clampedPct;
       const nextState: CleanerProgressState = holdAtVerification
         ? {
             ...pData,
             stage: 'binary_sanitize',
             percent: clampedPct,
-            message: 'Memverifikasi 0 SEI, atom MOOV & kesiapan file bersih di server...',
+            message: 'Memverifikasi 0 SEI, atom MOOV & kesiapan file bersih...',
           }
         : { ...pData, percent: clampedPct };
       setCloudProgress(nextState);
@@ -1609,30 +1251,26 @@ export const MetaCleanerPro: React.FC = () => {
     activeJobIdRef.current = jobId;
 
     try {
-      // 1. Ensure video is uploaded to server first (resumes partial upload if needed, 0KB if already uploaded)
       let activeUploadId = serverUploadIdRef.current;
       if (!activeUploadId || uploadStatus !== 'uploaded' || isServerCleanedUp) {
-        setProgressText('MENGUNGGAH VIDEO KE SERVER...');
+        setProgressText('MENGUNGGAH KE SERVER...');
         activeUploadId = await uploadVideoToServer(
           currentFile,
           activeUploadId && !isServerCleanedUp ? activeUploadId : undefined
         );
       }
-
       if (abortPollingRef.current) return;
 
-      // Ensure Before probe runs on uploaded server file if it failed earlier
       if (!beforeProbe && !isProbingBefore) {
         void runExternalProbe({ uploadId: activeUploadId, filename: currentFile.name }, 'before');
       }
 
-      // 2. Start non-streaming server MetaCleaner job with lightweight JSON payload
-      setProgressText('MEMULAI PROSES DI SERVER...');
+      setProgressText('MEMULAI PROSES AIO...');
       setCloudProgress({
         jobId,
         uploadId: activeUploadId,
         stage: 'queued',
-        message: 'Video sudah di server — memulai pemrosesan FFmpeg tanpa streaming...',
+        message: 'Memulai pembersihan All-in-One di server...',
         percent: 3,
         frame: 0,
         totalFrames: 0,
@@ -1640,35 +1278,26 @@ export const MetaCleanerPro: React.FC = () => {
         speed: '0x',
         outTimeSec: 0,
         durationSec: 0,
-        engine: 'Server Upload Queue (Non-Streaming)',
+        engine: 'MetaCleaner AIO Server Pipeline',
         logs: [],
         updatedAt: new Date().toISOString(),
         ttlSeconds: 300,
       });
 
-      appendLog(
-        `[SERVER UPLOAD PIPELINE] Memulai pemrosesan penuh di server untuk Upload ${activeUploadId} (Job: ${jobId}) — tahan internet lambat, auto-clean 5 menit setelah selesai.`,
-        'indigo'
-      );
-
       let startAck: any = null;
       let startErr: Error | null = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
-        // Before retrying POST, check if server already accepted and started this jobId (prevents duplicate restart)
         if (attempt > 1) {
           try {
-            const verifyJobRes = await fetch(
-              `/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}`,
-              {
-                cache: 'no-store',
-                credentials: 'include',
-                signal: AbortSignal.timeout(10000),
-              }
-            );
+            const verifyJobRes = await fetch(`/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}`, {
+              cache: 'no-store',
+              credentials: 'include',
+              signal: AbortSignal.timeout(10000),
+            });
             if (verifyJobRes.ok) {
               const existingState = (await verifyJobRes.json()) as CleanerProgressState;
               if (existingState?.stage && existingState.stage !== 'queued' && existingState.stage !== 'failed') {
-                startAck = { accepted: true, resumedFromProgress: true };
+                startAck = { accepted: true };
                 break;
               }
             }
@@ -1682,14 +1311,14 @@ export const MetaCleanerPro: React.FC = () => {
             body: JSON.stringify({
               uploadId: activeUploadId,
               jobId,
-              mode: processingMode,
+              mode: 'all_in_one',
               deepMetaPurge: true,
-              forceKeyframeInsertion: processingMode === 'remux_only' ? forceKeyframeReencode : false,
+              forceKeyframeInsertion: false,
               cameraProfile,
               upscale1080p,
-              deepScan: deepScanEnabled,
-              humanizationPreset,
-              synthidScrambleMode,
+              deepScan: true,
+              humanizationPreset: 'full_human',
+              synthidScrambleMode: 'aggressive',
             }),
             cache: 'no-store',
             credentials: 'include',
@@ -1698,53 +1327,39 @@ export const MetaCleanerPro: React.FC = () => {
           const json = await startRes.json().catch(() => null);
           if (!startRes.ok || !json?.accepted) {
             if (startRes.status === 404) {
-              // Upload expired before clean started -> re-upload cleanly once
               activeUploadId = await uploadVideoToServer(currentFile);
               continue;
             }
-            throw new Error(json?.error || `Gagal memulai job di server (HTTP ${startRes.status}).`);
+            throw new Error(json?.error || `Gagal memulai job (HTTP ${startRes.status}).`);
           }
           startAck = json;
           break;
         } catch (err: any) {
           startErr = err instanceof Error ? err : new Error(String(err));
-          if (attempt < 3) {
-            await new Promise((r) => setTimeout(r, attempt * 1500));
-          }
+          if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1500));
         }
       }
 
-      if (!startAck?.accepted) {
-        throw startErr || new Error('Server gagal memulai antrean MetaCleaner.');
-      }
+      if (!startAck?.accepted) throw startErr || new Error('Server gagal memulai antrean MetaCleaner AIO.');
 
       try {
         sessionStorage.setItem(
           'metacleaner_active_job',
-          JSON.stringify({
-            jobId,
-            uploadId: activeUploadId,
-            fileName: currentFile.name,
-            cameraProfile,
-            startedAt: new Date().toISOString(),
-          })
+          JSON.stringify({ jobId, uploadId: activeUploadId, fileName: currentFile.name, cameraProfile })
         );
       } catch {}
 
-      // 3. Adaptive resilient polling — faster during remux/tail stages + auto-resync on stale progress
       const startedAt = Date.now();
       const maxWaitMs = 15 * 60 * 1000;
       let finalState: CleanerProgressState | null = null;
       let lastServerSig = '';
       let lastProgressAdvanceAt = Date.now();
-      let latestServerStage: string = 'queued';
+      let latestServerStage = 'queued';
 
       while (Date.now() - startedAt < maxWaitMs) {
         if (abortPollingRef.current) return;
         const pollDelayMs =
-          maxUiPercent >= 75 ||
-          latestServerStage === 'pass2_remux' ||
-          latestServerStage === 'binary_sanitize'
+          maxUiPercent >= 75 || latestServerStage === 'pass2_remux' || latestServerStage === 'binary_sanitize'
             ? 300
             : 450;
         await new Promise((r) => setTimeout(r, pollDelayMs));
@@ -1754,16 +1369,10 @@ export const MetaCleanerPro: React.FC = () => {
           const needResync = Date.now() - lastProgressAdvanceAt > 18000;
           const pRes = await fetch(
             `/api/meta-cleaner/progress?jobId=${encodeURIComponent(jobId)}${needResync ? '&resync=1' : ''}`,
-            {
-              cache: 'no-store',
-              credentials: 'include',
-              signal: AbortSignal.timeout(12000),
-            }
+            { cache: 'no-store', credentials: 'include', signal: AbortSignal.timeout(12000) }
           );
           if (!pRes.ok) {
-            setNetworkWarning(
-              `Koneksi lambat (HTTP ${pRes.status}) — pemrosesan tetap berjalan aman di server, menyinkronkan ulang...`
-            );
+            setNetworkWarning(`Koneksi lambat (HTTP ${pRes.status}) — proses tetap berjalan di server...`);
             await new Promise((r) => setTimeout(r, 1500));
             continue;
           }
@@ -1771,9 +1380,7 @@ export const MetaCleanerPro: React.FC = () => {
           setNetworkWarning(null);
           const rawJson = await pRes.json();
           const pData = (rawJson?.state ? rawJson.state : rawJson) as CleanerProgressState;
-          if (pData?.stage) {
-            latestServerStage = pData.stage;
-          }
+          if (pData?.stage) latestServerStage = pData.stage;
           const sig = `${pData.stage}:${pData.percent}:${pData.frame}:${pData.message}`;
           if (sig !== lastServerSig) {
             lastServerSig = sig;
@@ -1782,24 +1389,17 @@ export const MetaCleanerPro: React.FC = () => {
 
           if (pData.expired) {
             setIsServerCleanedUp(true);
-            throw new Error(
-              'File video telah melewati batas 5 menit dan sudah dihapus otomatis (Auto-Clean) di server.'
-            );
+            throw new Error('File melewati batas 5 menit dan sudah dihapus otomatis di server.');
           }
 
           const isTerminalReady =
-            Boolean(pData.resultReady) &&
-            pData.stage === 'completed' &&
-            Boolean(pData.downloadUrl);
+            Boolean(pData.resultReady) && pData.stage === 'completed' && Boolean(pData.downloadUrl);
 
-          // Hold at verification percentage (<=99%) until post-remux audit + download readiness passes!
           syncProgressSnapshot(pData, isTerminalReady);
-
           if (isTerminalReady) {
             finalState = pData;
             break;
           }
-
           if (pData.stage === 'failed') {
             throw new Error(pData.error || pData.message || 'Server FFmpeg gagal memproses video.');
           }
@@ -1808,25 +1408,19 @@ export const MetaCleanerPro: React.FC = () => {
             pollErr?.message?.includes('FFmpeg gagal') ||
             pollErr?.message?.includes('Auto-Clean') ||
             pollErr?.message?.includes('Worker server berhenti') ||
-            pollErr?.message?.includes('batas waktu')
+            pollErr?.message?.includes('batas 5 menit')
           ) {
             throw pollErr;
           }
-          setNetworkWarning(
-            'Koneksi internet terganggu — pekerjaan tetap berjalan di server, menunggu jaringan kembali...'
-          );
+          setNetworkWarning('Koneksi terganggu — menunggu jaringan kembali...');
           await new Promise((r) => setTimeout(r, 1500));
         }
       }
 
       if (abortPollingRef.current) return;
+      if (!finalState) throw new Error('Waktu pemantauan server melebihi batas.');
 
-      if (!finalState) {
-        throw new Error('Waktu tunggu pemantauan server melebihi batas. Coba cek ulang atau unggah ulang.');
-      }
-
-      // 4. Verify downloadable MP4 file header on server BEFORE marking UI finished!
-      setProgressText('MEMVERIFIKASI KESIAPAN FILE BERSIH (99%)...');
+      setProgressText('VERIFIKASI HASIL (99%)...');
       let downloadHeaderVerified = false;
       for (let hAttempt = 1; hAttempt <= 4; hAttempt++) {
         if (abortPollingRef.current) return;
@@ -1856,22 +1450,16 @@ export const MetaCleanerPro: React.FC = () => {
         } catch {}
         await new Promise((r) => setTimeout(r, 400 * hAttempt));
       }
+      if (!downloadHeaderVerified) throw new Error('Struktur MP4 hasil gagal diverifikasi di server.');
 
-      if (!downloadHeaderVerified) {
-        throw new Error('File hasil di server belum siap atau struktur ftyp MP4 gagal diverifikasi.');
-      }
-
-      // 5. Run server-side FFprobe audit BEFORE marking status as completed 100%!
-      setProgressText('VERIFIKASI FFPROBE & 0 SEI DI SERVER (99%)...');
+      setProgressText('AUDIT FORENSIK SERVER (99%)...');
       await runExternalProbe({ jobId, filename: outputFileName }, 'after');
       if (abortPollingRef.current) return;
 
-      const expiresAtIso =
-        finalState.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      const expiresAtIso = finalState.expiresAt || new Date(Date.now() + 5 * 60 * 1000).toISOString();
       const inlineStreamUrl = `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&inline=1&t=${Date.now()}`;
       const downloadAttachmentUrl = `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&filename=${encodeURIComponent(outputFileName)}`;
 
-      // Gently cache output into local browser RAM only when output <= 25 MB (prevents OOM tab crashes on large videos)
       let cachedBlob: Blob | null = null;
       const shouldCacheInBrowserRam =
         typeof finalState.outputSizeBytes === 'number' &&
@@ -1881,48 +1469,28 @@ export const MetaCleanerPro: React.FC = () => {
         for (let dlAttempt = 1; dlAttempt <= 3; dlAttempt++) {
           if (abortPollingRef.current) return;
           try {
-            const dlRes = await fetch(
-              `/api/meta-cleaner/download?jobId=${encodeURIComponent(jobId)}&inline=1&t=${Date.now()}`,
-              {
-                cache: 'no-store',
-                credentials: 'include',
-                signal: AbortSignal.timeout(45000),
-              }
-            );
+            const dlRes = await fetch(inlineStreamUrl, {
+              cache: 'no-store',
+              credentials: 'include',
+              signal: AbortSignal.timeout(45000),
+            });
             if (dlRes.ok) {
-              const dlBuf = await dlRes.arrayBuffer();
-              const candidateUint8 = new Uint8Array(dlBuf);
-              const mp4Check = validateMp4Buffer(candidateUint8, sourceByteLength);
-              if (mp4Check.valid) {
-                cachedBlob = new Blob([candidateUint8 as unknown as BlobPart], {
-                  type: 'video/mp4',
-                });
+              const candidateUint8 = new Uint8Array(await dlRes.arrayBuffer());
+              if (validateMp4Buffer(candidateUint8, sourceByteLength).valid) {
+                cachedBlob = new Blob([candidateUint8 as unknown as BlobPart], { type: 'video/mp4' });
                 setProcessedBlob(cachedBlob);
                 setPreviewUrlAfter(URL.createObjectURL(cachedBlob));
-                const inspectedAfter = await inspectVideoBuffer(
-                  candidateUint8,
-                  true,
-                  cameraProfile
-                );
+                const inspectedAfter = await inspectVideoBuffer(candidateUint8, true, cameraProfile);
                 setAfterState((prev) =>
                   prev.riskClean !== null
-                    ? {
-                        ...prev,
-                        hex: inspectedAfter.hex,
-                        containerType: inspectedAfter.containerType,
-                        containerClean: inspectedAfter.containerClean,
-                        falsePositiveCheck: inspectedAfter.falsePositiveCheck,
-                        falsePositiveClean: inspectedAfter.falsePositiveClean,
-                      }
+                    ? { ...prev, hex: inspectedAfter.hex, containerType: inspectedAfter.containerType }
                     : inspectedAfter
                 );
                 break;
               }
             }
           } catch {
-            if (dlAttempt < 3) {
-              await new Promise((r) => setTimeout(r, dlAttempt * 1500));
-            }
+            if (dlAttempt < 3) await new Promise((r) => setTimeout(r, dlAttempt * 1500));
           }
         }
       }
@@ -1932,77 +1500,38 @@ export const MetaCleanerPro: React.FC = () => {
       setAutoCleanExpiresAt(expiresAtIso);
       setIsServerCleanedUp(false);
       setNetworkWarning(null);
-      if (!cachedBlob) {
-        setPreviewUrlAfter(inlineStreamUrl);
-        appendLog(
-          'ℹ [DIRECT SERVER DOWNLOAD] Preview & unduhan langsung dari server siap. Gunakan tombol Unduh Berkas Bersih sebelum timer 5 menit berakhir.',
-          'amber'
-        );
-      }
+      if (!cachedBlob) setPreviewUrlAfter(inlineStreamUrl);
 
-      appendLog(
-        `✓ [SERVER PROCESSING SELESAI 100%] Hasil terverifikasi (${((finalState.outputSizeBytes || 0) / (1024 * 1024)).toFixed(2)} MB). Timer Auto-Clean 5 menit aktif!`,
-        'emerald'
-      );
-      appendLog(
-        `✓ [HARDWARE CAMERA OEM] Profil kamera disuntikkan: ${
-          cameraProfile === 'apple'
-            ? 'Apple iPhone 15 Pro (Core Media Video)'
-            : cameraProfile === 'samsung'
-              ? 'Samsung Galaxy S24 Ultra (VideoHandle)'
-              : cameraProfile === 'xiaomi'
-                ? 'Xiaomi 14 Ultra (HyperOS / Leica)'
-                : 'Netral / Bitexact Clean'
-        } • ${
-          processingMode === 'remux_only'
-            ? 'Mode: Aggressive Container Transmuxing (Resolusi Asli)'
-            : `Resolusi: ${upscale1080p && cameraProfile !== 'neutral' ? '1080p Full-HD BT.709' : 'Resolusi Asli BT.709'}`
-        }.`,
-        'indigo'
-      );
-
-      setCloudProgress({
-        ...finalState,
-        stage: 'completed',
-        percent: 100,
-      });
+      setCloudProgress({ ...finalState, stage: 'completed', percent: 100 });
       setDisplayedPercent(100);
       setProgressText('SELESAI 100%');
+      appendLog(
+        `✓ [AIO SELESAI 100%] Output terverifikasi (${((finalState.outputSizeBytes || 0) / (1024 * 1024)).toFixed(2)} MB).`,
+        'emerald'
+      );
     } catch (serverErr: any) {
       if (abortPollingRef.current) return;
-      const errMsg = serverErr?.message || 'Gagal menjalankan proses MetaCleaner di server.';
+      const errMsg = serverErr?.message || 'Gagal menjalankan MetaCleaner AIO.';
       setProgressText('GAGAL');
       setNetworkWarning(null);
       setCloudProgress((prev) =>
-        prev
-          ? {
-              ...prev,
-              stage: 'failed',
-              message: `Gagal: ${errMsg}`,
-              error: errMsg,
-            }
-          : null
+        prev ? { ...prev, stage: 'failed', message: `Gagal: ${errMsg}`, error: errMsg } : null
       );
-      appendLog(`[SERVER METACLEANER ERROR] ${errMsg}`, 'rose');
+      appendLog(`[ERROR] ${errMsg}`, 'rose');
     } finally {
-      if (!abortPollingRef.current) {
-        setIsProcessing(false);
-      }
+      if (!abortPollingRef.current) setIsProcessing(false);
     }
   };
 
-  const getOutputFileName = () => {
-    const baseName = currentFile ? currentFile.name.replace(/\.[^/.]+$/, '') : 'video';
-    return `${baseName}_output_bersih.mp4`;
-  };
+  const getOutputFileName = () =>
+    `${currentFile ? currentFile.name.replace(/\.[^/.]+$/, '') : 'video'}_output_bersih.mp4`;
 
   const downloadFromMemoryBlob = () => {
     if (!processedBlob) return;
-    const fileName = getOutputFileName();
     const url = URL.createObjectURL(processedBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileName;
+    a.download = getOutputFileName();
     a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
@@ -2017,61 +1546,60 @@ export const MetaCleanerPro: React.FC = () => {
     const fileName = getOutputFileName();
     try {
       const fileObj = new File([processedBlob], fileName, { type: 'video/mp4' });
-      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        const canShareFiles =
-          typeof navigator.canShare !== 'function' || navigator.canShare({ files: [fileObj] });
-        if (canShareFiles) {
-          await navigator.share({
-            files: [fileObj],
-            title: fileName,
-          });
-          appendLog(`✓ [SHARE / SIMPAN HP] Video "${fileName}" dibagikan ke sistem perangkat.`, 'emerald');
-          return;
-        }
+      if (
+        typeof navigator !== 'undefined' &&
+        typeof navigator.share === 'function' &&
+        (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [fileObj] }))
+      ) {
+        await navigator.share({ files: [fileObj], title: fileName });
+        return;
       }
       downloadFromMemoryBlob();
     } catch (err: any) {
-      if (err?.name === 'AbortError') return;
-      appendLog(`[DOWNLOAD INFO] Share sheet tidak tersedia, beralih ke unduhan langsung...`, 'amber');
-      downloadFromMemoryBlob();
+      if (err?.name !== 'AbortError') downloadFromMemoryBlob();
     }
   };
 
+  const beforeHumanReport = beforeProbe ? analyzeVideoHumanization(beforeProbe) : null;
+  const afterHumanReport = afterProbe ? analyzeVideoHumanization(afterProbe) : null;
+  const activeAuditProbe = diagTarget === 'after' && afterProbe ? afterProbe : beforeProbe || afterProbe;
+  const activeHumanReport = afterHumanReport || beforeHumanReport;
+  const outBytes = processedBlob?.size ?? cloudProgress?.outputSizeBytes ?? 0;
+
   return (
     <div className="bg-slate-950 text-slate-100 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl">
-      {/* HEADER */}
+      {/* HEADER AIO */}
       <div className="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-900/30">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-cyan-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-emerald-900/30">
             <Zap className="w-5 h-5" />
           </div>
           <div>
             <h2 className="font-bold text-base sm:text-lg leading-tight text-white flex items-center gap-2 flex-wrap">
-              <span>MetaCleaner V 2.0</span>
-              <span className="text-xs font-mono text-indigo-300 tabular-nums">
-                · Upload-First Server Pipeline + Auto-Clean 5 Menit
-              </span>
+              <span>MetaCleaner AIO</span>
+              <span className="text-[11px] font-mono text-emerald-300">· All-in-One Anti-AI &amp; Zero-SEI</span>
             </h2>
             <p className="text-xs text-slate-400">
-              Upload Resumable ke Server &rarr; Proses FFmpeg Non-Streaming 4 Lapisan (Zero-Pulldown 30fps, Bayer CMOS Grain, Audio 22.5kHz, Adaptive GOP MP4) &rarr; Auto-Clean File 5 Menit Setelah Selesai
+              1-Klik pembersihan menyeluruh: Purge SEI/C2PA/UUID, SynthID Scrambler, Organic CMOS &amp; Stereo Room Air.
             </p>
           </div>
         </div>
-        <div className="flex items-center space-x-2">
-          <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono font-bold rounded-full flex items-center gap-1.5">
+        <div className="flex items-center gap-2 text-xs font-mono font-bold">
+          <span className="px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 rounded-full flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Upload-First • Anti-Putus</span>
+            <span>Upload-First</span>
           </span>
-          <span className="hidden sm:flex px-2.5 py-1 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold rounded-full items-center gap-1">
+          <span className="hidden sm:flex px-2.5 py-1 bg-cyan-500/10 border border-cyan-500/25 text-cyan-300 rounded-full items-center gap-1">
             <Clock className="w-3.5 h-3.5" />
-            <span>Auto-Clean 5 Menit</span>
+            <span>Auto-Clean 5m</span>
           </span>
         </div>
       </div>
 
-      <div className="p-4 sm:p-6 flex flex-col gap-6">
-        {/* FILE INPUT & ACTION CONTROL */}
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex flex-col md:flex-row gap-5 items-center justify-between">
+      <div className="p-4 sm:p-6 flex flex-col gap-5">
+        {/* UNIFIED AIO UPLOAD & ACTION CARD */}
+        <div className="bg-slate-900 border border-slate-800 p-4 sm:p-5 rounded-2xl grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+          {/* DROPZONE */}
           <div
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => {
@@ -2082,25 +1610,59 @@ export const MetaCleanerPro: React.FC = () => {
             onDrop={(e) => {
               e.preventDefault();
               setIsDragging(false);
-              if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                handleFileSelected(e.dataTransfer.files[0]);
-              }
+              if (e.dataTransfer.files?.[0]) handleFileSelected(e.dataTransfer.files[0]);
             }}
-            className={`w-full md:w-3/5 border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition bg-slate-950/60 flex flex-col items-center justify-center space-y-2 ${
-              isDragging ? 'border-indigo-500 bg-indigo-950/20' : 'border-slate-700 hover:border-indigo-500'
+            className={`lg:col-span-7 border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition bg-slate-950/60 flex flex-col items-center justify-center gap-2.5 ${
+              isDragging ? 'border-emerald-500 bg-emerald-950/20' : 'border-slate-700 hover:border-emerald-500/70'
             }`}
           >
-            <div className="w-12 h-12 bg-indigo-600/20 text-indigo-400 rounded-full flex items-center justify-center">
+            <div className="w-11 h-11 bg-emerald-500/15 text-emerald-400 rounded-full flex items-center justify-center">
               <UploadCloud className="w-6 h-6" />
             </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-200">
-                Unggah/Pilih Berkas Video untuk Dihapus SynthID, C2PA, Google/Veo Handler &amp; SEI Type 6 (Lolos Shopee &amp; TikTok)
+            <div className="space-y-1">
+              <p className="text-xs sm:text-sm font-semibold text-slate-200">
+                {currentFile ? currentFile.name : 'Pilih atau Tarik Berkas Video ke Sini'}
               </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Mendukung MP4, MOV, WebM, MKV, AVI — Status Memori: <span className="text-indigo-400 font-semibold">{fileStatus.text}</span>
+              <p className="text-[11px] text-slate-400">
+                MP4, MOV, WebM, MKV — {currentFile ? `${(currentFile.size / (1024 * 1024)).toFixed(2)} MB • ` : ''}
+                <span className="text-emerald-400 font-semibold">{fileStatus.text}</span>
               </p>
             </div>
+
+            {currentFile && uploadStatus === 'uploading' && (
+              <div className="w-full max-w-md bg-slate-900 border border-cyan-500/30 rounded-lg p-2.5 space-y-1.5 text-left" onClick={(e) => e.stopPropagation()}>
+                <div className="flex justify-between text-[10px] font-mono text-cyan-300">
+                  <span>Upload Server ({uploadChunkInfo?.current ?? 1}/{uploadChunkInfo?.total ?? 1})</span>
+                  <span className="font-bold tabular-nums">{uploadPercent}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all" style={{ width: `${uploadPercent}%` }} />
+                </div>
+                <div className="text-[10px] font-mono text-slate-400 flex justify-between">
+                  <span>{(uploadedBytes / (1024 * 1024)).toFixed(2)} / {(currentFile.size / (1024 * 1024)).toFixed(2)} MB</span>
+                  {uploadError && <span className="text-amber-300">{uploadError}</span>}
+                </div>
+              </div>
+            )}
+
+            {currentFile && uploadStatus === 'error' && (
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    const upId = await uploadVideoToServer(currentFile, serverUploadId || undefined);
+                    setFileStatus({ text: 'Siap Diproses', color: 'emerald' });
+                    void runExternalProbe({ uploadId: upId, filename: currentFile.name }, 'before');
+                  } catch {}
+                }}
+                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center gap-1.5 cursor-pointer"
+              >
+                <WifiOff className="w-3.5 h-3.5" />
+                <span>Lanjutkan Upload Tertunda</span>
+              </button>
+            )}
+
             <input
               ref={fileInputRef}
               type="file"
@@ -2110,287 +1672,60 @@ export const MetaCleanerPro: React.FC = () => {
             />
           </div>
 
-          <div className="w-full md:w-2/5 flex flex-col gap-3">
-            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-xs space-y-2.5">
-              <div className="flex justify-between font-bold text-slate-300">
-                <span className="text-slate-500">Berkas:</span>
-                <span className="text-indigo-400 truncate max-w-[180px]">
-                  {currentFile ? currentFile.name : 'Belum Ada Berkas'}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-400">
-                <span className="text-slate-500">Ukuran Input:</span>
-                <span className="text-slate-200">
-                  {currentFile ? `${(currentFile.size / (1024 * 1024)).toFixed(2)} MB` : '-'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-slate-400">
-                <span className="text-slate-500">Status Upload Server:</span>
-                <span
-                  className={`font-mono text-[11px] font-bold ${
-                    uploadStatus === 'uploaded'
-                      ? 'text-emerald-400'
-                      : uploadStatus === 'uploading'
-                        ? 'text-cyan-300'
-                        : uploadStatus === 'error'
-                          ? 'text-rose-400'
-                          : isServerCleanedUp
-                            ? 'text-amber-300'
-                            : 'text-slate-400'
-                  }`}
+          {/* 2 COMPACT AIO CONTROLS + 1-CLICK CTA */}
+          <div className="lg:col-span-5 flex flex-col justify-between gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+            <div className="space-y-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-400 font-semibold">Profil Kamera OEM</span>
+                <select
+                  value={cameraProfile}
+                  onChange={(e) => setCameraProfile(e.target.value as any)}
+                  className="bg-slate-900 border border-slate-700 text-cyan-300 text-[11px] font-bold rounded-lg px-2.5 py-1.5 outline-none focus:border-cyan-500 cursor-pointer"
                 >
-                  {uploadStatus === 'uploaded'
-                    ? '✓ Tersimpan di Server'
-                    : uploadStatus === 'uploading'
-                      ? `Mengunggah ${uploadPercent}% (${uploadChunkInfo?.current ?? 0}/${uploadChunkInfo?.total ?? 1})`
-                      : uploadStatus === 'error'
-                        ? 'Upload Tertunda (Bisa Dilanjutkan)'
-                        : isServerCleanedUp
-                          ? 'Dibersihkan (Auto-Clean 5m)'
-                          : 'Menunggu Berkas'}
-                </span>
+                  <option value="samsung">Samsung Galaxy S24 Ultra</option>
+                  <option value="apple">Apple iPhone 15 Pro</option>
+                  <option value="xiaomi">Xiaomi 14 Ultra</option>
+                  <option value="neutral">Netral Bitexact Clean</option>
+                </select>
               </div>
 
-              {currentFile && uploadStatus === 'uploading' && (
-                <div className="bg-slate-900/90 border border-cyan-500/30 rounded-lg p-2.5 space-y-1.5">
-                  <div className="flex justify-between text-[10px] font-mono text-cyan-300">
-                    <span>
-                      Mengunggah ke Server (Bagian {uploadChunkInfo?.current ?? 1}/{uploadChunkInfo?.total ?? 1})
-                    </span>
-                    <span className="font-bold tabular-nums">{uploadPercent}%</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                    <div
-                      className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-200"
-                      style={{ width: `${Math.min(100, Math.max(0, uploadPercent))}%` }}
-                    />
-                  </div>
-                  <div className="text-[10px] font-mono text-slate-400 flex justify-between">
-                    <span>
-                      {(uploadedBytes / (1024 * 1024)).toFixed(2)} / {(currentFile.size / (1024 * 1024)).toFixed(2)} MB
-                    </span>
-                    <span>Anti-Putus • Auto-Retry Chunk</span>
-                  </div>
-                  {uploadError && (
-                    <div className="text-[10px] font-mono text-amber-300 flex items-center gap-1">
-                      <WifiOff className="w-3 h-3 shrink-0" />
-                      <span>{uploadError}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {currentFile && uploadStatus === 'error' && (
-                <div className="bg-rose-950/30 border border-rose-500/40 rounded-lg p-2.5 space-y-2">
-                  <div className="text-[10px] font-mono text-rose-300 flex items-start gap-1.5">
-                    <WifiOff className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>{uploadError || 'Upload terhenti karena koneksi internet tidak stabil.'}</span>
-                  </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-400 font-semibold">Resolusi Output</span>
+                <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg p-0.5">
                   <button
                     type="button"
-                    onClick={async () => {
-                      try {
-                        const upId = await uploadVideoToServer(currentFile, serverUploadId || undefined);
-                        setFileStatus({ text: 'Tersimpan di Server', color: 'emerald' });
-                        void runExternalProbe({ uploadId: upId, filename: currentFile.name }, 'before');
-                      } catch {}
-                    }}
-                    className="w-full py-1.5 px-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  >
-                    <UploadCloud className="w-3.5 h-3.5" />
-                    <span>Lanjutkan Upload ke Server (Dari Bagian Terakhir)</span>
-                  </button>
-                </div>
-              )}
-              <div className="pt-2 border-t border-slate-800/80 space-y-2">
-                <div className="flex justify-between items-center gap-2">
-                  <span className="text-slate-300 font-bold text-[11px]">Mode FFmpeg Re-Encode &amp; Transmux:</span>
-                  <select
-                    value={processingMode}
-                    onChange={(e) => setProcessingMode(e.target.value as 'all_in_one' | 'safe_mode' | 'remux_only')}
-                    className="bg-slate-900 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-emerald-400 cursor-pointer max-w-[230px]"
-                  >
-                    <option value="all_in_one">Re-Encode Penuh + Aggressive Transmux</option>
-                    <option value="safe_mode">Safe CFR Re-Encode + Transmux</option>
-                    <option value="remux_only">Transmuxing Kontainer Agresif (Purge Layer)</option>
-                  </select>
-                </div>
-
-                {processingMode === 'remux_only' && (
-                  <div className="flex justify-between items-center gap-2 bg-slate-900/90 border border-cyan-500/30 rounded-lg px-2.5 py-1.5">
-                    <span className="text-cyan-200 font-bold text-[10px]">
-                      Re-encode H.264 IDR/B-Frame saat Transmux:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setForceKeyframeReencode(!forceKeyframeReencode)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
-                        forceKeyframeReencode
-                          ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                          : 'bg-slate-800 text-slate-300 border border-slate-700'
-                      }`}
-                    >
-                      {forceKeyframeReencode ? 'AKTIF (Reset GOP)' : 'STREAM COPY MURNI'}
-                    </button>
-                  </div>
-                )}
-
-                <div className="space-y-1.5 text-[10px] font-mono">
-                  <div className="flex items-center gap-2 text-cyan-300 bg-cyan-950/25 border border-cyan-900/40 rounded-lg px-2.5 py-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-                    <span>
-                      {processingMode === 'remux_only'
-                        ? forceKeyframeReencode
-                          ? '1. Pass 1 Re-Encode H.264 Closed-GOP (crf/maxrate adaptif) tanpa filter visual berat'
-                          : '1. Direct Stream Copy (-c copy) tanpa re-encode piksel (Kecepatan Maksimal)'
-                        : processingMode === 'safe_mode'
-                          ? '1. Safe 30fps CFR Re-Encode (tanpa potong durasi) + Warp & CMOS Grain'
-                          : '1. Zero-Pulldown 30fps Repair (0% Duplikat) + Per-Job Organic Warp & ISP CAS'}
-                    </span>
-                  </div>
-                  {processingMode !== 'remux_only' && (
-                    <div className="flex items-center gap-2 text-emerald-300 bg-emerald-950/25 border border-emerald-900/40 rounded-lg px-2.5 py-1.5">
-                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-                      <span>2. Stereo Room Reflection + 21kHz Thermal Air (AAC 192k Anti-TTS)</span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2 text-indigo-300 bg-indigo-950/25 border border-indigo-900/40 rounded-lg px-2.5 py-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
-                    <span>
-                      {processingMode === 'remux_only' ? '2.' : '3.'} Aggressive Transmux (-map 0:V:0 -dn -sn -map_metadata -1) + Eksisi udta/meta/uuid/c2pa/SEI
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-slate-800/80 space-y-2">
-                <div className="flex justify-between items-center gap-2">
-                  <span className="text-slate-300 font-bold flex items-center gap-1 text-[11px]">
-                    <span>Hardware Camera Profile:</span>
-                  </span>
-                  <select
-                    value={cameraProfile}
-                    onChange={(e) => setCameraProfile(e.target.value as any)}
-                    className="bg-slate-900 border border-slate-700 text-cyan-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-cyan-500 cursor-pointer"
-                  >
-                    <option value="samsung">Samsung Galaxy S24 Ultra (SM-S928B)</option>
-                    <option value="apple">Apple iPhone 15 Pro (Core Media iOS)</option>
-                    <option value="xiaomi">Xiaomi 14 Ultra (HyperOS / Leica)</option>
-                    <option value="neutral">Netral / Bitexact Clean (Standar)</option>
-                  </select>
-                </div>
-                <div className="flex justify-between items-center gap-2">
-                  <span className="text-slate-300 font-bold text-[11px]">
-                    Target Resolusi Kamera{processingMode === 'remux_only' ? ' (Khusus Re-Encode)' : ''}:
-                  </span>
-                  <div
-                    className={`flex items-center gap-1 bg-slate-900 border border-slate-700 rounded p-0.5 ${
-                      processingMode === 'remux_only' ? 'opacity-50 pointer-events-none' : ''
+                    onClick={() => setUpscale1080p(true)}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition cursor-pointer ${
+                      upscale1080p ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40' : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    <button
-                      type="button"
-                      disabled={processingMode === 'remux_only'}
-                      onClick={() => setUpscale1080p(true)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer whitespace-nowrap ${
-                        upscale1080p
-                          ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      1080p Full-HD
-                    </button>
-                    <button
-                      type="button"
-                      disabled={processingMode === 'remux_only'}
-                      onClick={() => setUpscale1080p(false)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer whitespace-nowrap ${
-                        !upscale1080p
-                          ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/40'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      Resolusi Asli
-                    </button>
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-400 leading-snug">
-                  Menstandarkan handler kamera native (<code>VideoHandle</code> / <code>Core Media Video</code>) tanpa menyisipkan box <code>mdta</code> sintetik, menstandarkan 1080p BT.709 saat re-encode, &amp; mengompaksi atom <code>free</code>.
-                </p>
-              </div>
-
-              <div className="pt-2 border-t border-slate-800/80 space-y-2">
-                <div className="flex justify-between items-center gap-2">
-                  <span className="text-slate-300 font-bold text-[11px]">Deep Scan AI Bitstream:</span>
+                    1080p Full-HD
+                  </button>
                   <button
                     type="button"
-                    onClick={() => setDeepScanEnabled(!deepScanEnabled)}
-                    className={`px-2.5 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
-                      deepScanEnabled
-                        ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
-                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    onClick={() => setUpscale1080p(false)}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition cursor-pointer ${
+                      !upscale1080p ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/40' : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {deepScanEnabled ? 'AKTIF (Byte-Level Scan)' : 'NONAKTIF'}
+                    Resolusi Asli
                   </button>
                 </div>
-                <div className="flex justify-between items-center gap-2">
-                  <span className="text-slate-300 font-bold text-[11px]">
-                    Humanization Preset{processingMode === 'remux_only' ? ' (Khusus Re-Encode)' : ''}:
-                  </span>
-                  <select
-                    value={humanizationPreset}
-                    disabled={processingMode === 'remux_only'}
-                    onChange={(e) => setHumanizationPreset(e.target.value as any)}
-                    className={`bg-slate-900 border border-slate-700 text-indigo-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-indigo-500 ${
-                      processingMode === 'remux_only' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                    }`}
-                  >
-                    <option value="full_human">Complete Organic Suite (Jitter + Warmth + Grain)</option>
-                    <option value="handheld">Handheld Cam Jitter (Micro-Wobble)</option>
-                    <option value="warmth">Natural Skin Tone Warmth & Color</option>
-                    <option value="grain">Organic CMOS Sensor Grain</option>
-                    <option value="none">Standar Organik / Neutral</option>
-                  </select>
-                </div>
-                <div className="flex justify-between items-center gap-2">
-                  <span className="text-slate-300 font-bold text-[11px]">SynthID Bitstream Scrambler:</span>
-                  <select
-                    value={synthidScrambleMode}
-                    onChange={(e) => setSynthidScrambleMode(e.target.value as SynthIdScrambleMode)}
-                    className="bg-slate-900 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold rounded px-2 py-1 outline-none focus:border-emerald-400 cursor-pointer"
-                  >
-                    <option value="aggressive">Aggressive Deep Scramble (CSPRNG + Chroma Drift)</option>
-                    <option value="balanced">Balanced Organic Scramble (NAL + Container)</option>
-                    <option value="off">Standard Strip (Zero-SEI Only)</option>
-                  </select>
-                </div>
-                {cloudProgress?.scrambleStats && (
-                  <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-[10px] font-mono text-emerald-300">
-                    <span>SCRAMBLED (SERVER CSPRNG)</span>
-                    <span>•</span>
-                    <span>
-                      {cloudProgress.scrambleStats.seiPayloadsScrambled}/{cloudProgress.scrambleStats.seiUnitsDetected} SEI
-                    </span>
-                    <span>•</span>
-                    <span>{cloudProgress.scrambleStats.watermarkAtomsScrambled} Atom</span>
-                    <span>•</span>
-                    <span>{cloudProgress.scrambleStats.totalBytesScrambled} B acak</span>
-                  </div>
-                )}
-                <p className="text-[10px] text-slate-400 leading-snug">
-                  Byte-level signature scan, CSPRNG watermark &amp; SEI payload scrambling di server + Chroma-Luma subcarrier desync untuk menetralisir SynthID AI-Marker.
-                </p>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-emerald-950/20 border border-emerald-900/40 text-[10px] font-mono text-emerald-300/90 leading-relaxed">
+                Otomatis Aktif: Zero-SEI/C2PA/UUID • SynthID CSPRNG Scramble + Hue Drift • 30fps Shutter Blend + CMOS Grain • Dual-Mic Room Air Audio (192k AAC).
               </div>
             </div>
 
             <button
+              type="button"
               onClick={() => executeAutoSanitization()}
               disabled={!currentFile || isProcessing || uploadStatus === 'uploading'}
               className={
                 !currentFile || isProcessing || uploadStatus === 'uploading'
-                  ? 'w-full py-3.5 bg-slate-800 text-slate-500 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-not-allowed'
-                  : 'w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-900/30 transition flex items-center justify-center gap-2 cursor-pointer'
+                  ? 'w-full py-3 bg-slate-800 text-slate-500 font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-not-allowed'
+                  : 'w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-900/30 transition flex items-center justify-center gap-2 cursor-pointer'
               }
             >
               {isProcessing ? (
@@ -2401,56 +1736,37 @@ export const MetaCleanerPro: React.FC = () => {
               ) : uploadStatus === 'uploading' ? (
                 <>
                   <UploadCloud className="w-4 h-4 animate-pulse" />
-                  <span>Mengunggah Video ke Server ({uploadPercent}%)...</span>
-                </>
-              ) : uploadStatus === 'uploaded' ? (
-                <>
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>Proses MetaCleaner di Server (Non-Streaming)</span>
+                  <span>Mengunggah ({uploadPercent}%)...</span>
                 </>
               ) : (
                 <>
                   <ShieldCheck className="w-4 h-4" />
-                  <span>Upload &amp; Proses MetaCleaner di Server</span>
+                  <span>Bersihkan Video (All-in-One)</span>
                 </>
               )}
             </button>
           </div>
         </div>
 
-        {/* SERVER UPLOAD-FIRST NON-STREAMING FFMPEG PROGRESS PANEL */}
+        {/* LIVE CLOUD PROGRESS */}
         {(isProcessing || cloudProgress) && cloudProgress && (
-          <div className={`bg-slate-900 border rounded-2xl p-4 sm:p-5 shadow-xl space-y-3 ${networkWarning ? 'border-amber-500/50' : 'border-indigo-500/30'}`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Cpu className={`w-4 h-4 ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : 'text-indigo-400 animate-pulse'}`} />
-                <span className="text-xs font-extrabold uppercase tracking-wider text-white">
-                  Proses Server MetaCleaner (Upload-First • Non-Streaming)
-                </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-indigo-300 border border-slate-700">
-                  {cloudProgress.stage}
-                </span>
-                {autoCleanExpiresAt && !isServerCleanedUp && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1 tabular-nums">
-                    <Clock className="w-3 h-3" />
-                    <span>Auto-Clean {formatCountdown(autoCleanRemainingSec)}</span>
-                  </span>
-                )}
-                {isServerCleanedUp && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    ✓ File Server Dibersihkan (5m)
-                  </span>
-                )}
+          <div className={`bg-slate-900 border rounded-2xl p-4 space-y-2.5 ${networkWarning ? 'border-amber-500/50' : 'border-indigo-500/30'}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <Cpu className={`w-4 h-4 ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : 'text-cyan-400 animate-pulse'}`} />
+                <span className="font-bold text-white">{cloudProgress.message}</span>
               </div>
-              <div className="flex items-center gap-3 text-[11px] font-mono">
-                <span className="text-slate-400">{cloudProgress.engine}</span>
-                <span className={`font-bold tabular-nums ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : 'text-cyan-400'}`}>
+              <div className="flex items-center gap-3 font-mono text-[11px] text-slate-400">
+                {cloudProgress.totalFrames > 0 && (
+                  <span>Frame {cloudProgress.frame}/{cloudProgress.totalFrames} • {cloudProgress.speed || '0x'}</span>
+                )}
+                <span className={`font-extrabold tabular-nums ${cloudProgress.stage === 'failed' ? 'text-rose-400' : cloudProgress.stage === 'completed' ? 'text-emerald-400' : 'text-cyan-400'}`}>
                   {displayedPercent}%
                 </span>
               </div>
             </div>
 
-            <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+            <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
               <div
                 className={`h-full transition-all duration-150 ${
                   cloudProgress.stage === 'failed'
@@ -2463,407 +1779,269 @@ export const MetaCleanerPro: React.FC = () => {
               />
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-300">
-              <span className="whitespace-normal break-words max-w-full sm:max-w-[65%]">{cloudProgress.message}</span>
-              <div className="flex items-center gap-3 text-slate-400">
-                <span>
-                  Frame: <strong className="text-slate-100">{cloudProgress.frame}</strong>
-                  {cloudProgress.totalFrames > 0 ? `/${cloudProgress.totalFrames}` : ''}
-                </span>
-                <span>
-                  FPS: <strong className="text-slate-100">{cloudProgress.fps || 0}</strong>
-                </span>
-                <span>
-                  Speed: <strong className="text-cyan-300">{cloudProgress.speed || '0x'}</strong>
-                </span>
-              </div>
-            </div>
-
             {networkWarning && (
-              <div className="pt-2 border-t border-slate-800/80 flex items-center gap-2 text-[11px] font-mono text-amber-300">
+              <div className="flex items-center gap-1.5 text-[11px] font-mono text-amber-300">
                 <WifiOff className="w-3.5 h-3.5 shrink-0" />
                 <span>{networkWarning}</span>
               </div>
             )}
 
             {cloudProgress.stage === 'failed' && currentFile && (
-              <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5">
-                <span className="text-[11px] font-mono text-rose-300">
-                  Proses gagal dijalankan di server — video input tetap tersimpan hingga auto-clean.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => executeAutoSanitization()}
-                  className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-extrabold flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-amber-900/30"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Coba Proses Ulang di Server</span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => executeAutoSanitization()}
+                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-extrabold flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Coba Proses Ulang</span>
+              </button>
             )}
           </div>
         )}
 
-        {/* BEFORE VS AFTER METADATA INSPECTOR */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* PANEL BEFORE */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col space-y-3">
-            <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
-              <h3 className="text-xs font-extrabold text-rose-400 uppercase tracking-wider flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 shrink-0" />
-                <span>1. Indikator SEBELUM (Input File)</span>
-              </h3>
-              <span
-                className={
-                  beforeState.badgeClean === null
-                    ? 'px-2 py-0.5 bg-slate-800 text-slate-500 text-[10px] font-extrabold rounded-full uppercase'
-                    : beforeState.badgeClean
-                      ? 'px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-extrabold rounded-full uppercase'
-                      : 'px-2 py-0.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[10px] font-extrabold rounded-full uppercase'
-                }
-              >
-                {beforeState.badgeText}
-              </span>
-            </div>
-
-            <div className="space-y-2.5 text-xs flex-1">
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">SynthID Watermark (Piksel/Audio):</span>
-                  <span className={`font-mono ${getStatusColor(beforeState.synthIdClean)}`}>
-                    {beforeState.synthId}
-                  </span>
+        {/* UNIFIED BEFORE VS AFTER RESULT CARDS */}
+        {(currentFile || afterProbe || processedBlob || (lastJobId && !isServerCleanedUp)) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* BEFORE CARD */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 flex flex-col">
+              <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-800">
+                <div className="flex items-center gap-2 text-xs font-extrabold text-rose-400 uppercase tracking-wider">
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  <span>Sebelum (Input Asli)</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Manifes C2PA (JUMBF):</span>
-                  <span className={`font-mono ${getStatusColor(beforeState.c2paClean)}`}>
-                    {beforeState.c2pa}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">UUID Claim Box:</span>
-                  <span className={`font-mono ${getStatusColor(beforeState.uuidClean)}`}>
-                    {beforeState.uuid}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Software / Vendor Stamp:</span>
-                  <span className={`font-mono ${getStatusColor(beforeState.encoderClean)}`}>
-                    {beforeState.encoder}
+                <div className="flex items-center gap-1.5">
+                  {beforeHumanReport && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-200 tabular-nums">
+                      Skor {beforeHumanReport.humanizationScore}%
+                    </span>
+                  )}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                    beforeState.badgeClean === null
+                      ? 'bg-slate-800 text-slate-400'
+                      : beforeState.badgeClean
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-rose-500/15 text-rose-400'
+                  }`}>
+                    {isProbingBefore ? 'MEMINDAI...' : beforeState.badgeText}
                   </span>
                 </div>
               </div>
 
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Container Layer / Format:</span>
-                  <span className={`font-mono ${getStatusColor(beforeState.containerClean)}`}>
-                    {beforeState.containerType}
+              <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 text-[11px] font-mono space-y-1.5 flex-1">
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">SEI / C2PA / UUID:</span>
+                  <span className={beforeState.seiClean && beforeState.c2paClean && beforeState.uuidClean ? 'text-emerald-400' : 'text-rose-400 font-bold'}>
+                    {beforeProbe
+                      ? `${beforeProbe.seiReport.totalSeiUnits} SEI • ${beforeProbe.jumbfManifests.length} C2PA • ${beforeProbe.uuidClaims.length} UUID`
+                      : `${beforeState.seiCount} SEI`}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Header Validation (Rule V3):</span>
-                  <span className={`font-mono text-[11px] ${getStatusColor(beforeState.falsePositiveClean)}`}>
-                    {beforeState.falsePositiveCheck}
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Vendor / Container:</span>
+                  <span className="text-slate-200 truncate max-w-[200px]">{beforeState.encoder}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Visual &amp; FPS:</span>
+                  <span className={beforeProbe?.audioVisualForensics.visual.visualClean ? 'text-emerald-400' : 'text-amber-300'}>
+                    {beforeProbe
+                      ? `${beforeProbe.audioVisualForensics.visual.width}x${beforeProbe.audioVisualForensics.visual.height} • ${beforeProbe.audioVisualForensics.visual.fps}fps (${beforeProbe.audioVisualForensics.visual.visualClean ? 'Organik' : 'AI Signal'})`
+                      : beforeState.containerType}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Bitstream / SEI Data:</span>
-                  <span className={`font-mono ${getStatusColor(beforeState.seiClean)}`}>
-                    {beforeState.sei}
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Audio &amp; Spektrum:</span>
+                  <span className={beforeProbe?.audioVisualForensics.audio.audioClean ? 'text-emerald-400' : 'text-amber-300'}>
+                    {beforeProbe
+                      ? beforeProbe.audioVisualForensics.audio.hasAudio
+                        ? `Air ${beforeProbe.audioVisualForensics.audio.highBand17kDb}dB • Gap ${beforeProbe.audioVisualForensics.audio.stereoSideGapDb}dB (${beforeProbe.audioVisualForensics.audio.audioClean ? 'Organik' : 'AI Audio'})`
+                        : 'Tanpa Audio'
+                      : 'Menunggu Probe'}
                   </span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-500">32-Byte Header Hex:</span>
-                  <span className="font-mono text-[10px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded truncate max-w-[180px]">
-                    {beforeState.hex}
+                <div className="flex justify-between gap-2 pt-1 border-t border-slate-800/70">
+                  <span className="text-slate-500">Status Detektor:</span>
+                  <span className={beforeState.riskClean ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold truncate max-w-[210px]'}>
+                    {beforeState.riskText}
                   </span>
                 </div>
-              </div>
-
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
-                <span className="text-slate-500">Status Platform AI Detector:</span>
-                <span className={`font-bold text-[11px] ${getStatusColor(beforeState.riskClean)}`}>
-                  {beforeState.riskText}
-                </span>
               </div>
 
               {previewUrlBefore && (
-                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-1.5">
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    Preview Video Input:
-                  </div>
-                  <video
-                    src={previewUrlBefore}
-                    controls
-                    playsInline
-                    className="w-full max-h-48 rounded-lg bg-black object-contain"
-                  />
-                </div>
+                <video src={previewUrlBefore} controls playsInline className="w-full max-h-48 rounded-xl bg-black object-contain border border-slate-800" />
               )}
             </div>
-          </div>
 
-          {/* PANEL AFTER */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col space-y-3">
-            <div className="flex items-center justify-between pb-2.5 border-b border-slate-800">
-              <h3 className="text-xs font-extrabold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 shrink-0" />
-                <span>2. Indikator SESUDAH (Hasil Sanitasi &amp; Remux)</span>
-              </h3>
-              <span
-                className={
-                  afterState.badgeClean === null
-                    ? 'px-2 py-0.5 bg-slate-800 text-slate-500 text-[10px] font-extrabold rounded-full uppercase'
-                    : afterState.badgeClean
-                      ? 'px-2 py-0.5 bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-extrabold rounded-full uppercase'
-                      : 'px-2 py-0.5 bg-rose-500/20 border border-rose-500/30 text-rose-400 text-[10px] font-extrabold rounded-full uppercase'
-                }
-              >
-                {afterState.badgeText}
-              </span>
-            </div>
-
-            <div className="space-y-2.5 text-xs flex-1">
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">SynthID Watermark (Piksel/Audio):</span>
-                  <span className={`font-mono ${getStatusColor(afterState.synthIdClean)}`}>
-                    {afterState.synthId}
-                  </span>
+            {/* AFTER CARD */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 flex flex-col">
+              <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-800">
+                <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-400 uppercase tracking-wider">
+                  <ShieldCheck className="w-4 h-4 shrink-0" />
+                  <span>Sesudah (Output AIO)</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Manifes C2PA (JUMBF):</span>
-                  <span className={`font-mono ${getStatusColor(afterState.c2paClean)}`}>
-                    {afterState.c2pa}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">UUID Claim Box:</span>
-                  <span className={`font-mono ${getStatusColor(afterState.uuidClean)}`}>
-                    {afterState.uuid}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Software / Vendor Stamp:</span>
-                  <span className={`font-mono ${getStatusColor(afterState.encoderClean)}`}>
-                    {afterState.encoder}
+                <div className="flex items-center gap-1.5">
+                  {afterHumanReport && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 tabular-nums">
+                      {beforeHumanReport ? `${beforeHumanReport.humanizationScore}% → ` : ''}
+                      {afterHumanReport.humanizationScore}%
+                    </span>
+                  )}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                    afterState.badgeClean === null
+                      ? 'bg-slate-800 text-slate-400'
+                      : afterState.badgeClean
+                        ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-300'
+                        : 'bg-rose-500/20 text-rose-400'
+                  }`}>
+                    {isProbingAfter ? 'VERIFIKASI...' : afterState.badgeText}
                   </span>
                 </div>
               </div>
 
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Container Layer / Format:</span>
-                  <span className={`font-mono ${getStatusColor(afterState.containerClean)}`}>
-                    {afterState.containerType}
+              <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 text-[11px] font-mono space-y-1.5 flex-1">
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">SEI / C2PA / UUID:</span>
+                  <span className={afterState.seiClean && afterState.c2paClean && afterState.uuidClean ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                    {afterProbe
+                      ? `${afterProbe.seiReport.totalSeiUnits} SEI • ${afterProbe.jumbfManifests.length} C2PA • ${afterProbe.uuidClaims.length} UUID`
+                      : afterState.sei}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Header Validation (Rule V3):</span>
-                  <span className={`font-mono text-[11px] ${getStatusColor(afterState.falsePositiveClean)}`}>
-                    {afterState.falsePositiveCheck}
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Kamera OEM:</span>
+                  <span className="text-slate-200 truncate max-w-[200px]">{afterState.encoder}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Visual &amp; FPS:</span>
+                  <span className={afterProbe?.audioVisualForensics.visual.visualClean ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                    {afterProbe
+                      ? `${afterProbe.audioVisualForensics.visual.width}x${afterProbe.audioVisualForensics.visual.height} • ${afterProbe.audioVisualForensics.visual.fps}fps (${afterProbe.audioVisualForensics.visual.visualClean ? 'Organik' : 'Perlu Cek'})`
+                      : 'Menunggu proses'}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Bitstream / SEI Data:</span>
-                  <span className={`font-mono ${getStatusColor(afterState.seiClean)}`}>
-                    {afterState.sei}
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Audio &amp; Spektrum:</span>
+                  <span className={afterProbe?.audioVisualForensics.audio.audioClean ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                    {afterProbe
+                      ? afterProbe.audioVisualForensics.audio.hasAudio
+                        ? `Air ${afterProbe.audioVisualForensics.audio.highBand17kDb}dB • Gap ${afterProbe.audioVisualForensics.audio.stereoSideGapDb}dB (${afterProbe.audioVisualForensics.audio.audioClean ? 'Organik' : 'Perlu Cek'})`
+                        : 'Tanpa Audio'
+                      : 'Menunggu proses'}
                   </span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-500">32-Byte Header Hex:</span>
-                  <span className="font-mono text-[10px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded truncate max-w-[180px]">
-                    {afterState.hex}
+                <div className="flex justify-between gap-2 pt-1 border-t border-slate-800/70">
+                  <span className="text-slate-500">Ukuran &amp; Status:</span>
+                  <span className={afterState.riskClean ? 'text-emerald-400 font-bold' : 'text-slate-300'}>
+                    {outBytes > 0 && currentFile?.size
+                      ? `${(currentFile.size / (1024 * 1024)).toFixed(2)} MB → ${(outBytes / (1024 * 1024)).toFixed(2)} MB • ${afterProbe?.audioVisualForensics.aiVerdict || 'SIAP'}`
+                      : afterState.riskText}
                   </span>
                 </div>
-              </div>
-
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
-                <span className="text-slate-500">Status Platform AI Detector:</span>
-                <span className={`font-bold text-[11px] ${getStatusColor(afterState.riskClean)}`}>
-                  {afterState.riskText}
-                </span>
               </div>
 
               {previewUrlAfter && (!isServerCleanedUp || previewUrlAfter.startsWith('blob:')) && (
-                <div className="bg-slate-950 p-2.5 rounded-xl border border-emerald-800/40 space-y-1.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
-                    <span>Preview Video Hasil Remux (Verifikasi Playback):</span>
-                    <span className="tabular-nums">
-                      {(() => {
-                        const outBytes = processedBlob?.size ?? cloudProgress?.outputSizeBytes ?? 0;
-                        if (outBytes > 0 && currentFile?.size) {
-                          const deltaPct = ((outBytes - currentFile.size) / currentFile.size) * 100;
-                          const sign = deltaPct >= 0 ? '+' : '';
-                          return `✓ ${(currentFile.size / (1024 * 1024)).toFixed(2)} MB → ${(outBytes / (1024 * 1024)).toFixed(2)} MB (${sign}${deltaPct.toFixed(0)}%) • Playable`;
-                        }
-                        if (outBytes > 0) {
-                          return `✓ ${(outBytes / (1024 * 1024)).toFixed(2)} MB • 100% Playable`;
-                        }
-                        return '✓ 100% Playable';
-                      })()}
-                    </span>
-                  </div>
-                  <video
-                    src={previewUrlAfter}
-                    controls
-                    playsInline
-                    className="w-full max-h-48 rounded-lg bg-black object-contain"
-                  />
+                <video src={previewUrlAfter} controls playsInline className="w-full max-h-48 rounded-xl bg-black object-contain border border-emerald-800/40" />
+              )}
+
+              {(lastJobId || isServerCleanedUp) && (
+                <div className={`px-3 py-2 rounded-xl border text-[11px] font-mono flex flex-wrap items-center justify-between gap-2 ${
+                  isServerCleanedUp ? 'bg-emerald-950/25 border-emerald-500/30 text-emerald-300' : 'bg-amber-950/25 border-amber-500/35 text-amber-200'
+                }`}>
+                  {!isServerCleanedUp && autoCleanExpiresAt ? (
+                    <>
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-amber-400" />
+                        Auto-Clean <strong className="tabular-nums">{formatCountdown(autoCleanRemainingSec)}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isCleaningServerNow}
+                        onClick={() => void cleanupServerFilesNow()}
+                        className="px-2 py-1 rounded-md bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>{isCleaningServerNow ? 'Menghapus...' : 'Hapus Server'}</span>
+                      </button>
+                    </>
+                  ) : (
+                    <span>✓ File server telah dibersihkan (Auto-Clean 5m).</span>
+                  )}
                 </div>
               )}
-            </div>
 
-            {(lastJobId || isServerCleanedUp) && (
-              <div
-                className={`p-3 rounded-xl border text-[11px] font-mono space-y-2 ${
-                  isServerCleanedUp
-                    ? 'bg-emerald-950/25 border-emerald-500/30 text-emerald-300'
-                    : 'bg-amber-950/25 border-amber-500/35 text-amber-200'
-                }`}
-              >
-                {!isServerCleanedUp && autoCleanExpiresAt ? (
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span>
-                        Auto-Clean Server dalam{' '}
-                        <strong className="text-amber-300 tabular-nums">
-                          {formatCountdown(autoCleanRemainingSec)}
-                        </strong>{' '}
-                        (input &amp; output dihapus otomatis)
-                      </span>
-                    </div>
+              <div className="space-y-2">
+                {serverDownloadUrl && lastJobId && !isServerCleanedUp ? (
+                  <a
+                    href={serverDownloadUrl}
+                    download={getOutputFileName()}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/40"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Unduh Video Bersih ({outBytes > 0 ? `${(outBytes / (1024 * 1024)).toFixed(2)} MB` : getOutputFileName()})</span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!processedBlob}
+                    onClick={downloadFromMemoryBlob}
+                    className={
+                      processedBlob
+                        ? 'w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer'
+                        : 'w-full py-2.5 bg-slate-800 text-slate-500 font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-not-allowed'
+                    }
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>{processedBlob ? `Unduh Video Bersih (${(processedBlob.size / (1024 * 1024)).toFixed(2)} MB)` : 'Menunggu Hasil Proses'}</span>
+                  </button>
+                )}
+
+                {processedBlob && (
+                  <div className="flex gap-2">
                     <button
                       type="button"
-                      disabled={isCleaningServerNow}
-                      onClick={() => void cleanupServerFilesNow()}
-                      className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 font-bold text-[10px] flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                      onClick={downloadFromMemoryBlob}
+                      className="flex-1 py-1.5 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] rounded-lg flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Trash2 className="w-3 h-3" />
-                      <span>{isCleaningServerNow ? 'Menghapus...' : 'Hapus File Server Sekarang'}</span>
+                      <Download className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Simpan Offline</span>
                     </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>
-                      ✓ Auto-Clean Selesai — File video input &amp; output di server sudah dihapus otomatis (batas 5 menit).
-                      {processedBlob ? ' Salinan offline di RAM browser masih dapat diunduh.' : ''}
-                    </span>
+                    {supportsNativeShare && (
+                      <button
+                        type="button"
+                        onClick={shareCleanFileMobile}
+                        className="flex-1 py-1.5 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 font-bold text-[11px] rounded-lg flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        <span>Bagikan (HP)</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-
-            <div className="pt-1 space-y-2">
-              {serverDownloadUrl && lastJobId && !isServerCleanedUp ? (
-                <a
-                  href={serverDownloadUrl}
-                  download={getOutputFileName()}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-900/40"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>
-                    Unduh Berkas Bersih ({processedBlob ? `${(processedBlob.size / (1024 * 1024)).toFixed(2)} MB` : getOutputFileName()})
-                  </span>
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  disabled={!processedBlob}
-                  onClick={downloadFromMemoryBlob}
-                  className={
-                    !processedBlob
-                      ? 'w-full py-2.5 bg-slate-800 text-slate-500 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-not-allowed'
-                      : 'w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-900/40'
-                  }
-                >
-                  <Download className="w-4 h-4" />
-                  <span>
-                    {processedBlob
-                      ? `Unduh Berkas Bersih (${(processedBlob.size / (1024 * 1024)).toFixed(2)} MB)`
-                      : isServerCleanedUp
-                        ? 'File Server Sudah Dihapus (Auto-Clean 5 Menit)'
-                        : 'Unduh Berkas Bersih (output_bersih.mp4)'}
-                  </span>
-                </button>
-              )}
-
-              {processedBlob && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={downloadFromMemoryBlob}
-                    className="flex-1 min-w-[140px] py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Unduh Offline (RAM)</span>
-                  </button>
-                  {supportsNativeShare && (
-                    <button
-                      type="button"
-                      onClick={shareCleanFileMobile}
-                      className="flex-1 min-w-[140px] py-2 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 font-bold text-[11px] rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Share2 className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Simpan / Bagikan (HP)</span>
-                    </button>
-                  )}
-                </div>
-              )}
             </div>
           </div>
-        </div>
-
-        {/* HIGH-FREQUENCY WATERMARK NOISE VISUALIZER (BEFORE VS AFTER) */}
-        {previewUrlBefore && (
-          <WatermarkNoiseVisualizer
-            previewUrlBefore={previewUrlBefore}
-            previewUrlAfter={
-              !isServerCleanedUp || previewUrlAfter?.startsWith('blob:') ? previewUrlAfter : null
-            }
-            beforeFileName={currentFile?.name}
-            afterFileName={
-              (processedBlob || (lastJobId && !isServerCleanedUp)) && currentFile
-                ? `${currentFile.name.replace(/\.[^/.]+$/, '')}_output_bersih.mp4`
-                : undefined
-            }
-          />
         )}
 
-        {/* EXTERNAL FFPROBE & BITSTREAM VALIDATION UTILITY (BEFORE VS AFTER) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 flex items-center justify-center">
-                <FileSearch className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-xs sm:text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2 flex-wrap">
-                  <span>Verifikasi Eksternal FFprobe &amp; Trace Bitstream (Sebelum vs Sesudah)</span>
-                  {afterProbe && (
-                    <span
-                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
-                        afterProbe.cleanliness.overallClean
-                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                          : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
-                      }`}
-                    >
-                      {afterProbe.cleanliness.overallClean
-                        ? '0% SEI • 0 UUID • 0 JUMBF VERIFIED'
-                        : 'TERDETEKSI RESIDU'}
-                    </span>
-                  )}
-                </h3>
-                <p className="text-[11px] text-slate-400">
-                  Probe langsung di server menggunakan <code>ffprobe</code> + <code>ffmpeg -bsf:v trace_headers</code> + ISO-BMFF atom scanner pada file asli dan file hasil sanitasi.
-                </p>
-              </div>
-            </div>
+        {/* COLLAPSIBLE FORENSIC AUDIT & LOG DRAWER (COLLAPSED BY DEFAULT) */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAuditDrawer((v) => !v)}
+              className="flex items-center gap-2 text-xs font-bold text-slate-200 hover:text-white cursor-pointer"
+            >
+              {showAuditDrawer ? <ChevronUp className="w-4 h-4 text-cyan-400" /> : <ChevronDown className="w-4 h-4 text-cyan-400" />}
+              <FileSearch className="w-4 h-4 text-cyan-400" />
+              <span>Audit Forensik &amp; Log</span>
+              {activeAuditProbe && (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                  {activeAuditProbe.cleanliness.overallClean
+                    ? '0 SEI • 0 C2PA • CLEAN'
+                    : `${activeAuditProbe.ffprobeDiagnostic?.aiTriggerChecklist.length ?? 0} Pemicu AI`}
+                </span>
+              )}
+            </button>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
               {currentFile && (
                 <button
                   type="button"
@@ -2876,882 +2054,259 @@ export const MetaCleanerPro: React.FC = () => {
                       'before'
                     )
                   }
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200 flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-slate-300 flex items-center gap-1 cursor-pointer disabled:opacity-40"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isProbingBefore ? 'animate-spin' : ''}`} />
-                  <span>Re-Probe Input</span>
+                  <RefreshCw className={`w-3 h-3 ${isProbingBefore ? 'animate-spin' : ''}`} />
+                  <span>Probe Input</span>
                 </button>
               )}
               {((lastJobId && !isServerCleanedUp) || processedBlob) && (
                 <button
                   type="button"
                   disabled={isProbingAfter}
-                  onClick={() => {
-                    const outName = getOutputFileName();
-                    if (lastJobId && !isServerCleanedUp) {
-                      void runExternalProbe({ jobId: lastJobId, filename: outName }, 'after');
-                    } else if (processedBlob) {
-                      void runExternalProbe({ blob: processedBlob, filename: outName }, 'after');
-                    }
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-[11px] font-bold text-emerald-300 flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                  onClick={() =>
+                    lastJobId && !isServerCleanedUp
+                      ? void runExternalProbe({ jobId: lastJobId, filename: getOutputFileName() }, 'after')
+                      : processedBlob && void runExternalProbe({ blob: processedBlob, filename: getOutputFileName() }, 'after')
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-[10px] font-bold text-emerald-300 flex items-center gap-1 cursor-pointer disabled:opacity-40"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isProbingAfter ? 'animate-spin' : ''}`} />
-                  <span>Re-Probe Output</span>
+                  <RefreshCw className={`w-3 h-3 ${isProbingAfter ? 'animate-spin' : ''}`} />
+                  <span>Probe Output</span>
                 </button>
               )}
-              {(beforeProbe || afterProbe) && (
-                <button
-                  type="button"
-                  onClick={() => setShowRawProbeJson((prev) => !prev)}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-[11px] font-bold text-indigo-300 flex items-center gap-1 transition cursor-pointer"
-                >
-                  {showRawProbeJson ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  <span>{showRawProbeJson ? 'Tutup JSON' : 'Raw JSON'}</span>
-                </button>
-              )}
+              <button
+                type="button"
+                disabled={isSweepingDormant}
+                onClick={() => void sweepDormantServerNow()}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] font-bold text-slate-300 flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                title="Bersihkan sisa file temporary dormant di server"
+              >
+                <Trash2 className={`w-3 h-3 text-amber-400 ${isSweepingDormant ? 'animate-pulse' : ''}`} />
+                <span>{isSweepingDormant ? 'Membersihkan...' : 'Bersihkan Server'}</span>
+              </button>
             </div>
           </div>
 
-          {(afterProbe || beforeProbe) && (() => {
-            const activeProbe = afterProbe || beforeProbe;
-            const humanizationReport = analyzeVideoHumanization(activeProbe);
-            const beforeReport = beforeProbe ? analyzeVideoHumanization(beforeProbe) : null;
-            const isEvaluatingAfter = Boolean(afterProbe);
-            return (
-              <div className={`bg-gradient-to-br rounded-2xl border p-5 space-y-4 shadow-xl mb-4 ${
-                humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC'
-                  ? 'from-slate-950 via-emerald-950/20 to-slate-950 border-emerald-500/35'
-                  : 'from-slate-950 via-indigo-950/20 to-slate-950 border-indigo-500/30'
-              }`}>
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-800 pb-3">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-12 h-12 rounded-xl border flex items-center justify-center font-extrabold text-lg tabular-nums ${
-                      humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC'
-                        ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-400'
-                        : 'bg-indigo-600/20 border-indigo-500/40 text-indigo-400'
-                    }`}>
-                      {humanizationReport.humanizationScore}%
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-extrabold text-slate-200 flex items-center gap-2 flex-wrap">
-                        <span>
-                          Humanization Analyzer &amp; Organic Score ({isEvaluatingAfter ? 'OUTPUT BERSIH' : 'INPUT ASLI'})
-                        </span>
-                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                          humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC'
-                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                            : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
-                        }`}>
-                          {humanizationReport.aiRiskLevel}
-                        </span>
-                        {isEvaluatingAfter && beforeReport && (
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-cyan-300 tabular-nums">
-                            {beforeReport.humanizationScore}% &rarr; {humanizationReport.humanizationScore}%
-                          </span>
-                        )}
-                      </h3>
-                      <p className="text-[11px] text-slate-400">
-                        {isEvaluatingAfter
-                          ? 'Skor humanisasi langsung dari file hasil sanitasi server (ffprobe + bitstream + audio-visual).'
-                          : 'Analisis bitstream byte-level terhadap signature AI input & rekomendasi preset humanisasi.'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {(!isEvaluatingAfter || humanizationReport.aiRiskLevel !== 'CLEAN_ORGANIC') && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (humanizationReport.suggestions.length > 0 && humanizationReport.suggestions[0].recommendedPreset && humanizationReport.suggestions[0].recommendedPreset !== 'none') {
-                            const rec = humanizationReport.suggestions[0].recommendedPreset as any;
-                            setHumanizationPreset(rec);
-                            if (processingMode === 'remux_only') {
-                              setProcessingMode('all_in_one');
-                              appendLog(`✓ [HUMANIZATION ANALYZER] Menerapkan preset rekomendasi: ${String(rec).toUpperCase()} & mengalihkan mode ke Re-Encode Penuh`, 'emerald');
-                            } else {
-                              appendLog(`✓ [HUMANIZATION ANALYZER] Menerapkan preset rekomendasi: ${String(rec).toUpperCase()}`, 'emerald');
-                            }
-                          }
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-indigo-900/30 cursor-pointer"
-                      >
-                        <Zap className="w-3.5 h-3.5 text-amber-300" />
-                        <span>Terapkan Rekomendasi Preset</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {Object.entries(humanizationReport.breakdown).map(([key, val]) => (
-                    <div key={key} className="bg-slate-900/80 border border-slate-800 rounded-xl p-2.5 space-y-1">
-                      <div className="text-[10px] uppercase font-mono text-slate-400">
-                        {key === 'metadataCleanliness' ? 'Metadata Clean' : key === 'bitstreamEntropy' ? 'Bitstream Entropy' : key === 'motionNaturalness' ? 'Motion Natural' : 'Acoustic Air'}
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-extrabold text-slate-200">{val} / 25</span>
-                        <div className="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full ${humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC' ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${(val / 25) * 100}%` }} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-[11px] font-bold text-slate-300">
-                    {isEvaluatingAfter ? 'Hasil Audit & Status Humanisasi Output:' : 'Saran Tindakan & Deteksi Marker AI:'}
-                  </span>
-                  <div className="space-y-1.5">
-                    {humanizationReport.suggestions.map((s) => (
-                      <div key={s.id} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/80 text-xs">
-                        <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${humanizationReport.aiRiskLevel === 'CLEAN_ORGANIC' ? 'text-emerald-400' : 'text-indigo-400'}`} />
-                        <div className="space-y-0.5">
-                          <div className="font-bold text-slate-200">{s.title}</div>
-                          <div className="text-slate-400 text-[11px]">{s.description}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
-            {[
-              {
-                label: 'SEBELUM PEMBERSIHAN (INPUT ASLI)',
-                probe: beforeProbe,
-                loading: isProbingBefore,
-                error: probeErrorBefore,
-                emptyHint: 'Pilih video untuk menjalankan ffprobe & bitstream trace secara otomatis.',
-                accentBorder: 'border-rose-900/40',
-              },
-              {
-                label: 'SESUDAH SANITASI CLOUD FFMPEG (OUTPUT)',
-                probe: afterProbe,
-                loading: isProbingAfter,
-                error: probeErrorAfter,
-                emptyHint: 'Jalankan proses Cloud FFmpeg untuk memverifikasi output bersih via ffprobe.',
-                accentBorder: 'border-emerald-900/40',
-              },
-            ].map((col) => (
-              <div key={col.label} className={`bg-slate-950 rounded-xl border ${col.accentBorder} p-4 space-y-3`}>
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <span className="font-extrabold text-[11px] tracking-wider text-slate-300">{col.label}</span>
-                  {col.loading ? (
-                    <span className="text-[10px] font-mono text-cyan-400 flex items-center gap-1">
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                      Menjalankan ffprobe...
-                    </span>
-                  ) : col.probe ? (
-                    col.probe.cleanliness.overallClean ? (
-                      <span className="text-[10px] font-mono font-bold text-emerald-400 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        BERSIH TOTAL
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-mono font-bold text-rose-400 flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        JEJAK AI / SEI DITEMUKAN
-                      </span>
-                    )
-                  ) : (
-                    <span className="text-[10px] font-mono text-slate-500">STANDBY</span>
-                  )}
-                </div>
-
-                {col.error && (
-                  <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/30 text-rose-300 text-[11px]">
-                    {col.error}
-                  </div>
-                )}
-
-                {!col.probe && !col.loading && (
-                  <div className="py-6 text-center text-slate-500 text-[11px]">{col.emptyHint}</div>
-                )}
-
-                {col.probe && (
-                  <div className="space-y-2.5 font-mono text-[11px]">
-                    {/* AI Risk Score Banner */}
-                    <div
-                      className={`p-2.5 rounded-lg border flex items-center justify-between ${
-                        col.probe.audioVisualForensics.aiVerdict === 'CLEAN_ORGANIC' && col.probe.cleanliness.overallClean
-                          ? 'bg-emerald-950/30 border-emerald-500/30'
-                          : col.probe.audioVisualForensics.aiVerdict === 'HIGH_AI_RISK'
-                            ? 'bg-rose-950/35 border-rose-500/40'
-                            : 'bg-amber-950/30 border-amber-500/40'
-                      }`}
-                    >
-                      <span className="text-slate-300 font-bold">Skor Risiko AI Audio-Visual:</span>
-                      <span
-                        className={`font-extrabold ${
-                          col.probe.audioVisualForensics.aiVerdict === 'CLEAN_ORGANIC' && col.probe.cleanliness.overallClean
-                            ? 'text-emerald-400'
-                            : col.probe.audioVisualForensics.aiVerdict === 'HIGH_AI_RISK'
-                              ? 'text-rose-400'
-                              : 'text-amber-300'
-                        }`}
-                      >
-                        {col.probe.audioVisualForensics.aiRiskScore}/100 ({col.probe.audioVisualForensics.aiVerdict})
-                      </span>
-                    </div>
-
-                    {/* Bitstream SEI Summary */}
-                    <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Layer 1 • Bitstream SEI NAL Units:</span>
-                        <span className={col.probe.seiReport.totalSeiUnits === 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                          {col.probe.seiReport.totalSeiUnits} unit (T6={col.probe.seiReport.nalUnitType6Count}, HEVC={col.probe.seiReport.nalUnitType39Count + col.probe.seiReport.nalUnitType40Count})
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">SEI Payload Types:</span>
-                        <span className="text-slate-200">
-                          {col.probe.seiReport.payloadTypes.length > 0 ? col.probe.seiReport.payloadTypes.join(', ') : 'Tidak ada'}
-                        </span>
-                      </div>
-                      {col.probe.seiReport.asciiTraces.length > 0 && (
-                        <div className="flex justify-between gap-2">
-                          <span className="text-slate-400">Jejak ASCII Bitstream/Container:</span>
-                          <span className="text-rose-300 text-right truncate max-w-[230px]">
-                            {col.probe.seiReport.asciiTraces.join(', ')}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Layer 2: UUID Claims & JUMBF Manifests */}
-                    <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Layer 2 • UUID Claim Boxes:</span>
-                        <span className={col.probe.uuidClaims.length === 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                          {col.probe.uuidClaims.length === 0 ? '0 (Bersih)' : `${col.probe.uuidClaims.length} box`}
-                        </span>
-                      </div>
-                      {col.probe.uuidClaims.slice(0, 3).map((u, idx) => (
-                        <div key={idx} className="text-[10px] text-rose-300 truncate">
-                          • uuid @0x{u.offset.toString(16)} ({u.size}B): {u.uuidHex}
-                        </div>
-                      ))}
-
-                      <div className="flex justify-between pt-1 border-t border-slate-800/80">
-                        <span className="text-slate-400">JUMBF / C2PA Manifests:</span>
-                        <span className={col.probe.jumbfManifests.length === 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                          {col.probe.jumbfManifests.length === 0 ? '0 (Bersih)' : `${col.probe.jumbfManifests.length} manifes`}
-                        </span>
-                      </div>
-                      {col.probe.jumbfManifests.slice(0, 3).map((j, idx) => (
-                        <div key={idx} className="text-[10px] text-rose-300 truncate">
-                          • {j.boxType} @0x{j.offset.toString(16)} ({j.size}B): {j.signatureMatches.join(', ')}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Layer 3: Visual & Container AI Forensics */}
-                    <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 space-y-1">
-                      <div className="flex items-center justify-between text-cyan-300 font-bold pb-1 border-b border-slate-800/80">
-                        <span className="flex items-center gap-1.5">
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Layer 3 • Forensik Visual &amp; Muxer AI</span>
-                        </span>
-                        <span className={col.probe.audioVisualForensics.visual.visualClean ? 'text-emerald-400' : 'text-rose-400'}>
-                          {col.probe.audioVisualForensics.visual.visualClean ? 'ORGANIK' : 'SINYAL AI'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Cadence FPS:</span>
-                        <span className={col.probe.audioVisualForensics.visual.isAiFramerate ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-                          {col.probe.audioVisualForensics.visual.fps} fps {col.probe.audioVisualForensics.visual.isAiFramerate ? '(Khas AI Diffusion!)' : '(Normal Kamera)'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">GOP B-Frames / Refs:</span>
-                        <span className={col.probe.audioVisualForensics.visual.isZeroBFrames ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-                          bf={col.probe.videoStream?.hasBFrames ?? 0} • refs={col.probe.audioVisualForensics.visual.refsCount ?? 1} {col.probe.audioVisualForensics.visual.isZeroBFrames ? '(Sintetik!)' : '(Valid Kamera)'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">MP4 Header / mdta / Start PTS:</span>
-                        <span
-                          className={
-                            col.probe.audioVisualForensics.visual.hasZeroCreationTime ||
-                            col.probe.audioVisualForensics.visual.hasFfmpegMuxerBrand ||
-                            col.probe.audioVisualForensics.visual.hasSpoofedMdtaBox ||
-                            (col.probe.audioVisualForensics.visual.startTimeSec ?? 0) > 0.04
-                              ? 'text-rose-400 font-bold'
-                              : 'text-emerald-400 font-bold'
-                          }
-                        >
-                          {col.probe.audioVisualForensics.visual.hasZeroCreationTime ? '1904/0' : 'Valid UTC'} •{' '}
-                          {col.probe.audioVisualForensics.visual.hasFfmpegMuxerBrand ? 'iso2/512!' : 'Clean Brand'} •{' '}
-                          {col.probe.audioVisualForensics.visual.hasSpoofedMdtaBox ? 'mdta!' : 'Zero-mdta'} •{' '}
-                          {(col.probe.audioVisualForensics.visual.startTimeSec ?? 0).toFixed(3)}s
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Entropy Tekstur Luma (Y):</span>
-                        <span className={`tabular-nums ${col.probe.audioVisualForensics.visual.lumaEntropyAvg > 0 && col.probe.audioVisualForensics.visual.lumaEntropyAvg < 0.72 ? 'text-amber-300 font-bold' : 'text-slate-200'}`}>
-                          {col.probe.audioVisualForensics.visual.lumaEntropyAvg || '-'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">CMOS Sensor Grain (Static Δ):</span>
-                        <span
-                          className={`tabular-nums font-bold ${
-                            col.probe.audioVisualForensics.visual.isPlasticZeroGrain
-                              ? 'text-rose-400'
-                              : (col.probe.audioVisualForensics.visual.staticPatchTemporalDiff ?? -1) >= 0
-                                ? 'text-emerald-400'
-                                : 'text-slate-400'
-                          }`}
-                        >
-                          {(col.probe.audioVisualForensics.visual.staticPatchTemporalDiff ?? -1) >= 0
-                            ? `${col.probe.audioVisualForensics.visual.staticPatchTemporalDiff} ${
-                                col.probe.audioVisualForensics.visual.isPlasticZeroGrain
-                                  ? '(Plastik/Zero-Grain!)'
-                                  : '(Sensor Kamera Alami)'
-                              }`
-                            : '-'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Resolusi &amp; Color Matrix:</span>
-                        <span
-                          className={`tabular-nums font-bold ${
-                            col.probe.audioVisualForensics.visual.isSub1080pDiffusionRes ||
-                            col.probe.audioVisualForensics.visual.hasColorMatrixMismatch
-                              ? 'text-rose-400'
-                              : 'text-emerald-400'
-                          }`}
-                        >
-                          {col.probe.audioVisualForensics.visual.width || col.probe.videoStream?.width || 0}x
-                          {col.probe.audioVisualForensics.visual.height || col.probe.videoStream?.height || 0} •{' '}
-                          {col.probe.audioVisualForensics.visual.colorPrimaries || 'unset'}/
-                          {col.probe.audioVisualForensics.visual.colorTransfer || 'unset'}/
-                          {col.probe.audioVisualForensics.visual.colorSpace || 'unset'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Cadence &amp; Duplikat Frame:</span>
-                        <span
-                          className={`tabular-nums font-bold ${
-                            col.probe.audioVisualForensics.visual.hasPulldownDuplicates
-                              ? 'text-rose-400'
-                              : 'text-emerald-400'
-                          }`}
-                        >
-                          {((col.probe.audioVisualForensics.visual.nearDuplicateFrameRatio ?? 0) * 100).toFixed(1)}%{' '}
-                          {col.probe.audioVisualForensics.visual.hasPulldownDuplicates ? '(Pulldown Duplikat!)' : '(Bebas Pulldown)'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Tombstone Free Atom (moov):</span>
-                        <span
-                          className={`tabular-nums font-bold ${
-                            col.probe.audioVisualForensics.visual.hasMoovFreeTombstone
-                              ? 'text-rose-400'
-                              : 'text-emerald-400'
-                          }`}
-                        >
-                          {col.probe.audioVisualForensics.visual.moovFreeBoxCount ?? 0} box ({col.probe.audioVisualForensics.visual.moovFreeBoxBytes ?? 0}B)
-                        </span>
-                      </div>
-                      {col.probe.audioVisualForensics.visual.visualAiFlags.map((vf, idx) => (
-                        <div key={idx} className="text-[10px] text-rose-300">
-                          • {vf}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Layer 4: Audio AI / TTS / Vocoder Forensics */}
-                    <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 space-y-1">
-                      <div className="flex items-center justify-between text-indigo-300 font-bold pb-1 border-b border-slate-800/80">
-                        <span className="flex items-center gap-1.5">
-                          <Volume2 className="w-3.5 h-3.5" />
-                          <span>Layer 4 • Forensik Audio AI &amp; TTS</span>
-                        </span>
-                        <span className={col.probe.audioVisualForensics.audio.audioClean ? 'text-emerald-400' : 'text-rose-400'}>
-                          {col.probe.audioVisualForensics.audio.audioClean ? 'ORGANIK' : 'VOCODER AI'}
-                        </span>
-                      </div>
-                      {col.probe.audioVisualForensics.audio.hasAudio ? (
-                        <>
-                          <div className="flex justify-between">
-                            <span className="text-slate-400">Stereo Mid-Side Field:</span>
-                            <span
-                              className={
-                                (col.probe.audioVisualForensics.audio.channels ?? 2) === 1 ||
-                                (col.probe.audioVisualForensics.audio.stereoSideGapDb ?? 0) >= 27.5
-                                  ? 'text-rose-400 font-bold'
-                                  : 'text-emerald-400 font-bold'
-                              }
-                            >
-                              {col.probe.audioVisualForensics.audio.channels ?? 2}ch • Gap{' '}
-                              {col.probe.audioVisualForensics.audio.stereoSideGapDb ?? '-'} dB
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-400">Jeda Hening Mutlak (&lt;-55dB):</span>
-                            <span className={col.probe.audioVisualForensics.audio.digitalSilenceCount > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-                              {col.probe.audioVisualForensics.audio.digitalSilenceCount} segmen ({col.probe.audioVisualForensics.audio.digitalSilenceSec}s)
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-400">Noise Floor Ruangan:</span>
-                            <span
-                              className={
-                                col.probe.audioVisualForensics.audio.noiseFloorDb <= -55 ||
-                                col.probe.audioVisualForensics.audio.noiseFloorDb >= -40.5
-                                  ? 'text-rose-400 font-bold'
-                                  : 'text-emerald-400 font-bold'
-                              }
-                            >
-                              {col.probe.audioVisualForensics.audio.noiseFloorDb} dB
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-400">Spektrum Udara (&gt;14k / &gt;17kHz):</span>
-                            <span className={col.probe.audioVisualForensics.audio.highBand17kDb <= -56 || col.probe.audioVisualForensics.audio.airCliffDb >= 32.5 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-                              {col.probe.audioVisualForensics.audio.highBand14kDb} / {col.probe.audioVisualForensics.audio.highBand17kDb} dB (Cliff {col.probe.audioVisualForensics.audio.airCliffDb} dB)
-                            </span>
-                          </div>
-                          {col.probe.audioVisualForensics.audio.audioAiFlags.map((af, idx) => (
-                            <div key={idx} className="text-[10px] text-rose-300">
-                              • {af}
-                            </div>
-                          ))}
-                        </>
-                      ) : (
-                        <div className="text-[10px] text-slate-500">Stream video ini tidak memiliki track audio.</div>
-                      )}
-                    </div>
-
-                    {/* Container & Stream Details */}
-                    <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Container Brand / Streams:</span>
-                        <span className="text-slate-200">
-                          {col.probe.format.majorBrand || '-'} • {col.probe.format.nbStreams} stream
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Handler Name:</span>
-                        <span className="text-cyan-300 truncate max-w-[200px]">
-                          {col.probe.videoStream?.handlerName || '-'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Top-Level MP4 Atoms:</span>
-                        <span className="text-slate-300 truncate max-w-[200px]">
-                          {col.probe.boxTreeSummary.map((b) => b.type).join(' -> ') || '-'}
-                        </span>
-                      </div>
-                      {col.probe.cleanliness.flaggedReasons.length > 0 && (
-                        <div className="pt-1.5 mt-1 border-t border-slate-800/80 space-y-0.5 text-[10px] text-rose-300">
-                          <div className="font-bold text-rose-400">Penyebab Terdeteksi ({col.probe.cleanliness.flaggedReasons.length}):</div>
-                          {col.probe.cleanliness.flaggedReasons.map((reason, idx) => (
-                            <div key={idx}>- {reason}</div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {showRawProbeJson && (beforeProbe || afterProbe) && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
-              <pre className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] font-mono text-slate-300 max-h-60 overflow-auto">
-                {beforeProbe ? JSON.stringify(beforeProbe, null, 2) : '// Belum ada hasil probe input'}
-              </pre>
-              <pre className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] font-mono text-emerald-300 max-h-60 overflow-auto">
-                {afterProbe ? JSON.stringify(afterProbe, null, 2) : '// Belum ada hasil probe output'}
-              </pre>
-            </div>
-          )}
-        </div>
-
-        {/* FFPROBE SEI NAL & C2PA/UUID METADATA DIAGNOSTIC ISOLATION TOOL */}
-        {(beforeProbe?.ffprobeDiagnostic || afterProbe?.ffprobeDiagnostic) && (() => {
-          const activeProbe =
-            diagTarget === 'after' && afterProbe
-              ? afterProbe
-              : beforeProbe || afterProbe;
-          const diag = activeProbe?.ffprobeDiagnostic;
-          if (!diag) return null;
-
-          const beforeTrigCount = beforeProbe?.ffprobeDiagnostic?.aiTriggerChecklist.length ?? 0;
-          const afterTrigCount = afterProbe?.ffprobeDiagnostic?.aiTriggerChecklist.length ?? 0;
-
-          const handleCopyDiag = async () => {
-            try {
-              await navigator.clipboard.writeText(diag.rawFfprobeSummaryText);
-              setCopiedDiag(true);
-              setTimeout(() => setCopiedDiag(false), 1800);
-            } catch {}
-          };
-
-          return (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center">
-                    <Bug className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs sm:text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2 flex-wrap">
-                      <span>Diagnostik FFprobe: Isolasi SEI NAL Units &amp; Blok C2PA / UUID</span>
-                      <span
-                        className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
-                          diag.aiTriggerChecklist.length === 0
-                            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                            : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
-                        }`}
-                      >
-                        {diag.aiTriggerChecklist.length === 0
-                          ? '0 PEMICU AI TERISOLASI'
-                          : `${diag.aiTriggerChecklist.length} PEMICU "AI DETECTED"`}
-                      </span>
-                    </h3>
-                    <p className="text-[11px] text-slate-400">
-                      Membedah output <code>ffprobe</code> frame side-data, stream non-AV, atom ISO-BMFF (<code>uuid</code>/<code>c2pa</code>/<code>jumb</code>), dan payload NAL SEI untuk melacak penyebab pasti flag AI.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Target Switcher (Before vs After) */}
-                <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                  <button
-                    type="button"
-                    disabled={!beforeProbe}
-                    onClick={() => setDiagTarget('before')}
-                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer disabled:opacity-40 ${
-                      diagTarget === 'before'
-                        ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    Input (Sebelum) • {beforeTrigCount}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!afterProbe}
-                    onClick={() => setDiagTarget('after')}
-                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer disabled:opacity-40 ${
-                      diagTarget === 'after'
-                        ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    Output (Sesudah) • {afterTrigCount}
-                  </button>
-                </div>
-              </div>
-
-              {/* Quick Telemetry Counters + Filter Bar */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono w-full lg:w-auto flex-1">
-                  <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
-                    <div className="text-[10px] text-slate-500">SEI NAL Terisolasi</div>
-                    <div className={diag.isolatedSeiUnits.length > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-                      {diag.isolatedSeiUnits.length} unit
-                    </div>
-                  </div>
-                  <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
-                    <div className="text-[10px] text-slate-500">Blok C2PA/UUID/Meta</div>
-                    <div className={diag.isolatedMetadataBlocks.length > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-                      {diag.isolatedMetadataBlocks.length} blok
-                    </div>
-                  </div>
-                  <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
-                    <div className="text-[10px] text-slate-500">Frame Side-Data</div>
-                    <div className={diag.packetSideDataCount > 0 ? 'text-amber-300 font-bold' : 'text-emerald-400 font-bold'}>
-                      {diag.packetSideDataCount} item
-                    </div>
-                  </div>
-                  <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
-                    <div className="text-[10px] text-slate-500">Data / TMCD Stream</div>
-                    <div className={diag.dataStreamsCount > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-                      {diag.dataStreamsCount} stream
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 flex-wrap">
+          {showAuditDrawer && (
+            <div className="border-t border-slate-800 p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-1.5">
                   {(
                     [
-                      { id: 'all', label: 'Semua' },
-                      { id: 'triggers', label: `Pemicu AI (${diag.aiTriggerChecklist.length})` },
-                      { id: 'sei', label: `SEI NAL (${diag.isolatedSeiUnits.length})` },
-                      { id: 'meta', label: `C2PA / UUID (${diag.isolatedMetadataBlocks.length})` },
+                      { id: 'av', label: 'Skor & Audio-Visual' },
+                      { id: 'diag', label: 'SEI & Atom MP4' },
+                      { id: 'heatmap', label: 'Heatmap Noise' },
+                      { id: 'logs', label: `Log Server (${logs.length})` },
                     ] as const
-                  ).map((f) => (
+                  ).map((tab) => (
                     <button
-                      key={f.id}
+                      key={tab.id}
                       type="button"
-                      onClick={() => setDiagFilter(f.id)}
-                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
-                        diagFilter === f.id
-                          ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                      onClick={() => setAuditTab(tab.id)}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                        auditTab === tab.id
+                          ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
                           : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
                       }`}
                     >
-                      {f.label}
+                      {tab.label}
                     </button>
                   ))}
                 </div>
-              </div>
 
-              {/* 1. AI Trigger Checklist */}
-              {(diagFilter === 'all' || diagFilter === 'triggers') && (
-                <div className="space-y-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                    <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Daftar Pemicu Flag &quot;AI Detected&quot; ({diagTarget === 'after' && afterProbe ? 'Output' : 'Input'})</span>
+                {(auditTab === 'av' || auditTab === 'diag') && (beforeProbe || afterProbe) && (
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                    <button
+                      type="button"
+                      disabled={!beforeProbe}
+                      onClick={() => setDiagTarget('before')}
+                      className={`px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer disabled:opacity-40 ${
+                        diagTarget === 'before' ? 'bg-rose-500/20 text-rose-300' : 'text-slate-400'
+                      }`}
+                    >
+                      Input
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!afterProbe}
+                      onClick={() => setDiagTarget('after')}
+                      className={`px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer disabled:opacity-40 ${
+                        diagTarget === 'after' ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-400'
+                      }`}
+                    >
+                      Output
+                    </button>
                   </div>
-                  {diag.aiTriggerChecklist.length === 0 ? (
-                    <div className="bg-emerald-950/25 border border-emerald-500/30 rounded-xl p-3 text-xs text-emerald-300 flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 shrink-0" />
-                      <span>Tidak ada sisa SEI NAL Unit, blok C2PA/JUMBF/UUID, maupun anomali muxer/audio-visual yang memicu flag AI.</span>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      {diag.aiTriggerChecklist.map((trig) => (
-                        <div
-                          key={trig.id}
-                          className={`rounded-xl p-3 border text-xs space-y-1 ${
-                            trig.severity === 'critical'
-                              ? 'bg-rose-950/25 border-rose-500/35'
-                              : 'bg-amber-950/20 border-amber-500/30'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold text-slate-100">{trig.title}</span>
-                            <span
-                              className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded uppercase ${
-                                trig.severity === 'critical'
-                                  ? 'bg-rose-500/20 text-rose-300'
-                                  : 'bg-amber-500/20 text-amber-300'
-                              }`}
-                            >
-                              {trig.layer}
-                            </span>
-                          </div>
-                          <div className="text-[11px] font-mono text-slate-300 break-words">{trig.detail}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* 2. Isolated SEI NAL Units */}
-              {(diagFilter === 'all' || diagFilter === 'sei') && (
-                <div className="space-y-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Unit SEI (Supplemental Enhancement Information) Terisolasi ({diag.isolatedSeiUnits.length})</span>
-                  </div>
-                  {diag.isolatedSeiUnits.length === 0 ? (
-                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[11px] font-mono text-emerald-400">
-                      ✓ 0 unit SEI NAL (H.264 Type 6 / HEVC Type 39|40) ditemukan pada video ini.
-                    </div>
-                  ) : (
-                    <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-                      {diag.isolatedSeiUnits.map((unit) => (
-                        <div
-                          key={`${unit.index}-${unit.source}-${unit.byteOffsetHex || unit.payloadType}`}
-                          className="bg-slate-950 border border-rose-900/40 rounded-xl p-3 text-[11px] font-mono space-y-1.5"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
-                                SEI #{unit.index} • NAL Type {unit.nalUnitType}
-                              </span>
-                              <span className="text-cyan-300 font-bold">{unit.payloadTypeLabel}</span>
-                              <span className="text-slate-500">src: {unit.source}</span>
-                            </div>
-                            <span className="text-slate-400">
-                              {unit.byteOffsetHex ? `@${unit.byteOffsetHex} • ` : ''}
-                              {unit.sizeBytes}B
-                            </span>
-                          </div>
-                          {unit.uuid16Hex && (
-                            <div className="text-amber-300 break-all">
-                              UUID-16: <span className="text-slate-200">{unit.uuid16Hex}</span>
-                            </div>
-                          )}
-                          <div className="text-slate-300 break-all">
-                            ASCII: <span className="text-rose-200">{unit.decodedAscii}</span>
-                          </div>
-                          {unit.rawHexPreview && unit.rawHexPreview !== '-' && (
-                            <div className="text-[10px] text-slate-500 break-all">
-                              HEX: {unit.rawHexPreview}
-                            </div>
-                          )}
-                          <div className="text-[10px] text-amber-300 pt-0.5">
-                            → {unit.triggerReason}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* 3. Isolated C2PA / JUMBF / UUID / Metadata Blocks */}
-              {(diagFilter === 'all' || diagFilter === 'meta') && (
-                <div className="space-y-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                    <FileSearch className="w-3.5 h-3.5 text-fuchsia-400" />
-                    <span>Blok Metadata C2PA / JUMBF / UUID / Tag FFprobe Terisolasi ({diag.isolatedMetadataBlocks.length})</span>
-                  </div>
-                  {diag.isolatedMetadataBlocks.length === 0 ? (
-                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[11px] font-mono text-emerald-400">
-                      ✓ 0 blok metadata C2PA, JUMBF, UUID, atau stream data tambahan terdeteksi.
-                    </div>
-                  ) : (
-                    <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-                      {diag.isolatedMetadataBlocks.map((blk) => (
-                        <div
-                          key={blk.id}
-                          className="bg-slate-950 border border-amber-900/40 rounded-xl p-3 text-[11px] font-mono space-y-1"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="px-1.5 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-300 font-bold">
-                                {blk.category}
-                              </span>
-                              <span className="text-slate-100 font-bold">{blk.boxOrStreamName}</span>
-                              <span className="text-slate-500">path: {blk.path}</span>
-                            </div>
-                            <span className="text-slate-400">
-                              @{blk.offsetHex} • {blk.sizeBytes}B
-                            </span>
-                          </div>
-                          {blk.uuidHex && (
-                            <div className="text-cyan-300 break-all">
-                              UUID Hex: <span className="text-slate-200">{blk.uuidHex}</span>
-                            </div>
-                          )}
-                          <div className="text-slate-300 break-all">
-                            Payload/Value: <span className="text-amber-200">{blk.asciiPreview}</span>
-                          </div>
-                          <div className="text-[10px] text-rose-300 pt-0.5">
-                            → {blk.triggerReason}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* 4. Collapsible Raw FFprobe Diagnostic Console */}
-              <div className="pt-2 border-t border-slate-800 space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowFfprobeConsole((prev) => !prev)}
-                    className="px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-mono font-bold text-cyan-300 flex items-center gap-1.5 transition cursor-pointer"
-                  >
-                    {showFfprobeConsole ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                    <span>{showFfprobeConsole ? 'Sembunyikan Output Raw FFprobe' : 'Lihat Output Raw FFprobe Diagnostic'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyDiag}
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200 flex items-center gap-1.5 transition cursor-pointer"
-                  >
-                    {copiedDiag ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedDiag ? 'Tersalin!' : 'Salin Laporan FFprobe'}</span>
-                  </button>
-                </div>
-                {showFfprobeConsole && (
-                  <pre className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-[10px] font-mono text-slate-300 max-h-64 overflow-auto leading-relaxed">
-                    {diag.rawFfprobeSummaryText}
-                  </pre>
                 )}
               </div>
-            </div>
-          );
-        })()}
 
-        {/* TERMINAL LOG DISPLAY */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
-          <div className="flex justify-between items-center">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-              <Terminal className="w-4 h-4 text-indigo-400" />
-              <span>Cloud Anti-SynthID, Shopee Bypass &amp; SEI Bitstream Filter Terminal Log</span>
-            </h3>
-            <span className="text-xs font-mono font-bold text-indigo-400">{progressText}</span>
-          </div>
+              {auditTab === 'av' && (
+                <div className="space-y-4">
+                  {(probeErrorBefore || probeErrorAfter) && (
+                    <div className="p-2.5 rounded-lg bg-rose-950/30 border border-rose-500/30 text-[11px] text-rose-300">
+                      {probeErrorAfter || probeErrorBefore}
+                    </div>
+                  )}
+                  {activeHumanReport ? (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                      {Object.entries(activeHumanReport.breakdown).map(([k, v]) => (
+                        <div key={k} className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 space-y-1">
+                          <div className="text-[10px] font-mono text-slate-400 uppercase">{k}</div>
+                          <div className="text-sm font-extrabold text-slate-100">{v} / 25</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-500 py-4 text-center">Unggah video untuk melihat rincian forensik.</div>
+                  )}
 
-          <div
-            ref={terminalRef}
-            className="bg-slate-950 border border-slate-800/90 rounded-xl p-4 font-mono text-xs text-slate-300 h-56 overflow-y-auto space-y-1.5 leading-relaxed"
-          >
-            {logs.map((entry) => {
-              let colorClass = 'text-slate-300';
-              if (entry.color === 'emerald') colorClass = 'text-emerald-400 font-bold';
-              if (entry.color === 'indigo') colorClass = 'text-indigo-400 font-semibold';
-              if (entry.color === 'amber') colorClass = 'text-amber-400';
-              if (entry.color === 'rose') colorClass = 'text-rose-400 font-bold';
+                  {activeAuditProbe && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] font-mono">
+                      <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1.5">
+                        <div className="font-bold text-cyan-300 flex items-center gap-1.5 pb-1 border-b border-slate-800">
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Forensik Visual ({diagTarget === 'after' && afterProbe ? 'Output' : 'Input'})</span>
+                        </div>
+                        <div className="flex justify-between"><span className="text-slate-500">Cadence / B-Frames:</span><span>{activeAuditProbe.audioVisualForensics.visual.fps}fps • bf={activeAuditProbe.videoStream?.hasBFrames ?? 0}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">CMOS Grain Static Δ:</span><span>{activeAuditProbe.audioVisualForensics.visual.staticPatchTemporalDiff}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Duplikat Pulldown:</span><span>{((activeAuditProbe.audioVisualForensics.visual.nearDuplicateFrameRatio ?? 0) * 100).toFixed(1)}%</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Moov Free Tombstone:</span><span>{activeAuditProbe.audioVisualForensics.visual.moovFreeBoxCount} box</span></div>
+                      </div>
 
-              return (
-                <div key={entry.id} className={colorClass}>
-                  <span className="text-slate-600">[{entry.time}]</span> {entry.text}
+                      <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1.5">
+                        <div className="font-bold text-indigo-300 flex items-center gap-1.5 pb-1 border-b border-slate-800">
+                          <Volume2 className="w-3.5 h-3.5" />
+                          <span>Forensik Audio ({diagTarget === 'after' && afterProbe ? 'Output' : 'Input'})</span>
+                        </div>
+                        <div className="flex justify-between"><span className="text-slate-500">Stereo Mid-Side Gap:</span><span>{activeAuditProbe.audioVisualForensics.audio.stereoSideGapDb} dB</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Noise Floor:</span><span>{activeAuditProbe.audioVisualForensics.audio.noiseFloorDb} dB</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">High Band &gt;17kHz:</span><span>{activeAuditProbe.audioVisualForensics.audio.highBand17kDb} dB (Cliff {activeAuditProbe.audioVisualForensics.audio.airCliffDb} dB)</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Jeda Hening Digital:</span><span>{activeAuditProbe.audioVisualForensics.audio.digitalSilenceCount} segmen</span></div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              );
-            })}
-          </div>
-        </div>
+              )}
 
-        {/* EDUCATING / DIAGNOSTIC GUIDE CARD: WHY RAW SCRIPT CAUSES GLITCH & HOW METACLEANER PRO FIXES IT */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-          <div className="flex items-center gap-2.5 text-amber-400">
-            <span className="text-lg">💡</span>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-              Panduan Teknis: Mengapa Script Biasa Menyebabkan Glitch &amp; Cara Lolos Detektor AI Shopee
-            </h4>
-          </div>
+              {auditTab === 'diag' && activeAuditProbe?.ffprobeDiagnostic && (
+                <div className="space-y-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 font-mono text-[11px]">
+                      <Bug className="w-4 h-4 text-amber-400" />
+                      <span>
+                        {activeAuditProbe.ffprobeDiagnostic.aiTriggerChecklist.length} Pemicu AI •{' '}
+                        {activeAuditProbe.ffprobeDiagnostic.isolatedSeiUnits.length} SEI •{' '}
+                        {activeAuditProbe.ffprobeDiagnostic.isolatedMetadataBlocks.length} C2PA/UUID
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowRawProbeJson((v) => !v)}
+                        className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-cyan-300 cursor-pointer"
+                      >
+                        {showRawProbeJson ? 'Tutup JSON' : 'Lihat Raw JSON'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(activeAuditProbe.ffprobeDiagnostic!.rawFfprobeSummaryText);
+                            setCopiedDiag(true);
+                            setTimeout(() => setCopiedDiag(false), 1500);
+                          } catch {}
+                        }}
+                        className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-slate-200 flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedDiag ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedDiag ? 'Tersalin' : 'Salin Laporan'}</span>
+                      </button>
+                    </div>
+                  </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-            <div className="bg-slate-950 p-4 rounded-xl border border-rose-900/30 space-y-2">
-              <div className="font-bold text-rose-400 flex items-center gap-1.5">
-                <span>⚠️</span>
-                <span>Mengapa Script Manual Menyebabkan Glitch</span>
-              </div>
-              <p className="text-slate-400 leading-relaxed text-[11px]">
-                Script binary manual menimpa byte mentah dengan <code className="text-rose-300">0x00</code> di dalam <code className="text-slate-300">mdat</code> saat mencari pola SEI. Karena MP4 memakai <strong>4-byte length prefix &amp; interlaced audio</strong>, menimpa atau memotong byte merusak panjang paket (<code className="text-slate-300">stsz/stco</code>) dan korup decoder CABAC — akibatnya video menjadi <strong>glitch, patah-patah, dan frame beku</strong>.
-              </p>
+                  {activeAuditProbe.ffprobeDiagnostic.aiTriggerChecklist.length === 0 ? (
+                    <div className="p-3 rounded-xl bg-emerald-950/25 border border-emerald-500/30 text-emerald-300 flex items-center gap-2 text-xs">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>0 pemicu AI, 0 SEI NAL Unit, dan 0 blok provenance C2PA/UUID.</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                      {activeAuditProbe.ffprobeDiagnostic.aiTriggerChecklist.map((t) => (
+                        <div key={t.id} className="p-2.5 rounded-lg bg-slate-950 border border-rose-900/40 text-[11px] font-mono">
+                          <div className="font-bold text-rose-300">{t.title}</div>
+                          <div className="text-slate-400">{t.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {activeAuditProbe.ffprobeDiagnostic.isolatedSeiUnits.length > 0 && (
+                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                      <div className="text-[11px] font-bold text-slate-300 flex items-center gap-1">
+                        <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Unit SEI Terisolasi</span>
+                      </div>
+                      {activeAuditProbe.ffprobeDiagnostic.isolatedSeiUnits.map((u) => (
+                        <div key={`${u.index}-${u.source}`} className="p-2 rounded bg-slate-950 border border-slate-800 text-[10px] font-mono text-slate-300">
+                          SEI #{u.index} Type {u.nalUnitType} ({u.payloadTypeLabel}): {u.decodedAscii}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {showRawProbeJson && (
+                    <pre className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] font-mono text-slate-300 max-h-56 overflow-auto">
+                      {JSON.stringify(activeAuditProbe, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              )}
+
+              {auditTab === 'heatmap' && (
+                previewUrlBefore ? (
+                  <WatermarkNoiseVisualizer
+                    previewUrlBefore={previewUrlBefore}
+                    previewUrlAfter={!isServerCleanedUp || previewUrlAfter?.startsWith('blob:') ? previewUrlAfter : null}
+                    beforeFileName={currentFile?.name}
+                    afterFileName={currentFile ? getOutputFileName() : undefined}
+                  />
+                ) : (
+                  <div className="text-xs text-slate-500 py-4 text-center">Unggah video untuk memindai heatmap noise watermark.</div>
+                )
+              )}
+
+              {auditTab === 'logs' && (
+                <div
+                  ref={terminalRef}
+                  className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 font-mono text-[11px] text-slate-300 h-52 overflow-y-auto space-y-1 leading-relaxed"
+                >
+                  <div className="flex items-center gap-1.5 text-slate-500 pb-1 border-b border-slate-800/80 mb-1">
+                    <Terminal className="w-3.5 h-3.5" />
+                    <span>Log Eksekusi MetaCleaner AIO</span>
+                  </div>
+                  {logs.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className={
+                        entry.color === 'emerald'
+                          ? 'text-emerald-400 font-bold'
+                          : entry.color === 'indigo'
+                            ? 'text-indigo-400'
+                            : entry.color === 'amber'
+                              ? 'text-amber-300'
+                              : entry.color === 'rose'
+                                ? 'text-rose-400 font-bold'
+                                : 'text-slate-300'
+                      }
+                    >
+                      <span className="text-slate-600">[{entry.time}]</span> {entry.text}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-
-            <div className="bg-slate-950 p-4 rounded-xl border border-emerald-900/30 space-y-2">
-              <div className="font-bold text-emerald-400 flex items-center gap-1.5">
-                <span>🛡️</span>
-                <span>Pembersihan 4 Lapisan Tanpa Glitch</span>
-              </div>
-              <p className="text-slate-400 leading-relaxed text-[11px]">
-                MetaCleaner V 2.0 menghapus SEI (<code className="text-emerald-300">filter_units=remove_types=6</code>), mengompaksi atom <code>free/udta/meta</code>, menyapu residu laten via <code>hqdn3d</code>, melakukan warp optik asimetris, serta menyuntikkan dual-scale Bayer CMOS grain (<code>no-dct-decimate=1</code>) pada <strong>30fps 1080p BT.709</strong>.
-              </p>
-            </div>
-
-            <div className="bg-slate-950 p-4 rounded-xl border border-indigo-900/30 space-y-2">
-              <div className="font-bold text-indigo-400 flex items-center gap-1.5">
-                <span>🎙️</span>
-                <span>Penetralan Audio TTS &amp; Vocoder AI</span>
-              </div>
-              <p className="text-slate-400 leading-relaxed text-[11px]">
-                Detektor platform modern memindai tebing spektrum 16.5kHz dan jeda hening digital. MetaCleaner V 2.0 menyuntikkan 1/f pink+brown + udara mik 17–20.8kHz, dispersi fase <code>aphaser</code>, early-reflection <code>aecho</code>, harmonik <code>aexciter</code>, &amp; AAC 224kbps (<code>-cutoff 22500</code>) bebas clipping.
-              </p>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

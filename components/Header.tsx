@@ -223,7 +223,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>MetaCleaner V 2.0</span>
+            <span>MetaCleaner AIO</span>
           </button>
         </div>
 
