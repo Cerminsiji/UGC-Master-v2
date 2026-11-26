@@ -1,525 +1,336 @@
-<div align="center">
+================================================================================
+UGC MASTER - CREATOR STUDIO & METACLEANER AIO (V2.5 ANTI-AI ENGINE)
+PANDUAN LENGKAP PROYEK & CARA DEPLOYMENT LENGKAP
+(VPS/VDS, DOCKER, DOCKER COMPOSE, GOOGLE CLOUD, & GITHUB ACTIONS)
+================================================================================
 
-# UGC Master V2.5 — Anti-AI Engine
+Daftar Isi:
+1. Tentang Proyek & Fitur Utama
+2. Spesifikasi Kebutuhan Sistem (Prerequisites)
+3. Cara Menjalankan di Komputer Lokal (Local Dev)
+4. Cara Deploy ke Server VPS/VDS (Ubuntu/Debian) via PM2 & Nginx
+5. Cara Deploy Menggunakan Docker & Docker Compose
+6. Cara Deploy ke Google Cloud Platform (Cloud Run & Compute Engine)
+7. Otomasi Build Docker di GitHub (GitHub Actions CI/CD)
+8. Konfigurasi Environment Variables (.env)
+9. Pemeliharaan, Auto-Cleaner, & Troubleshooting
 
-**All-in-One UGC Creator Studio & Video Metadata Cleaner**
+================================================================================
+1. TENTANG PROYEK & FITUR UTAMA
+================================================================================
 
-![UGC Master](https://img.shields.io/badge/UGC_Master-V2.5-blueviolet?style=for-the-badge)
-![Anti-AI Engine](https://img.shields.io/badge/Engine-Anti--AI-ff6b6b?style=for-the-badge)
+UGC Master adalah platform terpadu pembuatan konten video UGC (User Generated 
+Content) dan sanitasi metadata video tingkat forensik (MetaCleaner AIO).
 
-[![Stars](https://img.shields.io/github/stars/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/stargazers)
-[![Forks](https://img.shields.io/github/forks/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/forks)
-[![Issues](https://img.shields.io/github/issues/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/issues)
-[![Last Commit](https://img.shields.io/github/last-commit/Cerminsiji/UGC-Master-v2?style=flat-square)](https://github.com/Cerminsiji/UGC-Master-v2/commits/main)
+Fitur Utama:
+- UGC Creator Studio: Generator naskah video otomatis berbasis Google Gemini AI,
+  pembuat storyboard scene-by-scene, teleprompter, dan manajemen hook visual.
+- MetaCleaner AIO (Anti-AI Engine V2.5):
+  * CSPRNG Bitstream Scrambler: Mengacak payload tersembunyi SynthID, NAL SEI
+    unregistered, dan atom provenance (C2PA/JUMBF/UUID) sebelum decoding.
+  * 0% Duplikat Pulldown Repair: Mendeteksi dan menghapus duplikat frame 24->30fps
+    melalui 'mpdecimate' + sintesis 30fps CFR motion-aware.
+  * Organic Visual Camera Engine: Injeksi sensor grain CMOS Bayer, 180-degree
+    shutter blend, barrel lens warp optik, dan ISP CAS sharpening.
+  * Dual-Mic Stereo Room Reflection: Memulihkan frekuensi audio udara (>17kHz)
+    serta memecah jeda hening digital mutlak khas suara AI TTS.
+  * Zero-Tombstone Physical Box Compaction: Menghilangkan total atom 'free'/'skip'
+    dan merekonstruksi tabel offset 'stco'/'co64' MP4 agar bebas dari jejak
+    stripping metadata FFmpeg.
+  * Granular Streaming Progress: Telemetry frame-by-frame real-time tanpa lonjakan
+    tiba-tiba (80% ke 100%).
 
-![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
-![FFmpeg](https://img.shields.io/badge/FFmpeg-Media_Engine-007808?logo=ffmpeg&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker&logoColor=white)
-![Google_Cloud](https://img.shields.io/badge/Google_Cloud-Supported-4285F4?logo=googlecloud&logoColor=white)
+================================================================================
+2. SPESIFIKASI KEBUTUHAN SISTEM (PREREQUISITES)
+================================================================================
 
-</div>
+Untuk menjalankan aplikasi ini dengan performa optimal:
 
----
+- Sistem Operasi: Linux (Ubuntu 20.04/22.04/24.04 LTS direkomendasikan), macOS, 
+  atau Windows (WSL2).
+- Node.js: Versi 20.x LTS atau lebih baru.
+- Python: Versi 3.8+ (diperlukan untuk script /scripts/ffmpeg_cleaner.py).
+- FFmpeg & FFprobe: Versi 5.x, 6.x, atau 7.x (didukung juga oleh library 
+  ffmpeg-static internal).
+- RAM: Minimal 2 GB (Disarankan 4 GB - 8 GB untuk re-encoding video 1080p).
+- CPU: Minimal 2 vCPU (Disarankan 4 vCPU untuk proses multi-threading x264).
+- Disk: Minimal 10 GB ruang kosong (untuk penyimpanan sementara video di /tmp).
 
-## 📌 Overview
+================================================================================
+3. CARA MENJALANKAN DI KOMPUTER LOKAL (LOCAL DEV)
+================================================================================
 
-**UGC Master** adalah platform *All-in-One Creator Studio* yang dirancang untuk mendukung proses pembuatan konten UGC (*User Generated Content*), pengolahan video, dan pengelolaan metadata media dalam satu sistem terintegrasi.
+1. Clone repositori dari GitHub:
+   git clone https://github.com/USERNAME/REPO_NAME.git
+   cd REPO_NAME
 
-Platform ini ditujukan untuk kreator konten, *affiliate marketer*, dan pembuat video pendek yang membutuhkan *workflow* produksi konten yang lebih praktis, modular, dan terstruktur.
+2. Install dependensi Node.js:
+   npm install
 
----
+3. Siapkan file konfigurasi environment:
+   cp .env.example .env.local
 
-## 🎯 Main Modules
+   Buka file .env.local dan masukkan API Key Gemini Anda:
+   GEMINI_API_KEY="AIzaSy..."
+   APP_URL="http://localhost:3000"
 
-| Module | Description |
-| :--- | :--- |
-| 🎬 **UGC Creator Studio** | Workspace untuk membuat, merencanakan, dan mengelola konten UGC |
-| 🧹 **MetaCleaner AIO** | Tool untuk pemeriksaan dan pembersihan metadata media |
+4. Jalankan mode pengembangan (Development):
+   npm run dev
 
----
+5. Buka browser di http://localhost:3000
 
-## ✨ Highlights
+================================================================================
+4. CARA DEPLOY KE SERVER VPS / VDS (UBUNTU / DEBIAN) VIA PM2 & NGINX
+================================================================================
 
-* 🎥 **UGC Creator Studio** untuk manajemen konten video pendek.
-* 🧹 **MetaCleaner AIO** untuk penanganan metadata file media.
-* 🎞️ **Media Processing Workflow** yang efisien dan andal.
-* ⚙️ **Modular Application Architecture** berbasis layanan terpusat.
-* 🐳 **Docker & Docker Compose Support** untuk kemudahan containerization.
-* ☁️ **Google Cloud Deployment Options** (Cloud Run & Compute Engine).
-* 🔄 **GitHub Actions CI/CD Integration** untuk otomatisasi *build* & *deploy*.
-* 📦 **GitHub Container Registry (GHCR)** support.
+Metode ini adalah cara standar paling efisien dan hemat memori pada VPS seperti
+DigitalOcean, Linode, Contabo, Hetzner, Vultr, atau AWS EC2.
 
----
+--- Langkah 1: Update Server & Install Dependensi Dasar ---
+Buka terminal SSH VPS Anda dan jalankan:
 
-## 📚 Table of Contents
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y curl git build-essential python3 python3-pip ffmpeg nginx
 
-- [Overview](#-overview)
-- [Main Modules](#-main-modules)
-- [Highlights](#-highlights)
-- [Features](#-features)
-- [Technology Stack](#-technology-stack)
-- [System Requirements](#-system-requirements)
-- [Installation](#-installation)
-- [Environment Variables](#-environment-variables)
-- [Development](#-development)
-- [Deployment](#-deployment)
-- [CI/CD Pipeline](#-cicd-pipeline)
-- [MetaCleaner Workflow](#-metacleaner-workflow)
-- [Troubleshooting](#-troubleshooting)
-- [Project Structure](#-project-structure)
-- [Security](#-security)
-- [Contributing](#-contributing)
-- [License](#-license)
+# Install Node.js 20 LTS via NodeSource:
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
 
----
-
-## 🎬 Main Modules
-
-### 1. UGC Creator Studio
-Modul pendukung untuk *workflow* pembuatan konten UGC dan produksi video pendek berkualitas tinggi.
-
-**Use Cases:**
-* TikTok Shop content
-* Shopee Video
-* Marketplace affiliate content
-* UGC product review
-* Product showcase
-* Short-form promotional video
-
-**General Workflow:**
-1. Menentukan produk atau konsep konten.
-2. Menyiapkan ide dan struktur video.
-3. Menyusun kebutuhan visual dan narasi.
-4. Mengelola proses produksi konten.
-5. Menyiapkan hasil akhir untuk kebutuhan publikasi.
-
-### 2. MetaCleaner AIO
-Modul khusus untuk membantu pengelolaan dan pembersihan metadata file media.
-
-**General Capabilities:**
-* Memeriksa struktur metadata file.
-* Menghapus atau membersihkan metadata yang tidak diperlukan.
-* Mengolah file media melalui *workflow* yang tersedia.
-* Menyiapkan file bersih untuk proses distribusi.
-
-> **⚠️ Catatan Penting:** Pembersihan metadata **bukan jaminan mutlak** bahwa suatu platform otomatis menganggap video sebagai rekaman kamera asli atau luput dari sistem deteksi AI.
-
----
-
-## ⚡ Features
-
-| Feature | Description |
-| :--- | :--- |
-| 🎬 **Creator Studio** | Workspace pembuatan dan perencanaan konten UGC |
-| 🧹 **MetaCleaner AIO** | Pengelolaan dan pembersihan metadata media |
-| 🎞️ **Video Processing** | Integrasi *workflow* pengolahan video tingkat lanjut |
-| 🧩 **Modular Architecture** | Pemisahan fungsionalitas berdasarkan modul |
-| 🐳 **Docker Support** | *Deployment* cepat menggunakan container |
-| ☁️ **Cloud Ready** | Opsi *deployment* fleksibel di Google Cloud |
-| 🔄 **CI/CD Automation** | Otomatisasi *build* dan *deployment* via GitHub Actions |
-| 📦 **Container Registry** | Publikasi *image* secara aman ke GHCR |
-
----
-
-## 🛠️ Technology Stack
-
-| Technology | Purpose |
-| :--- | :--- |
-| **Node.js** | Runtime aplikasi utama |
-| **Python** | Pemrosesan media & utilitas pendukung |
-| **FFmpeg** | Core pemrosesan audio dan video |
-| **Gemini API** | Integrasi fitur kecerdasan buatan (opsional) |
-| **Docker** | Containerization aplikasi |
-| **Nginx** | Reverse proxy & web server |
-| **PM2** | Process management untuk Node.js |
-| **Google Cloud** | Infrastruktur *cloud* pilihan |
-| **GitHub Actions** | Otomatisasi CI/CD |
-| **GHCR** | Container image registry |
-
----
-
-## 💻 System Requirements
-
-### Minimum Requirements
-
-| Component | Requirement |
-| :--- | :--- |
-| **Operating System** | Linux, Windows, or macOS |
-| **Node.js** | Versi 20+ |
-| **Python** | Versi 3.8+ |
-| **FFmpeg** | Terinstal dan dapat diakses dari PATH sistem |
-| **Git** | Versi stabil terbaru |
-| **RAM** | Menyesuaikan kebutuhan pemrosesan media |
-| **Storage** | Menyesuaikan ukuran file media yang diolah |
-
-### Check Dependencies
-```bash
-node --version
-npm --version
-python3 --version
+# Verifikasi instalasi:
+node -v      # Harus v20.x atau lebih tinggi
+python3 -V   # Harus Python 3.8+
 ffmpeg -version
-git --version
-```
 
----
+# Install PM2 global (Process Manager):
+sudo npm install -g pm2
 
-## 📥 Installation
+--- Langkah 2: Setup Direktori Proyek & Build ---
+# Buat folder aplikasi:
+sudo mkdir -p /var/www/ugc-studio
+sudo chown -R $USER:$USER /var/www/ugc-studio
+cd /var/www/ugc-studio
 
-### 1. Clone Repository
-```bash
-git clone https://github.com/Cerminsiji/UGC-Master-v2.git
-cd UGC-Master-v2
-```
+# Clone repositori Anda:
+git clone https://github.com/USERNAME/REPO_NAME.git .
 
-### 2. Install Dependencies
-Untuk project berbasis Node.js:
-```bash
-npm install
-```
+# Install dependensi:
+npm install --production=false
 
-Jika repository menyediakan *requirements* Python:
-```bash
-python3 -m pip install -r requirements.txt
-```
+# Buat file .env:
+nano .env
 
-### 3. Configure Environment
-Salin file konfigurasi contoh:
-```bash
-cp .env.example .env
-```
-Kemudian sesuaikan nilai parameter di dalam file `.env` dengan kebutuhan aplikasi Anda.
-
-### 4. Check Available Scripts
-Periksa perintah yang tersedia di dalam `package.json`:
-```bash
-npm run
-```
-Jalankan aplikasi pada mode development (contoh):
-```bash
-npm run dev
-```
-
----
-
-## 🔐 Environment Variables
-
-Berikut adalah contoh template variabel lingkungan (`.env`):
-
-```env
+Isi .env:
 NODE_ENV=production
 PORT=3000
+GEMINI_API_KEY="AIzaSy..."
+APP_URL="https://domain-anda.com"
 
-# AI Integration
-GEMINI_API_KEY=your_gemini_api_key_here
+# Build proyek untuk production:
+npm run build
 
-# Application Configuration
-APP_URL=http://localhost:3000
-```
+--- Langkah 3: Menjalankan Aplikasi dengan PM2 ---
+# Jalankan server menggunakan server.js:
+pm2 start server.js --name "ugc-studio" -i max
 
-**Security Recommendations:**
-* Jangan pernah *commit* file `.env` berisi *credential* asli ke repository publik.
-* Gunakan **GitHub Secrets** untuk pengelolaan kredensial pada pipeline CI/CD.
-* Sesuaikan nama variabel dengan implementasi aktual pada source code Anda.
-
----
-
-## 🧑‍💻 Development
-
-Langkah cepat untuk mulai melakukan pengembangan lokal:
-
-```bash
-# 1. Clone repository
-git clone https://github.com/Cerminsiji/UGC-Master-v2.git
-cd UGC-Master-v2
-
-# 2. Install dependencies
-npm install
-
-# 3. Jalankan script development
-npm run dev
-```
-
----
-
-## 🚀 Deployment
-
-### 1. VPS Deployment (Ubuntu + PM2 + Nginx)
-
-**Update Server & Install Dependencies:**
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y git nginx ffmpeg python3 python3-pip
-```
-*(Catatan: Install Node.js v20+ menggunakan repository resmi NodeSource).*
-
-**Clone & Install Project:**
-```bash
-git clone https://github.com/Cerminsiji/UGC-Master-v2.git
-cd UGC-Master-v2
-npm install
-```
-
-**Setup PM2 Process Manager:**
-```bash
-sudo npm install -g pm2
-pm2 start npm --name ugc-master -- start
+# Simpan proses agar otomatis berjalan saat server restart:
 pm2 save
 pm2 startup
-```
 
-**Konfigurasi Nginx Reverse Proxy:**
-Buat file konfigurasi baru:
-```bash
-sudo nano /etc/nginx/sites-available/ugc-master
-```
+--- Langkah 4: Konfigurasi Nginx Reverse Proxy ---
+Buat konfigurasi virtual host Nginx:
+sudo nano /etc/nginx/sites-available/ugc-studio
 
-Isi dengan konfigurasi berikut (sesuaikan `your-domain.com`):
-```nginx
+Tempel konfigurasi berikut (ganti domain-anda.com dengan domain/IP Anda):
+
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name domain-anda.com www.domain-anda.com;
 
+    # PENTING: Izinkan upload video hingga 500MB
     client_max_body_size 500M;
+    client_body_timeout 300s;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
-
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        # Timeout panjang untuk proses render video berat
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
     }
 }
-```
 
-Aktifkan konfigurasi dan restart Nginx:
-```bash
-sudo ln -s /etc/nginx/sites-available/ugc-master /etc/nginx/sites-enabled/
+# Aktifkan konfigurasi dan restart Nginx:
+sudo ln -s /etc/nginx/sites-available/ugc-studio /etc/nginx/sites-enabled/
 sudo nginx -t
-sudo systemctl reload nginx
-```
+sudo systemctl restart nginx
 
-**Enable HTTPS (SSL Certbot):**
-```bash
+--- Langkah 5: Pasang SSL Gratis (HTTPS) dengan Certbot ---
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
+sudo certbot --nginx -d domain-anda.com -d www.domain-anda.com
 
----
+Aplikasi Anda kini sudah live dengan HTTPS di https://domain-anda.com!
 
-### 2. Docker Deployment
+================================================================================
+5. CARA DEPLOY MENGGUNAKAN DOCKER & DOCKER COMPOSE
+================================================================================
 
-Pastikan Docker dan Docker Compose telah terpasang di sistem Anda.
+Jika Anda lebih memilih containerisasi agar lingkungan selalu identik:
 
-**Build & Run Container Manual:**
-```bash
-docker build -t ugc-master .
+--- Opsi A: Menggunakan Docker Compose (Sangat Disarankan) ---
+1. Pastikan Docker dan Docker Compose sudah terpasang di VPS Anda:
+   curl -fsSL https://get.docker.com -o get-docker.sh
+   sudo sh get-docker.sh
+   sudo apt install -y docker-compose-plugin
 
-docker run -d \
-  --name ugc-master \
-  --restart unless-stopped \
-  -p 3000:3000 \
-  --env-file .env \
-  ugc-master
-```
+2. Siapkan file .env pada direktori proyek:
+   GEMINI_API_KEY=AIzaSy...
+   APP_URL=https://domain-anda.com
 
-**Menggunakan Docker Compose:**
-```bash
-# Menjalankan container
-docker compose up -d --build
+3. Jalankan container di latar belakang:
+   docker compose up -d --build
 
-# Memeriksa status container
-docker compose ps
+4. Cek status container:
+   docker compose ps
+   docker compose logs -f
 
-# Melihat log aplikasi
-docker compose logs -f
+5. Untuk memperbarui versi aplikasi di kemudian hari:
+   git pull
+   docker compose up -d --build
 
-# Menghentikan layanan
-docker compose down
-```
+--- Opsi B: Build & Run Docker Manual ---
+1. Build image:
+   docker build -t ugc-master-app:latest .
 
----
+2. Jalankan container:
+   docker run -d \
+     --name ugc-master-cleaner \
+     -p 3000:3000 \
+     -e GEMINI_API_KEY="AIzaSy..." \
+     -e APP_URL="https://domain-anda.com" \
+     -v /tmp:/tmp \
+     --restart unless-stopped \
+     ugc-master-app:latest
 
-### 3. Google Cloud Run
+================================================================================
+6. CARA DEPLOY KE GOOGLE CLOUD PLATFORM (GCP)
+================================================================================
 
-Google Cloud Run sangat ideal untuk menjalankan aplikasi berbasis container secara *serverless*.
+--- Opsi 1: Google Cloud Run (Serverless Container) ---
+Cloud Run adalah layanan serverless Google yang otomatis melakukan scaling.
 
-**Authentikasi & Konfigurasi Project:**
-```bash
-gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
-```
+1. Install Google Cloud SDK (gcloud CLI) di komputer Anda dan login:
+   gcloud auth login
+   gcloud config set project ID_PROJECT_GCP_ANDA
 
-**Build & Deploy:**
-```bash
-# Build image menggunakan Cloud Build
-gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/ugc-master
+2. Build dan submit image ke Google Artifact Registry / Container Registry:
+   gcloud builds submit --tag gcr.io/ID_PROJECT_GCP_ANDA/ugc-master:latest
 
-# Deploy ke Cloud Run
-gcloud run deploy ugc-master \
-  --image gcr.io/YOUR_PROJECT_ID/ugc-master \
-  --region asia-southeast2 \
-  --platform managed \
-  --allow-unauthenticated
-```
-*(Sesuaikan region, konfigurasi memori, timeout, dan port lingkungan sesuai kebutuhan aplikasi).*
+3. Deploy ke Cloud Run:
+   gcloud run deploy ugc-master \
+     --image gcr.io/ID_PROJECT_GCP_ANDA/ugc-master:latest \
+     --platform managed \
+     --region asia-southeast1 \
+     --allow-unauthenticated \
+     --memory 4Gi \
+     --cpu 2 \
+     --timeout 600 \
+     --set-env-vars GEMINI_API_KEY="AIzaSy...",APP_URL="https://URL_CLOUD_RUN_ANDA"
 
----
+Catatan Cloud Run:
+- Berikan alokasi CPU minimal 2 vCPU dan RAM 4 GB agar re-encoding video FFmpeg
+  tidak kehabisan memori.
+- Set timeout ke 600 detik (10 menit) untuk mencegah timeout pada video panjang.
 
-### 4. Google Compute Engine (GCE)
-1. Buat instance VM Linux melalui Google Cloud Console.
-2. Atur aturan *firewall* dan akses SSH.
-3. Install Node.js, Python, FFmpeg, Git, dan Nginx pada VM.
-4. Clone repository dan pasang *dependencies*.
-5. Konfigurasikan file lingkungan (`.env`).
-6. Jalankan aplikasi menggunakan PM2 atau Docker.
-7. Konfigurasikan Nginx sebagai reverse proxy dan aktifkan SSL.
+--- Opsi 2: Google Compute Engine (VM Instance) ---
+1. Di Google Cloud Console, buka 'Compute Engine' -> 'VM instances'.
+2. Klik 'Create Instance':
+   - Machine type: e2-standard-2 (2 vCPU, 8 GB RAM) atau e2-medium.
+   - Boot disk: Ubuntu 22.04 LTS (minimal 25 GB SSD).
+   - Firewall: Centang 'Allow HTTP traffic' dan 'Allow HTTPS traffic'.
+3. Setelah VM aktif, klik tombol 'SSH' lalu ikuti panduan Bagian 4 (Deploy ke VPS).
 
----
+================================================================================
+7. OTOMASI BUILD DOCKER DI GITHUB (GITHUB ACTIONS CI/CD)
+================================================================================
 
-## 🔄 CI/CD Pipeline
+Repositori ini telah dilengkapi dengan workflow CI/CD otomatis pada file:
+.github/workflows/docker-build.yml
 
-UGC Master mendukung otomatisasi *build* dan publikasi Docker image ke GitHub Container Registry (GHCR) menggunakan GitHub Actions.
+Cara Kerja Otomasi:
+1. Setiap kali Anda melakukan 'git push' ke branch 'main' atau 'master' (atau 
+   membuat rilis tag seperti 'v1.0.0'), GitHub Actions akan secara otomatis:
+   - Menjalankan build environment Ubuntu.
+   - Membangun (build) Docker image multi-stage (Node.js + Python 3 + FFmpeg).
+   - Mengunggah (push) image siap pakai ke GitHub Container Registry (GHCR) 
+     pada alamat:
+     ghcr.io/USERNAME_GITHUB/NAMA_REPO:latest
 
-**Workflow Overview:**
-```text
-Developer Push ➔ GitHub Repository ➔ GitHub Actions ➔ Build Docker Image ➔ Publish to GHCR ➔ Deployment Environment
-```
+2. Cara Menggunakan Image Hasil GitHub Actions di Server Anda:
+   Di server VPS Anda, cukup login satu kali ke GHCR:
+   echo "PERSONAL_ACCESS_TOKEN_GITHUB" | docker login ghcr.io -u USERNAME_GITHUB --password-stdin
 
-**GHCR Image Format:**
-```text
-ghcr.io/USERNAME/REPOSITORY:latest
-```
+   Lalu jalankan image langsung tanpa perlu build ulang di server:
+   docker run -d \
+     --name ugc-master \
+     -p 3000:3000 \
+     -e GEMINI_API_KEY="AIzaSy..." \
+     -e APP_URL="https://domain-anda.com" \
+     --restart unless-stopped \
+     ghcr.io/USERNAME_GITHUB/NAMA_REPO:latest
 
-**Recommended GitHub Secrets:**
-| Secret Name | Description |
-| :--- | :--- |
-| `GEMINI_API_KEY` | API Key untuk integrasi AI (jika digunakan) |
-| `DEPLOY_HOST` | IP atau hostname server tujuan *deployment* |
-| `DEPLOY_USER` | Username akses SSH server |
-| `DEPLOY_SSH_KEY` | SSH private key untuk otentikasi server |
+================================================================================
+8. KONFIGURASI ENVIRONMENT VARIABLES (.ENV)
+================================================================================
 
-[![Docker Build Status](https://github.com/Cerminsiji/UGC-Master-v2/actions/workflows/docker-build.yml/badge.svg)](https://github.com/Cerminsiji/UGC-Master-v2/actions/workflows/docker-build.yml)
+Variabel yang didukung oleh aplikasi:
 
----
+| Nama Variabel     | Wajib? | Keterangan                                       |
+|-------------------|--------|--------------------------------------------------|
+| GEMINI_API_KEY    | Ya     | API Key dari Google AI Studio untuk fitur AI.    |
+| APP_URL           | Ya     | URL publik aplikasi (contoh: https://domain.com) |
+| PORT              | Tidak  | Port HTTP server (Default: 3000)                 |
+| HOSTNAME          | Tidak  | Host binding (Default: 0.0.0.0)                  |
+| FFMPEG_BIN        | Tidak  | Jalur manual binary FFmpeg jika ada kustomisasi  |
+| FFPROBE_BIN       | Tidak  | Jalur manual binary FFprobe jika ada kustomisasi |
 
-## 🧹 MetaCleaner Workflow
+================================================================================
+9. PEMELIHARAAN, AUTO-CLEANER, & TROUBLESHOOTING
+================================================================================
 
-Alur standar proses pembersihan metadata file media:
+1. Mekanisme Pembersihan Otomatis (Auto-Clean):
+   Aplikasi dilengkapi proteksi server otomatis untuk membersihkan file sisa 
+   temporary:
+   - File video upload dan hasil encode otomatis dihapus setelah 5 menit (TTL).
+   - Background sweeper berjalan setiap 120 detik untuk membersihkan file /tmp
+     yang berstatus orphan/dormant.
+   - Anda juga dapat memicu pembersihan manual kapan saja melalui panel 
+     "Audit Forensik & Log" -> Klik "Bersihkan Server", atau via endpoint HTTP:
+     curl -X DELETE "http://127.0.0.1:3000/api/meta-cleaner/download?sweep=dormant"
 
-```text
-Input Media ➔ Metadata Inspection ➔ Metadata Processing ➔ Output Validation ➔ Processed Media
-```
+2. Error "Payload Too Large" (413) saat Upload Video:
+   Jika menggunakan Nginx, pastikan direktif berikut sudah disetel di blok server:
+   client_max_body_size 500M;
 
-**Recommended Steps:**
-1. Siapkan file media mentah yang akan diproses.
-2. Lakukan inspeksi metadata awal sebelum pemrosesan.
-3. Jalankan fungsi *MetaCleaner* sesuai skenario kebutuhan.
-4. Simpan hasil pemrosesan file.
-5. Periksa kembali struktur file hasil akhir untuk memastikan kualitas audio dan video tetap optimal.
+3. Error Memory/OOM Saat Encoding Video 4K atau Durasi Panjang:
+   Pastikan swap memory aktif pada VPS Anda jika RAM terbatas:
+   sudo fallocate -l 4G /swapfile
+   sudo chmod 600 /swapfile
+   sudo mkswap /swapfile
+   sudo swapon /swapfile
 
----
+4. Cek Health Check Server:
+   curl -I http://127.0.0.1:3000/api/health
+   Respon yang benar adalah HTTP 200 dengan status "ok".
 
-## 🧰 Troubleshooting
-
-1. **`npm install` gagal:**
-   * Pastikan versi Node.js dan npm kompatibel (`node -v`).
-   * Jalankan pembersihan cache: `npm cache verify && npm install`.
-
-2. **FFmpeg tidak ditemukan oleh sistem:**
-   * Install ulang atau pastikan path FFmpeg terdaftar di PATH environment variabel server (`sudo apt install ffmpeg -y`).
-
-3. **Port 3000 sudah digunakan:**
-   * Periksa proses aktif: `sudo lsof -i :3000`, lalu sesuaikan port aplikasi atau hentikan proses terkait.
-
-4. **PM2 application error:**
-   * Cek status: `pm2 status`, periksa log: `pm2 logs ugc-master`, atau lakukan *restart*: `pm2 restart ugc-master`.
-
-5. **Nginx configuration error:**
-   * Validasi sintaks konfigurasi: `sudo nginx -t` lalu cek status layanan: `sudo systemctl status nginx`.
-
----
-
-## 📁 Project Structure
-
-Struktur direktori standar proyek:
-
-```text
-UGC-Master-v2/
-│
-├── public/
-├── src/
-├── scripts/
-├── assets/
-│
-├── .github/
-│   └── workflows/
-│       └── docker-build.yml
-│
-├── Dockerfile
-├── docker-compose.yml
-├── package.json
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
-```
-
----
-
-## 🔒 Security Policy
-
-* **Jangan pernah melakukan commit file `.env`** ke dalam sistem version control.
-* Lindungi dan rahasiakan API Key; hindari eksposur di sisi *client/frontend*.
-* Batasi ukuran file unggahan (*upload limit*) sesuai kapasitas server untuk mencegah serangan *Denial of Service* (DoS).
-* Selalu gunakan protokol HTTPS untuk *deployment* di lingkungan produksi publik.
-* Perbarui *dependencies* secara berkala guna meminimalisir celah keamanan kerentanan (*vulnerabilities*).
-
----
-
-## 🤝 Contributing
-
-Kontribusi, saran, dan pengembangan lanjutan sangat terbuka lebar.
-
-**Contribution Steps:**
-1. Fork repository ini.
-2. Buat branch fitur baru (`git checkout -b feature/nama-fitur`).
-3. Lakukan *commit* perubahan (`git commit -m "Add amazing feature"`).
-4. Dorong ke branch Anda (`git push origin feature/nama-fitur`).
-5. Buat *Pull Request* baru ke branch utama.
-
-Gunakan tab **GitHub Issues** untuk melaporkan *bug*, kendala teknis, atau mengajukan usulan fitur baru.
-
----
-
-## 📝 License
-
-Informasi lisensi merujuk pada file `LICENSE` yang disertakan di dalam repository ini.
-
----
-
-<div align="center">
-
-### ⭐ Support the Project
-
-Jika proyek ini membantu *workflow* Anda, berikan dukungan dengan menekan tombol **Star** di GitHub!
-
-<br>
-
-[![View Repository](https://img.shields.io/badge/GitHub-View%20Repository-181717?style=for-the-badge&logo=github)](https://github.com/Cerminsiji/UGC-Master-v2)
-[![Star Project](https://img.shields.io/badge/Star-Project-yellow?style=for-the-badge&logo=github)](https://github.com/Cerminsiji/UGC-Master-v2/stargazers)
-[![Report Bug](https://img.shields.io/badge/Report-Bug-red?style=for-the-badge&logo=github)](https://github.com/Cerminsiji/UGC-Master-v2/issues)
-
-<br>
-
-**UGC Master V2.5**  
-*Create • Process • Optimize*
-
-Made with ❤️ for Content Creators
-
-</div>
+================================================================================
+UGC Master - Creator Studio & MetaCleaner AIO Engine
+Build & Deployment Documentation - 2026
+================================================================================
