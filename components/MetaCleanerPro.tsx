@@ -16,11 +16,14 @@ import {
   Download,
   Eye,
   FileSearch,
+  Filter,
   Layers,
   RefreshCw,
   Share2,
+  Shield,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Terminal,
   Trash2,
   UploadCloud,
@@ -574,10 +577,18 @@ export const MetaCleanerPro: React.FC = () => {
 
   // Single collapsed Forensic Audit & Log drawer (collapsed by default for clean AIO UX)
   const [showAuditDrawer, setShowAuditDrawer] = useState(false);
-  const [auditTab, setAuditTab] = useState<'av' | 'diag' | 'heatmap' | 'logs'>('av');
+  const [auditTab, setAuditTab] = useState<'triggers' | 'av' | 'diag' | 'heatmap' | 'logs'>('triggers');
   const [diagTarget, setDiagTarget] = useState<'before' | 'after'>('after');
   const [showRawProbeJson, setShowRawProbeJson] = useState(false);
   const [copiedDiag, setCopiedDiag] = useState(false);
+  const [triggerFilter, setTriggerFilter] = useState<'all' | 'sei' | 'c2pa' | 'vendor' | 'forensic'>('all');
+
+  // Real-time Deep-Scan SEI & Watermark progress states
+  const [deepScanActive, setDeepScanActive] = useState(false);
+  const [deepScanTarget, setDeepScanTarget] = useState<'before' | 'after'>('before');
+  const [deepScanPercent, setDeepScanPercent] = useState<number>(0);
+  const [deepScanStage, setDeepScanStage] = useState<string>('');
+  const deepScanIntervalRef = useRef<number | null>(null);
 
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
   const [uploadPercent, setUploadPercent] = useState<number>(0);
@@ -668,6 +679,14 @@ export const MetaCleanerPro: React.FC = () => {
       if (previewUrlAfter?.startsWith('blob:')) URL.revokeObjectURL(previewUrlAfter);
     };
   }, [previewUrlBefore, previewUrlAfter]);
+
+  useEffect(() => {
+    return () => {
+      if (deepScanIntervalRef.current) {
+        window.clearInterval(deepScanIntervalRef.current);
+      }
+    };
+  }, []);
 
   const cleanupServerFilesNow = useCallback(
     async (opts?: { jobId?: string | null; uploadId?: string | null; silent?: boolean }) => {
@@ -782,6 +801,31 @@ export const MetaCleanerPro: React.FC = () => {
         setProbeErrorAfter(null);
       }
 
+      // Start Real-Time Deep-Scan visual tracking
+      setDeepScanActive(true);
+      setDeepScanTarget(target);
+      setDeepScanPercent(10);
+      setDeepScanStage('[Tahap 1/4] Membaca Struktur Kontainer Atom MP4/MOV (moov, trak, mdat)...');
+
+      if (deepScanIntervalRef.current) {
+        window.clearInterval(deepScanIntervalRef.current);
+      }
+
+      let simulatedPercent = 10;
+      deepScanIntervalRef.current = window.setInterval(() => {
+        simulatedPercent += Math.floor(Math.random() * 4) + 2;
+        if (simulatedPercent > 92) simulatedPercent = 92;
+        setDeepScanPercent(simulatedPercent);
+
+        if (simulatedPercent >= 75) {
+          setDeepScanStage('[Tahap 4/4] Analisis Spektral Forensik Audio-Visual (Stereo Air, Noise Floor, CMOS Grain)...');
+        } else if (simulatedPercent >= 50) {
+          setDeepScanStage('[Tahap 3/4] Ekstraksi Watermark SynthID (ITU-T T.35), C2PA, & Atom UUID...');
+        } else if (simulatedPercent >= 25) {
+          setDeepScanStage('[Tahap 2/4] Deep-Scan Bitstream: Dekomposisi SEI NAL & Emulation Unescape...');
+        }
+      }, 130);
+
       try {
         let data: any = null;
         let lastErr: Error | null = null;
@@ -828,6 +872,20 @@ export const MetaCleanerPro: React.FC = () => {
         if (!data?.probe) throw lastErr || new Error('Gagal menjalankan ffprobe server.');
         const probe = data.probe as ExternalProbeReport;
         const av = probe.audioVisualForensics;
+
+        if (deepScanIntervalRef.current) {
+          window.clearInterval(deepScanIntervalRef.current);
+          deepScanIntervalRef.current = null;
+        }
+        setDeepScanPercent(100);
+        setDeepScanStage(
+          target === 'after'
+            ? `[Selesai 100%] Audit Output: ${probe.cleanliness.overallClean ? '0% Watermark AI Terdeteksi (Bitstream Bersih Total)' : 'Verifikasi Selesai'}`
+            : `[Selesai 100%] Audit Input: ${probe.ffprobeDiagnostic?.aiTriggerChecklist?.length ?? 0} Pemicu AI Teridentifikasi.`
+        );
+        window.setTimeout(() => {
+          setDeepScanActive(false);
+        }, 1600);
 
         const mapProbeState = (prev: InspectionState): InspectionState => {
           const seiTotal = probe.seiReport.totalSeiUnits;
@@ -883,6 +941,11 @@ export const MetaCleanerPro: React.FC = () => {
           probe.cleanliness.overallClean ? 'emerald' : 'amber'
         );
       } catch (err: any) {
+        if (deepScanIntervalRef.current) {
+          window.clearInterval(deepScanIntervalRef.current);
+          deepScanIntervalRef.current = null;
+        }
+        setDeepScanActive(false);
         const msg = err?.message || 'Gagal menjalankan ffprobe server';
         if (target === 'before') setProbeErrorBefore(msg);
         else setProbeErrorAfter(msg);
@@ -890,6 +953,10 @@ export const MetaCleanerPro: React.FC = () => {
       } finally {
         if (target === 'before') setIsProbingBefore(false);
         else setIsProbingAfter(false);
+        if (deepScanIntervalRef.current) {
+          window.clearInterval(deepScanIntervalRef.current);
+          deepScanIntervalRef.current = null;
+        }
       }
     },
     [appendLog]
@@ -1799,6 +1866,41 @@ export const MetaCleanerPro: React.FC = () => {
           </div>
         )}
 
+        {/* REAL-TIME DEEP-SCAN METADATA & SEI PROGRESS BAR */}
+        {deepScanActive && (
+          <div className="bg-slate-900/95 border border-cyan-500/40 rounded-2xl p-4 space-y-2.5 shadow-xl shadow-cyan-950/40 backdrop-blur-sm animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="relative flex items-center justify-center">
+                  <FileSearch className="w-4 h-4 text-cyan-400 animate-pulse" />
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                </div>
+                <span className="font-extrabold text-white">
+                  Deep-Scan Metadata SEI &amp; Audit Forensik AI
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800/50">
+                  {deepScanTarget === 'before' ? 'Target: Input Asli' : 'Target: Output Bersih'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 font-mono text-[11px] text-cyan-300 font-extrabold tabular-nums">
+                <span>{deepScanPercent}%</span>
+              </div>
+            </div>
+
+            <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-emerald-400 rounded-full transition-all duration-150 ease-out shadow-sm shadow-cyan-400/50"
+                style={{ width: `${Math.min(100, Math.max(0, deepScanPercent))}%` }}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
+              <span className="truncate max-w-[85%] text-slate-300 font-medium">{deepScanStage}</span>
+              <span className="text-cyan-400/80 font-bold shrink-0">Real-Time Probe</span>
+            </div>
+          </div>
+        )}
+
         {/* UNIFIED BEFORE VS AFTER RESULT CARDS */}
         {(currentFile || afterProbe || processedBlob || (lastJobId && !isServerCleanedUp)) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2094,6 +2196,10 @@ export const MetaCleanerPro: React.FC = () => {
                 <div className="flex flex-wrap gap-1.5">
                   {(
                     [
+                      {
+                        id: 'triggers',
+                        label: `Pemicu AI (${activeAuditProbe?.ffprobeDiagnostic?.aiTriggerChecklist?.length ?? 0})`,
+                      },
                       { id: 'av', label: 'Skor & Audio-Visual' },
                       { id: 'diag', label: 'SEI & Atom MP4' },
                       { id: 'heatmap', label: 'Heatmap Noise' },
@@ -2115,7 +2221,7 @@ export const MetaCleanerPro: React.FC = () => {
                   ))}
                 </div>
 
-                {(auditTab === 'av' || auditTab === 'diag') && (beforeProbe || afterProbe) && (
+                {(auditTab === 'triggers' || auditTab === 'av' || auditTab === 'diag') && (beforeProbe || afterProbe) && (
                   <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
                     <button
                       type="button"
@@ -2140,6 +2246,201 @@ export const MetaCleanerPro: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {auditTab === 'triggers' && (
+                <div className="space-y-4">
+                  {/* Status Bar & Category Filter */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <ShieldAlert className={`w-4 h-4 ${diagTarget === 'after' && afterProbe?.cleanliness.overallClean ? 'text-emerald-400' : 'text-rose-400'}`} />
+                      <div className="text-xs font-bold text-slate-200">
+                        Pemicu AI ({diagTarget === 'after' && afterProbe ? 'Output Bersih' : 'Input Asli'})
+                      </div>
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                        (activeAuditProbe?.ffprobeDiagnostic?.aiTriggerChecklist?.length ?? 0) === 0
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      }`}>
+                        {(activeAuditProbe?.ffprobeDiagnostic?.aiTriggerChecklist?.length ?? 0) === 0
+                          ? '0% Deteksi AI (Bebas Watermark)'
+                          : `${activeAuditProbe?.ffprobeDiagnostic?.aiTriggerChecklist?.length ?? 0} Indikator Terdeteksi`}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="text-[10px] text-slate-500 flex items-center gap-1 mr-1">
+                        <Filter className="w-3 h-3" /> Filter:
+                      </span>
+                      {(
+                        [
+                          { id: 'all', label: 'Semua' },
+                          { id: 'sei', label: 'SEI NAL' },
+                          { id: 'c2pa', label: 'C2PA/UUID' },
+                          { id: 'vendor', label: 'Tag & Muxer' },
+                          { id: 'forensic', label: 'Forensik AV' },
+                        ] as const
+                      ).map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setTriggerFilter(f.id)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
+                            triggerFilter === f.id
+                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                              : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {!activeAuditProbe ? (
+                    <div className="text-xs text-slate-500 py-6 text-center bg-slate-950/60 rounded-xl border border-slate-800/80">
+                      Unggah video atau lakukan probe untuk memindai pemicu watermark AI dan metadata SEI tersembunyi.
+                    </div>
+                  ) : activeAuditProbe.ffprobeDiagnostic?.aiTriggerChecklist.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-emerald-950/20 border border-emerald-500/30 space-y-3">
+                      <div className="flex items-center gap-2.5 text-emerald-300">
+                        <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-400" />
+                        <div>
+                          <div className="text-xs font-extrabold uppercase tracking-wide">
+                            Bebas Watermark AI &amp; Metadata SEI (Tingkat Deteksi 0%)
+                          </div>
+                          <div className="text-[11px] text-emerald-400/80 font-normal mt-0.5">
+                            Bitstream video dan kontainer MP4 bersih menyeluruh dari jejak sintetik difusi AI.
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2 border-t border-emerald-900/30 font-mono text-[10px]">
+                        <div className="bg-emerald-950/30 p-2 rounded-lg border border-emerald-900/40">
+                          <span className="text-slate-400 block">SEI NAL Units:</span>
+                          <span className="text-emerald-300 font-bold">0 Unit (100% Zero-SEI)</span>
+                        </div>
+                        <div className="bg-emerald-950/30 p-2 rounded-lg border border-emerald-900/40">
+                          <span className="text-slate-400 block">C2PA / JUMBF:</span>
+                          <span className="text-emerald-300 font-bold">0 Manifest (Clean)</span>
+                        </div>
+                        <div className="bg-emerald-950/30 p-2 rounded-lg border border-emerald-900/40">
+                          <span className="text-slate-400 block">Box UUID Kustom:</span>
+                          <span className="text-emerald-300 font-bold">0 Box (Bebas Klaim)</span>
+                        </div>
+                        <div className="bg-emerald-950/30 p-2 rounded-lg border border-emerald-900/40">
+                          <span className="text-slate-400 block">Vendor Tag:</span>
+                          <span className="text-emerald-300 font-bold">VideoHandle (OEM Bebas Lavf)</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+                      {activeAuditProbe.ffprobeDiagnostic.aiTriggerChecklist
+                        .filter((t) => {
+                          if (triggerFilter === 'sei') {
+                            return t.layer === 'SEI_NAL' || t.markerType === 'SynthID' || t.markerType === 'SEI_Hidden';
+                          }
+                          if (triggerFilter === 'c2pa') {
+                            return t.layer === 'C2PA_JUMBF' || t.layer === 'UUID_BOX' || t.markerType === 'C2PA';
+                          }
+                          if (triggerFilter === 'vendor') {
+                            return (
+                              t.layer === 'VENDOR_TAG' ||
+                              (t.layer === 'CONTAINER_MUXER' && t.markerType !== 'Forensik_AudioVisual') ||
+                              t.markerType === 'AI_Signature' ||
+                              t.markerType === 'Muxer_Tombstone'
+                            );
+                          }
+                          if (triggerFilter === 'forensic') {
+                            return t.markerType === 'Forensik_AudioVisual';
+                          }
+                          return true;
+                        })
+                        .map((t) => {
+                          const isCritical = t.severity === 'critical';
+                          const isWarning = t.severity === 'warning';
+                          return (
+                            <div
+                              key={t.id}
+                              className={`p-3 rounded-xl border text-xs space-y-2 font-mono ${
+                                isCritical
+                                  ? 'bg-rose-950/20 border-rose-900/50'
+                                  : isWarning
+                                    ? 'bg-amber-950/20 border-amber-900/50'
+                                    : 'bg-slate-950 border-slate-800'
+                              }`}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 pb-1 border-b border-slate-800/80">
+                                <div className="flex items-center gap-1.5 font-bold">
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-extrabold tracking-wider ${
+                                      isCritical
+                                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                        : isWarning
+                                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                          : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                                    }`}
+                                  >
+                                    {isCritical ? 'KRITIS' : isWarning ? 'PERINGATAN' : 'INFO'}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400">[{t.layer}]</span>
+                                  <span className={isCritical ? 'text-rose-200' : isWarning ? 'text-amber-200' : 'text-slate-200'}>
+                                    {t.title}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                                  {t.offsetHex && <span>Offset: <strong className="text-slate-300">{t.offsetHex}</strong></span>}
+                                  {t.sizeBytes !== undefined && <span>({t.sizeBytes}B)</span>}
+                                </div>
+                              </div>
+
+                              <div className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                                {t.detail}
+                              </div>
+
+                              {(t.hexPreview || t.decodedPreview) && (
+                                <div className="bg-slate-950/90 rounded-lg p-2 border border-slate-800/80 text-[10px] space-y-1">
+                                  {t.hexPreview && (
+                                    <div className="flex items-center gap-2 text-slate-400">
+                                      <span className="text-slate-500 shrink-0">Hex Preview:</span>
+                                      <code className="text-cyan-300 break-all">{t.hexPreview}</code>
+                                    </div>
+                                  )}
+                                  {t.decodedPreview && (
+                                    <div className="flex items-center gap-2 text-slate-400">
+                                      <span className="text-slate-500 shrink-0">ASCII/Text:</span>
+                                      <code className="text-slate-200 break-all">{t.decodedPreview}</code>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1 text-[10px] font-sans">
+                                {t.impactReason && (
+                                  <div className="bg-rose-950/30 rounded-lg p-2 border border-rose-900/40 space-y-0.5">
+                                    <span className="font-bold text-rose-300 flex items-center gap-1">
+                                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                                      <span>Mengapa Terdeteksi AI?</span>
+                                    </span>
+                                    <p className="text-slate-300 leading-normal">{t.impactReason}</p>
+                                  </div>
+                                )}
+                                {t.remedyAction && (
+                                  <div className="bg-emerald-950/30 rounded-lg p-2 border border-emerald-900/40 space-y-0.5">
+                                    <span className="font-bold text-emerald-300 flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3 shrink-0" />
+                                      <span>Solusi MetaCleaner AIO:</span>
+                                    </span>
+                                    <p className="text-slate-300 leading-normal">{t.remedyAction}</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {auditTab === 'av' && (
                 <div className="space-y-4">

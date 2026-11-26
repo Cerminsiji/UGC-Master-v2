@@ -119,6 +119,21 @@ export interface IsolatedMetadataBlock {
   triggerReason: string;
 }
 
+export interface AiTriggerCheckItem {
+  id: string;
+  layer: 'SEI_NAL' | 'C2PA_JUMBF' | 'UUID_BOX' | 'VENDOR_TAG' | 'CONTAINER_MUXER';
+  severity: 'critical' | 'warning' | 'info';
+  title: string;
+  detail: string;
+  markerType?: 'SynthID' | 'C2PA' | 'SEI_Hidden' | 'AI_Signature' | 'Muxer_Tombstone' | 'Forensik_AudioVisual';
+  offsetHex?: string;
+  sizeBytes?: number;
+  hexPreview?: string;
+  decodedPreview?: string;
+  impactReason?: string;
+  remedyAction?: string;
+}
+
 export interface FfprobeDiagnosticReport {
   commandExecuted: string;
   rawFfprobeSummaryText: string;
@@ -126,13 +141,7 @@ export interface FfprobeDiagnosticReport {
   dataStreamsCount: number;
   isolatedSeiUnits: IsolatedSeiUnit[];
   isolatedMetadataBlocks: IsolatedMetadataBlock[];
-  aiTriggerChecklist: Array<{
-    id: string;
-    layer: 'SEI_NAL' | 'C2PA_JUMBF' | 'UUID_BOX' | 'VENDOR_TAG' | 'CONTAINER_MUXER';
-    severity: 'critical' | 'warning';
-    title: string;
-    detail: string;
-  }>;
+  aiTriggerChecklist: AiTriggerCheckItem[];
 }
 
 export interface ExternalProbeReport {
@@ -514,10 +523,36 @@ function getSeiPayloadLabel(payloadType: number): string {
   }
 }
 
-function bytesToHexPreview(slice: Uint8Array, maxBytes = 24): string {
-  return Array.from(slice.subarray(0, Math.min(slice.length, maxBytes)))
-    .map((b) => b.toString(16).padStart(2, '0').toUpperCase())
+function unescapeRbsp(buf: Uint8Array): Uint8Array {
+  let hasEmulation = false;
+  for (let i = 0; i + 2 < buf.length; i++) {
+    if (buf[i] === 0x00 && buf[i + 1] === 0x00 && buf[i + 2] === 0x03) {
+      hasEmulation = true;
+      break;
+    }
+  }
+  if (!hasEmulation) return buf;
+  const out = new Uint8Array(buf.length);
+  let w = 0;
+  for (let r = 0; r < buf.length; r++) {
+    if (r + 2 < buf.length && buf[r] === 0x00 && buf[r + 1] === 0x00 && buf[r + 2] === 0x03) {
+      out[w++] = 0x00;
+      out[w++] = 0x00;
+      r += 2;
+    } else {
+      out[w++] = buf[r];
+    }
+  }
+  return out.subarray(0, w);
+}
+
+function bytesToHexPreview(buf: Uint8Array, maxBytes = 24): string {
+  if (!buf || buf.length === 0) return '-';
+  const slice = buf.subarray(0, Math.min(buf.length, maxBytes));
+  const hex = Array.from(slice)
+    .map((b) => b.toString(16).padStart(2, '0'))
     .join(' ');
+  return buf.length > maxBytes ? `${hex}...` : hex;
 }
 
 function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
@@ -855,71 +890,100 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
         break;
       }
       const hdr0 = buf[pos + 4];
+      const forbiddenBit = (hdr0 & 0x80) !== 0;
+
+      let isSei = false;
+      let payloadStart = pos + 5;
+      let nalType = 0;
+
       if (!isHevc) {
-        const nalType = hdr0 & 0x1f;
+        nalType = hdr0 & 0x1f;
         const nalRefIdc = (hdr0 >> 5) & 0x03;
-        if (nalType === 6 && (hdr0 & 0x80) === 0 && nalRefIdc === 0 && pos + 5 < r.end) {
-          const pType = buf[pos + 5];
-          binarySeiCount++;
-          binaryType6++;
-          payloadTypes.add(pType);
-          const slice = buf.subarray(pos + 5, Math.min(pos + 4 + nalLen, pos + 512));
-          const hits = extractAsciiKeywords(slice);
-          for (const hit of hits) {
-            asciiTraces.add(hit);
-          }
-          if (isolatedSeiUnits.length < 30) {
-            const uuid16Hex =
-              pType === 5 && pos + 23 <= r.end && nalLen >= 19
-                ? Array.from(buf.subarray(pos + 7, pos + 23))
-                    .map((b) => b.toString(16).padStart(2, '0'))
-                    .join('')
-                : undefined;
-            const ascii = sanitizeAsciiPreview(slice, 120);
-            const isTrigger = pType === 5 || pType === 4 || hits.length > 0;
-            isolatedSeiUnits.push({
-              index: isolatedSeiUnits.length + 1,
-              source: 'mdat_nal',
-              nalUnitType: 6,
-              payloadType: pType,
-              payloadTypeLabel: getSeiPayloadLabel(pType),
-              byteOffsetHex: `0x${pos.toString(16).toUpperCase()}`,
-              sizeBytes: nalLen,
-              uuid16Hex,
-              decodedAscii: ascii || '(binary SEI payload)',
-              rawHexPreview: bytesToHexPreview(buf.subarray(pos + 4, pos + 4 + nalLen), 24),
-              matchedAiMarkers: hits,
-              isAiTrigger: isTrigger,
-              triggerReason:
-                hits.length > 0
-                  ? `SEI Type 6 memuat string watermark/encoder: ${hits.join(', ')}`
-                  : pType === 5
-                    ? `SEI unregistered user data (UUID: ${uuid16Hex || 'unknown'})`
-                    : `SEI NAL Type 6 (payload_type=${pType})`,
-            });
-          }
+        if (!forbiddenBit && nalType === 6 && nalRefIdc === 0 && pos + 5 < r.end) {
+          isSei = true;
+          payloadStart = pos + 5;
         }
       } else {
-        const nalType = (hdr0 >> 1) & 0x3f;
-        if ((nalType === 39 || nalType === 40) && (hdr0 & 0x80) === 0 && pos + 6 < r.end) {
-          const pType = buf[pos + 6];
+        nalType = (hdr0 >> 1) & 0x3f;
+        if (!forbiddenBit && (nalType === 39 || nalType === 40) && pos + 6 < r.end) {
+          isSei = true;
+          payloadStart = pos + 6;
+        }
+      }
+
+      if (isSei && payloadStart < pos + 4 + nalLen) {
+        const rawPayload = buf.subarray(payloadStart, pos + 4 + nalLen);
+        const rbsp = unescapeRbsp(rawPayload);
+        let cursor = 0;
+
+        while (cursor + 1 < rbsp.length && rbsp[cursor] !== 0x80) {
+          let pType = 0;
+          while (cursor < rbsp.length && rbsp[cursor] === 0xff) {
+            pType += 255;
+            cursor++;
+          }
+          if (cursor >= rbsp.length) break;
+          pType += rbsp[cursor++];
+
+          let pSize = 0;
+          while (cursor < rbsp.length && rbsp[cursor] === 0xff) {
+            pSize += 255;
+            cursor++;
+          }
+          if (cursor >= rbsp.length) break;
+          pSize += rbsp[cursor++];
+
+          const actualSize = Math.min(pSize, rbsp.length - cursor);
+          const msgPayload = rbsp.subarray(cursor, cursor + actualSize);
+          cursor += actualSize;
+
           binarySeiCount++;
-          if (nalType === 39) binaryType39++;
-          if (nalType === 40) binaryType40++;
+          if (!isHevc) binaryType6++;
+          else if (nalType === 39) binaryType39++;
+          else if (nalType === 40) binaryType40++;
+
           payloadTypes.add(pType);
-          const slice = buf.subarray(pos + 6, Math.min(pos + 4 + nalLen, pos + 512));
-          const hits = extractAsciiKeywords(slice);
+          const hits = extractAsciiKeywords(msgPayload);
           for (const hit of hits) {
             asciiTraces.add(hit);
           }
-          if (isolatedSeiUnits.length < 30) {
-            const uuid16Hex =
-              pType === 5 && pos + 24 <= r.end && nalLen >= 20
-                ? Array.from(buf.subarray(pos + 8, pos + 24))
-                    .map((b) => b.toString(16).padStart(2, '0'))
-                    .join('')
-                : undefined;
-            const ascii = sanitizeAsciiPreview(slice, 120);
+
+          if (isolatedSeiUnits.length < 40) {
+            let uuid16Hex: string | undefined;
+            let triggerReason = '';
+
+            if (pType === 5) {
+              if (msgPayload.length >= 16) {
+                uuid16Hex = Array.from(msgPayload.subarray(0, 16))
+                  .map((b) => b.toString(16).padStart(2, '0'))
+                  .join('');
+              }
+              const isC2pa = Boolean(uuid16Hex && (uuid16Hex.startsWith('d8fec3d3') || uuid16Hex.startsWith('63327061')));
+              if (isC2pa && uuid16Hex) {
+                triggerReason = `C2PA Content Credentials SEI (UUID: ${uuid16Hex.slice(0, 16)}...)`;
+              } else if (hits.length > 0) {
+                triggerReason = `SEI Unregistered memuat watermark: ${hits.join(', ')}`;
+              } else {
+                triggerReason = `SEI Unregistered User Data (UUID: ${uuid16Hex ? uuid16Hex.slice(0, 16) + '...' : 'unknown'})`;
+              }
+            } else if (pType === 4) {
+              const countryCode = msgPayload[0];
+              const providerCode = msgPayload.length >= 3 ? (msgPayload[1] << 8) | msgPayload[2] : 0;
+              const isGoogle = countryCode === 0xb5 && providerCode === 0x003b;
+              if (isGoogle || hits.some((h) => h.includes('synthid') || h.includes('deepmind') || h.includes('google'))) {
+                triggerReason = `Google DeepMind SynthID / ITU-T T.35 Watermark (Country=0x${countryCode.toString(16)}, Provider=0x${providerCode.toString(16)})`;
+              } else {
+                triggerReason = `ITU-T T.35 Registered User Data SEI (Country=0x${countryCode ? countryCode.toString(16) : '00'}, Provider=0x${providerCode ? providerCode.toString(16) : '00'})`;
+              }
+            } else if (pType === 0) {
+              triggerReason = 'SEI Buffering Period (Jejak timing non-kamera model difusi)';
+            } else if (pType === 1) {
+              triggerReason = 'SEI Picture Timing (Sinyal cadence frame sintetik)';
+            } else {
+              triggerReason = `SEI NAL Unit Type ${nalType} (${getSeiPayloadLabel(pType)})`;
+            }
+
+            const ascii = sanitizeAsciiPreview(msgPayload, 140);
             isolatedSeiUnits.push({
               index: isolatedSeiUnits.length + 1,
               source: 'mdat_nal',
@@ -927,16 +991,13 @@ function scanIsoBmffAndSei(buf: Buffer, codecName: string) {
               payloadType: pType,
               payloadTypeLabel: getSeiPayloadLabel(pType),
               byteOffsetHex: `0x${pos.toString(16).toUpperCase()}`,
-              sizeBytes: nalLen,
+              sizeBytes: actualSize,
               uuid16Hex,
-              decodedAscii: ascii || '(binary HEVC SEI payload)',
-              rawHexPreview: bytesToHexPreview(buf.subarray(pos + 4, pos + 4 + nalLen), 24),
+              decodedAscii: ascii || '(binary SEI payload)',
+              rawHexPreview: bytesToHexPreview(msgPayload, 24),
               matchedAiMarkers: hits,
-              isAiTrigger: pType === 5 || pType === 4 || hits.length > 0,
-              triggerReason:
-                hits.length > 0
-                  ? `HEVC SEI Type ${nalType} memuat marker: ${hits.join(', ')}`
-                  : `HEVC SEI NAL Type ${nalType} (payload_type=${pType})`,
+              isAiTrigger: true,
+              triggerReason,
             });
           }
         }
@@ -1582,54 +1643,99 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
   const flaggedReasons: string[] = [];
   const aiTriggerChecklist: FfprobeDiagnosticReport['aiTriggerChecklist'] = [];
 
-  if (totalSeiUnits > 0) {
+  if (isolatedSeiUnits.length > 0) {
+    for (const u of isolatedSeiUnits.slice(0, 15)) {
+      const isSynthId = u.payloadType === 4 || u.matchedAiMarkers.some(m => m.includes('synthid') || m.includes('google'));
+      const isC2pa = u.uuid16Hex?.startsWith('d8fec3d3') || u.uuid16Hex?.startsWith('63327061');
+      const mType: AiTriggerCheckItem['markerType'] = isSynthId ? 'SynthID' : isC2pa ? 'C2PA' : 'SEI_Hidden';
+
+      aiTriggerChecklist.push({
+        id: `trig_sei_${u.index}`,
+        layer: 'SEI_NAL',
+        severity: 'critical',
+        title: `SEI NAL Unit #${u.index}: ${u.payloadTypeLabel}`,
+        detail: u.triggerReason,
+        markerType: mType,
+        offsetHex: u.byteOffsetHex || '0x00',
+        sizeBytes: u.sizeBytes,
+        hexPreview: u.rawHexPreview,
+        decodedPreview: u.decodedAscii,
+        impactReason: isSynthId
+          ? 'Watermark SynthID / ITU-T T.35 tersembunyi di dalam aliran NAL video dan terbaca oleh neural bitstream scanner platform.'
+          : isC2pa
+            ? 'UUID Unregistered SEI berisi hash signature provenance C2PA Content Credentials.'
+            : 'Metadata SEI NAL Type 6/39/40 non-standar menjadi fingerprint detektor AI otomatis platform (TikTok, Meta, Google).',
+        remedyAction: 'Scrambling CSPRNG byte-level + filter_units remove SEI + CFR 30fps re-encoding.',
+      });
+    }
+  } else if (totalSeiUnits > 0) {
     const msg = `SEI NAL Units terdeteksi (${totalSeiUnits} unit${combinedPayloadTypes.length ? `, payload_type=${combinedPayloadTypes.join(',')}` : ''})`;
     flaggedReasons.push(msg);
     aiTriggerChecklist.push({
-      id: 'trig_sei',
+      id: 'trig_sei_summary',
       layer: 'SEI_NAL',
       severity: 'critical',
       title: `${totalSeiUnits} SEI NAL Unit (${type6Count > 0 ? 'H.264 Type 6' : 'HEVC Type 39/40'})`,
       detail: `Payload types: [${combinedPayloadTypes.join(', ') || 'unregistered'}]${combinedAsciiTraces.length ? ` • Jejak: ${combinedAsciiTraces.slice(0, 3).join(', ')}` : ''}`,
+      markerType: 'SEI_Hidden',
+      impactReason: 'SEI NAL unit tertinggal di dalam bitstream terdeteksi oleh parser bitstream platform.',
+      remedyAction: 'Scrambling CSPRNG + Filter Units Zero-SEI Bitstream Strip.',
     });
   }
-  if (bmff.uuidClaims.length > 0) {
-    const msg = `${bmff.uuidClaims.length} box UUID claim terdeteksi`;
-    flaggedReasons.push(msg);
+
+  for (const u of bmff.uuidClaims.slice(0, 8)) {
+    const isC2pa = u.uuidHex.toLowerCase().startsWith('d8fec3d3');
     aiTriggerChecklist.push({
-      id: 'trig_uuid',
+      id: `trig_uuid_box_${u.offset}`,
       layer: 'UUID_BOX',
       severity: 'critical',
-      title: `${bmff.uuidClaims.length} UUID Claim Box Tertinggal`,
-      detail: bmff.uuidClaims.map((u) => `uuid @0x${u.offset.toString(16)} (${u.uuidHex.slice(0, 16)}...)`).slice(0, 3).join('; '),
+      title: `Box UUID Claim Tertinggal (${u.uuidHex.slice(0, 16)}...)`,
+      detail: `Offset 0x${u.offset.toString(16).toUpperCase()} • Ukuran ${u.size}B • Path: ${u.parentPath}`,
+      markerType: isC2pa ? 'C2PA' : 'AI_Signature',
+      offsetHex: `0x${u.offset.toString(16).toUpperCase()}`,
+      sizeBytes: u.size,
+      hexPreview: u.uuidHex.slice(0, 32),
+      decodedPreview: u.signatureMatches.join(', ') || '(UUID Payload)',
+      impactReason: 'Box UUID kustom di kontainer MP4 sering memuat metadata provenance generator AI.',
+      remedyAction: 'Overwriting entropy CSPRNG dan eksisi fisik box MP4.',
     });
   }
-  if (bmff.jumbfManifests.length > 0) {
-    const msg = `${bmff.jumbfManifests.length} manifes C2PA / JUMBF terdeteksi`;
-    flaggedReasons.push(msg);
+
+  for (const j of bmff.jumbfManifests.slice(0, 8)) {
     aiTriggerChecklist.push({
-      id: 'trig_c2pa',
+      id: `trig_jumbf_${j.offset}`,
       layer: 'C2PA_JUMBF',
       severity: 'critical',
-      title: `${bmff.jumbfManifests.length} Manifes C2PA / JUMBF Content Credentials`,
-      detail: bmff.jumbfManifests.map((j) => `${j.boxType} @0x${j.offset.toString(16)} (${j.size}B)`).slice(0, 3).join('; '),
+      title: `Manifes C2PA Content Credentials: ${j.boxType}`,
+      detail: `Offset 0x${j.offset.toString(16).toUpperCase()} • Ukuran ${j.size}B • Path: ${j.parentPath}`,
+      markerType: 'C2PA',
+      offsetHex: `0x${j.offset.toString(16).toUpperCase()}`,
+      sizeBytes: j.size,
+      decodedPreview: j.previewAscii,
+      impactReason: 'Manifes C2PA/JUMBF secara terbuka menyatakan bahwa aset dibuat dengan model AI (Trained Algorithmic Media).',
+      remedyAction: 'Eksisi biner box C2PA dan rekalkulasi chunk offset stco/co64.',
     });
   }
+
   const flaggedVendorEntries = vendorTags.filter((t) => t.flagged);
-  if (flaggedVendorEntries.length > 0) {
-    const msg = `Tag vendor/encoder mencurigakan (${flaggedVendorEntries.map((t) => `${t.key}=${t.value}`).slice(0, 3).join('; ')})`;
-    flaggedReasons.push(msg);
+  for (const vt of flaggedVendorEntries.slice(0, 8)) {
     aiTriggerChecklist.push({
-      id: 'trig_vendor',
+      id: `trig_vendor_${vt.source}_${vt.key}`,
       layer: 'VENDOR_TAG',
       severity: 'critical',
-      title: 'Signature Encoder / Vendor AI pada Format/Stream Tags',
-      detail: flaggedVendorEntries.map((t) => `${t.source}.${t.key}=${t.value}`).slice(0, 4).join(' | '),
+      title: `Tag Encoder/Vendor AI: ${vt.key}`,
+      detail: `${vt.source}.${vt.key}="${vt.value}"`,
+      markerType: 'AI_Signature',
+      decodedPreview: `${vt.key}="${vt.value}"`,
+      impactReason: 'Platform membaca tag Lavf/libx264/AI generator untuk mengidentifikasi konten non-kamera smartphone.',
+      remedyAction: 'Reset format tags (-map_metadata -1) + hardware camera OEM stamping.',
     });
   }
+
   if (combinedAsciiTraces.length > 0) {
     flaggedReasons.push(`Jejak ASCII di bitstream/container: ${combinedAsciiTraces.join(', ')}`);
   }
+
   for (const vf of avForensics.visual.visualAiFlags) {
     flaggedReasons.push(`[Visual AI] ${vf}`);
     aiTriggerChecklist.push({
@@ -1638,6 +1744,9 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
       severity: 'warning',
       title: 'Anomali Forensik Visual / Muxer MP4',
       detail: vf,
+      markerType: 'Forensik_AudioVisual',
+      impactReason: 'Karakteristik visual (framerate sintetis, 0 B-Frames, atau tekstur plastik tanpa grain) ditandai oleh detektor visual.',
+      remedyAction: 'Injeksi noise Bayer CMOS, 180° shutter blend, dan perbaikan cadence 30fps CFR.',
     });
   }
   for (const af of avForensics.audio.audioAiFlags) {
@@ -1648,6 +1757,9 @@ export async function probeVideoFile(filePath: string): Promise<ExternalProbeRep
       severity: 'warning',
       title: 'Anomali Forensik Audio / Vocoder AI',
       detail: af,
+      markerType: 'Forensik_AudioVisual',
+      impactReason: 'Audio TTS AI memiliki jeda hening digital mutlak dan pemotongan spektrum tajam di atas 16kHz.',
+      remedyAction: 'Dual-mic room reflection + injeksi thermal mic air band 17.5-21kHz.',
     });
   }
 

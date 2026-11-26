@@ -1,2 +1,288 @@
-export { POST, GET } from '../auto-detect/route';
+import { NextRequest, NextResponse } from 'next/server';
+import { Type } from '@google/genai';
+import {
+  generateWithFallback,
+  parseSafeJson,
+  heuristicAutoDetect,
+} from '@/lib/gemini-ugc';
+import {
+  extractProductFromLink,
+  extractUrlFromInput,
+  extractShareTextIntelligence,
+  isLikelyShortcodeOrHash,
+} from '@/lib/link-extractor';
+import {
+  UGC_CATEGORIES,
+  CAMERA_ANGLE_STYLES,
+  VOICE_TONE_OPTIONS,
+} from '@/data/categories';
 
+async function handleAutoDetectRequest(body: any) {
+  let { url = '', notes = '', input = '', referenceImages = [] } = body || {};
+  const attachedImages: string[] = Array.isArray(referenceImages) ? referenceImages.filter(Boolean) : [];
+
+  const combinedSource = (input || `${url} ${notes}`).trim();
+  const foundUrl = extractUrlFromInput(combinedSource);
+  if (foundUrl) {
+    url = foundUrl;
+    notes = combinedSource.replace(foundUrl, '').replace(/https?:\/\/\S+/gi, '').trim() || notes;
+  } else if (input && typeof input === 'string') {
+    notes = input.trim();
+  }
+
+  const rawInputCombined = (input || `${url} ${notes}`).trim();
+
+  if (!rawInputCombined && !url && attachedImages.length === 0) {
+    return NextResponse.json(
+      { error: 'Masukkan link produk, keterangan, atau upload foto referensi terlebih dahulu' },
+      { status: 400 }
+    );
+  }
+
+  const shareIntel = extractShareTextIntelligence(rawInputCombined);
+
+  let linkData: any = null;
+  let linkContext = '';
+
+  if (url) {
+    try {
+      linkData = await extractProductFromLink(rawInputCombined || url, 7500);
+      if (linkData && (linkData.success || linkData.productName || linkData.title)) {
+        linkContext = `
+HASIL FETCH & EKSTRAKSI LANGSUNG DARI LINK PLATFORM (${linkData.platform}):
+- URL Sumber: ${linkData.originalUrl}
+- URL Final (Resolved Redirect): ${linkData.finalUrl}
+- Nama Produk Hasil Scraping/Share-Text: "${shareIntel.shareProductName || linkData.productName || linkData.ogTitle || linkData.title || '-'}"
+${shareIntel.shareBrand || linkData.brand ? `- Brand / Koleksi / Toko Resmi: "${shareIntel.shareBrand || linkData.brand}"` : ''}
+${shareIntel.sharePrice || linkData.price ? `- Harga Produk: Rp ${shareIntel.sharePrice || linkData.price}` : ''}
+${linkData.ogDescription || linkData.metaDescription ? `- Deskripsi/Snippet Halaman: "${linkData.ogDescription || linkData.metaDescription}"` : ''}
+${linkData.cleanedSummary ? `- Ringkasan Terstruktur:\n${linkData.cleanedSummary}` : ''}
+
+INSTRUKSI PENTING:
+Gunakan Nama Produk "${shareIntel.shareProductName || linkData.productName || ''}" dan fakta di atas sebagai acuan utama produk. Jangan pernah mengubah kode acak shortlink (seperti LoXUMhlJb) menjadi nama produk!`;
+      }
+    } catch (scrapeErr) {
+      console.warn('Scraping error (continuing with input text):', scrapeErr);
+    }
+  }
+
+  if (!linkContext && (shareIntel.shareProductName || shareIntel.sharePrice)) {
+    linkContext = `
+HASIL EKSTRAKSI KALIMAT SHARE MARKETPLACE:
+${shareIntel.shareProductName ? `- Nama Produk Asli: "${shareIntel.shareProductName}"` : ''}
+${shareIntel.shareBrand ? `- Brand / Koleksi: "${shareIntel.shareBrand}"` : ''}
+${shareIntel.sharePrice ? `- Harga Produk: Rp ${shareIntel.sharePrice}` : ''}`;
+  }
+
+  const categoriesListText = UGC_CATEGORIES.map((c) => `- "${c.name}"`).join('\n');
+  const cameraStylesListText = CAMERA_ANGLE_STYLES.map(
+    (s, idx) => `${idx + 1}. "${s.name}" (${s.description})`
+  ).join('\n');
+  const voiceTonesListText = VOICE_TONE_OPTIONS.map(
+    (t, idx) => `${idx + 1}. "${t.name}" (${t.description})`
+  ).join('\n');
+
+  const prompt = `Kamu adalah AI UGC Product & Link Analyzer profesional dengan tingkat akurasi tinggi untuk platform TikTok Shop, Tokopedia, Shopee Video, Instagram Reels, dan YouTube Shorts.
+Analisis input link produk dan/atau keterangan berikut, lalu lakukan ekstraksi data produk secara spesifik, akurat, dan mendalam:
+
+Input Pengguna: "${rawInputCombined}"
+${url ? `Terdeteksi URL: "${url}"` : ''}
+${notes ? `Terdeteksi Keterangan Tambahan: "${notes}"` : ''}
+${linkContext}
+
+ATURAN UTAMA:
+1. DILARANG KERAS menghasilkan nama generik seperti "Produk Unggulan Pilihan", "Produk Pilihan", atau "Produk Ini" jika input atau URL memuat indikasi nama barang (contoh: Sago, Coffee, Diet, Somethinc, Skintific, Serum, Ceramide, Keyboard, dsb).
+2. Jika ada nama brand resmi (misal: Sago, Somethinc, Skintific, Erigo, Aerostreet, Baseus, Wardah, Kahf), cantumkan brand di "brandName" dan nama produk lengkap di "productName".
+3. Bersihkan kata-kata sampah marketplace seperti "Jual", "Beli", "Termurah", "Original 100%", "Bebas Ongkir", "COD", "Ready Stock".
+
+Daftar ${UGC_CATEGORIES.length} Kategori UGC yang WAJIB dipilih salah satu yang paling cocok:
+${categoriesListText}
+
+Daftar 24 Persona Talent Kreator yang WAJIB dipilih 1 yang paling otentik:
+1. "Wanita Muda / Gen Z" (Mahasiswi/remaja aktif, bahasa gaul santai, vibes FYP)
+2. "Hijaber Trendy / Muslimah Modern" (Anggun, sopan, modis, islami modern halal)
+3. "Ibu Muda / Mama Hemat Cerdas" (Fokus kepraktisan keluarga, hemat budget, ramah solutif)
+4. "Wanita Karir / Corporate Office" (Profesional, waktu padat, butuh serba cepat & efisien)
+5. "Beauty & Skincare Junkie" (Obsesif tekstur, kandungan aktif, hasil kulit glowing)
+6. "Ibu Hamil & Menyusui (Busui)" (Relatable bagi bumil/busui, keamanan bahan & kenyamanan)
+7. "Fashion Stylist / OOTD Enthusiast" (Pencinta mix and match outfit, trendi kekinian)
+8. "Gadis Desa / Hidup Asri & Alami" (Sederhana, hangat, natural, suasana tenang dan asri)
+9. "Pria Dewasa / Bapak Relatable" (Santai, humor bapak-bapak, fokus fungsi nyata & tahan lama)
+10. "Pria Muda / Gen Z Bro" (Nongkrong, streetwear, santai blak-blakan)
+11. "Pria Grooming & Maskulin" (Peduli penampilan, rapi, wangi, maskulin modern)
+12. "Cowok Gym & Fitness Bro" (Disiplin olahraga, nutrisi otot, badan bugar)
+13. "Otomotif & Bikers / Car Enthusiast" (Penggemar motor/mobil, detail part & perawatan kendaraan)
+14. "Dokter / Tenaga Medis / Ahli Edukasi" (Penjelasan ilmiah terpercaya, berbasis fakta tanpa overclaim)
+15. "Mahasiswa Hemat / Anak Kosan" (Solusi murah meriah, serbaguna, ramah kantong akhir bulan)
+16. "Tech & Gadget Enthusiast" (Spesifikasi tajam, performa perangkat, build quality)
+17. "Gamer & Streamer" (Sensasi seru gaming, no-delay, setup RGB)
+18. "UMKM / Owner Brand & Pejuang Usaha" (Inspiratif, cerita di balik layar, ulet pantang menyerah)
+19. "Foodie & Kuliner / Home Chef" (Pecinta rasa gurih pedas, ASMR mengunyah, resep praktis)
+20. "Traveler / Backpacker & Petualang" (Ringkas, tahan banting, perlengkapan outdoor & liburan)
+21. "Pet Parent / Pecinta Hewan" (Penyayang anabul kucing/anjing, kenyamanan peliharaan)
+22. "Minimalis & Eco-Friendly Lifestyle" (Zero waste, ramah lingkungan, hidup simpel tertata)
+23. "Kreator Faceless / Hanya Tangan (Tanpa Muka)" (100% tanpa wajah, fokus interaksi tangan dan produk)
+24. "Semua (Netral Universal)" (Gaya umum netral fleksibel)
+
+Daftar ${CAMERA_ANGLE_STYLES.length} Gaya Sinematik Kamera Storyboard (Camera Angle Style) yang WAJIB dipilih 1 yang paling pas:
+${cameraStylesListText}
+
+Daftar ${VOICE_TONE_OPTIONS.length} Pilihan Voice Tone (Gaya Bicara Kreator) yang WAJIB dipilih 1 yang paling tepat:
+${voiceTonesListText}
+
+Tugas Anda:
+1. productName: Nama produk yang bersih, spesifik, dan siap pakai (contoh: "Somethinc Niacinamide Barrier Serum", "Sago Slimming Green Coffee Diet", "Keychron K2 Wireless Keyboard").
+2. brandName: Brand atau nama merk resmi jika terdeteksi (contoh: "Somethinc", "Sago", "Skintific", "Erigo").
+3. category: Pilih 1 persis dari ${UGC_CATEGORIES.length} kategori di atas yang paling tepat untuk mempromosikan produk ini.
+4. productDescription: Deskripsi produk yang menarik, menjelaskan manfaat utama dan cara kerjanya secara ringkas.
+5. targetAudience: Target audiens spesifik (misal: "Pria dan wanita 20-35 tahun yang ingin badan ideal tanpa lapar").
+6. keySellingPoints: Poin keunggulan utama (USP) yang persuasif dan memicu checkout di keranjang belanja / klik keranjang di bawah.
+7. tone: Pilih 1 nama Voice Tone PERSIS dari daftar ${VOICE_TONE_OPTIONS.length} pilihan di atas yang paling cocok untuk produk & audiensnya.
+8. targetPlatform: Platform yang cocok ("TikTok Shop", "Tokopedia", "Shopee Video", "Instagram Reels", "YouTube Shorts").
+9. targetDuration: Rekomendasi durasi (integer: 15, 30, 45, atau 60 detik).
+10. detectedTags: Array 3-5 kata kunci relevan (misal: ["dietsehat", "kopidiet", "slimming", "racuntiktok"]).
+11. detectionSummary: Penjelasan ringkas ramah 1 kalimat tentang apa yang berhasil dideteksi dari link ini.
+12. persona: Pilih 1 persona talent yang paling ideal dari daftar 24 persona di atas.
+13. personaExplanation: 1 kalimat penjelasan singkat mengapa persona talent ini sangat cocok untuk membawakan produk tersebut.
+14. cameraAngleStyle: Pilih 1 nama Gaya Sinematik Kamera PERSIS dari daftar ${CAMERA_ANGLE_STYLES.length} gaya di atas.
+15. cameraStyleExplanation: 1 kalimat penjelasan singkat mengapa gaya sudut kamera ini memaksimalkan visualisasi dan conversion rate produk.
+16. preferredCameraAngles: Array 3-5 sudut kamera spesifik yang disarankan (contoh: ["Extreme Close-up / Macro (Tekstur & Detail)", "POV / Handheld (First-Person)", "Over the Shoulder (OTS)", "Front Camera / Selfie Mode (Curhat Langsung)"]).`;
+
+  const config = {
+    responseMimeType: 'application/json',
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        productName: { type: Type.STRING },
+        brandName: { type: Type.STRING },
+        category: { type: Type.STRING },
+        productDescription: { type: Type.STRING },
+        targetAudience: { type: Type.STRING },
+        keySellingPoints: { type: Type.STRING },
+        persona: { type: Type.STRING },
+        personaExplanation: { type: Type.STRING },
+        tone: { type: Type.STRING },
+        cameraAngleStyle: { type: Type.STRING },
+        cameraStyleExplanation: { type: Type.STRING },
+        preferredCameraAngles: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+        },
+        targetPlatform: { type: Type.STRING },
+        targetDuration: { type: Type.INTEGER },
+        detectedTags: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+        },
+        detectionSummary: { type: Type.STRING },
+      },
+      required: [
+        'productName',
+        'category',
+        'productDescription',
+        'targetAudience',
+        'keySellingPoints',
+        'persona',
+        'personaExplanation',
+        'cameraAngleStyle',
+        'cameraStyleExplanation',
+        'preferredCameraAngles',
+        'tone',
+        'targetPlatform',
+        'targetDuration',
+      ],
+    },
+  };
+
+  const rawText = await generateWithFallback(
+    prompt,
+    config,
+    'You are a professional UGC Ecommerce strategist in Southeast Asia. Analyze the input link/text and any attached product reference images to return pure JSON with accurate product extraction.',
+    20000,
+    attachedImages
+  );
+
+  const parsed = parseSafeJson<any>(rawText);
+  if (parsed && parsed.productName) {
+    const bestKnownName = shareIntel.shareProductName || linkData?.productName;
+    if (
+      bestKnownName &&
+      (!parsed.productName ||
+        parsed.productName.toLowerCase().includes('produk unggulan') ||
+        isLikelyShortcodeOrHash(parsed.productName))
+    ) {
+      parsed.productName = bestKnownName;
+    }
+    if ((shareIntel.shareBrand || linkData?.brand) && !parsed.brandName) {
+      parsed.brandName = shareIntel.shareBrand || linkData?.brand;
+    }
+    if (linkData?.finalUrl || url) {
+      parsed.productUrl = linkData?.finalUrl || url;
+    }
+    if (linkData?.ogImage) {
+      parsed.imageUrl = linkData.ogImage;
+    }
+    if (linkData?.price || shareIntel.sharePrice) {
+      const rawP = linkData?.price || shareIntel.sharePrice;
+      parsed.price = String(rawP).startsWith('Rp') ? rawP : `${linkData?.currency || 'Rp'} ${rawP}`;
+    }
+    if (linkData?.platform) {
+      parsed.platform = linkData.platform;
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: parsed,
+      linkData: linkData || null,
+      source: 'gemini',
+    });
+  }
+
+  const heuristicData = heuristicAutoDetect(rawInputCombined, url, notes, linkData);
+  if (linkData?.finalUrl || url) {
+    (heuristicData as any).productUrl = linkData?.finalUrl || url;
+  }
+  if (linkData?.brand && !(heuristicData as any).brandName) {
+    (heuristicData as any).brandName = linkData.brand;
+  }
+  if (linkData?.ogImage) {
+    (heuristicData as any).imageUrl = linkData.ogImage;
+  }
+  if (linkData?.price) {
+    (heuristicData as any).price = String(linkData.price).startsWith('Rp')
+      ? linkData.price
+      : `${linkData.currency || 'Rp'} ${linkData.price}`;
+  }
+  if (linkData?.platform) {
+    (heuristicData as any).platform = linkData.platform;
+  }
+
+  return NextResponse.json({
+    success: true,
+    data: heuristicData,
+    linkData: linkData || null,
+    source: 'smart-heuristic',
+  });
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    return await handleAutoDetectRequest(body);
+  } catch (error: any) {
+    console.error('Server error in auto-detect-product POST:', error);
+    return NextResponse.json({ error: error.message || 'Gagal mendeteksi link produk' }, { status: 500 });
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const payloadParam = req.nextUrl.searchParams.get('payload');
+    const inputParam = req.nextUrl.searchParams.get('input');
+    const body = payloadParam ? JSON.parse(payloadParam) : { input: inputParam || '' };
+    return await handleAutoDetectRequest(body);
+  } catch (error: any) {
+    console.error('Server error in auto-detect-product GET:', error);
+    return NextResponse.json({ error: error.message || 'Gagal mendeteksi link produk' }, { status: 500 });
+  }
+}

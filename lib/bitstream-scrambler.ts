@@ -403,39 +403,44 @@ export function scrambleWatermarkBitstreamsInPlace(
         }
 
         if (isSei && payloadCursor + 2 < nalEnd) {
-          // Decode SEI payload_type & payload_size headers (0xFF extensions)
           let seiOffset = payloadCursor;
-          let pType = 0;
-          while (seiOffset < nalEnd - 1 && bytes[seiOffset] === 0xff) {
-            pType += 255;
-            seiOffset++;
-          }
-          if (seiOffset < nalEnd) {
-            pType += bytes[seiOffset++];
-          }
-          while (seiOffset < nalEnd - 1 && bytes[seiOffset] === 0xff) {
-            seiOffset++;
-          }
-          if (seiOffset < nalEnd) {
-            seiOffset++;
-          }
-
-          seiUnitsDetected++;
-          const payloadText = decoder
-            .decode(bytes.subarray(payloadCursor, Math.min(nalEnd, payloadCursor + 512)))
-            .toLowerCase();
-          for (const m of WATERMARK_MARKERS) {
-            if (payloadText.includes(m)) {
-              markerSet.add(m);
+          while (seiOffset + 1 < nalEnd && bytes[seiOffset] !== 0x80) {
+            let pType = 0;
+            while (seiOffset < nalEnd - 1 && bytes[seiOffset] === 0xff) {
+              pType += 255;
+              seiOffset++;
             }
-          }
+            if (seiOffset >= nalEnd) break;
+            pType += bytes[seiOffset++];
 
-          // Target watermark / unregistered / registered / buffering SEI payloads for cryptographic scrambling
-          const scrambleStart = Math.min(seiOffset, nalEnd - 1);
-          const scrambleEnd = bytes[nalEnd - 1] === 0x80 ? Math.max(scrambleStart, nalEnd - 1) : nalEnd;
-          if (scrambleEnd > scrambleStart && (pType === 5 || pType === 4 || pType === 0 || pType === 1 || markerSet.size > 0)) {
-            totalBytesScrambled += fillCryptoRandomBytes(bytes.subarray(scrambleStart, scrambleEnd), true);
-            seiPayloadsScrambled++;
+            let pSize = 0;
+            while (seiOffset < nalEnd - 1 && bytes[seiOffset] === 0xff) {
+              pSize += 255;
+              seiOffset++;
+            }
+            if (seiOffset >= nalEnd) break;
+            pSize += bytes[seiOffset++];
+
+            seiUnitsDetected++;
+            const msgStart = seiOffset;
+            const msgEnd = Math.min(nalEnd, msgStart + pSize);
+
+            const payloadText = decoder
+              .decode(bytes.subarray(msgStart, Math.min(msgEnd, msgStart + 512)))
+              .toLowerCase();
+            for (const m of WATERMARK_MARKERS) {
+              if (payloadText.includes(m)) {
+                markerSet.add(m);
+              }
+            }
+
+            // Target watermark / unregistered / registered / buffering SEI payloads for cryptographic scrambling
+            if (msgEnd > msgStart) {
+              totalBytesScrambled += fillCryptoRandomBytes(bytes.subarray(msgStart, msgEnd), true);
+              seiPayloadsScrambled++;
+            }
+
+            seiOffset = msgEnd;
           }
         }
 

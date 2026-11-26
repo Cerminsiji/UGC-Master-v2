@@ -1174,30 +1174,43 @@ def scramble_input_bitstream_watermarks(src_path: str, dst_path: str, codec_hint
                             cursor = nal_start + 2
 
                     if is_sei and cursor + 2 < nal_end:
-                        p_type = 0
-                        while cursor < nal_end - 1 and data[cursor] == 0xFF:
-                            p_type += 255
-                            cursor += 1
-                        if cursor < nal_end:
-                            p_type += data[cursor]
-                            cursor += 1
-                        while cursor < nal_end - 1 and data[cursor] == 0xFF:
-                            cursor += 1
-                        if cursor < nal_end:
-                            cursor += 1
-                        stats["sei_detected"] += 1
-                        p_text = data[nal_start:min(nal_end, nal_start + 512)].decode("ascii", errors="ignore").lower()
-                        for mk in markers:
-                            if mk in p_text:
-                                marker_hits.add(mk)
-                        sc_start = min(cursor, nal_end - 1)
-                        sc_end = nal_end - 1 if data[nal_end - 1] == 0x80 else nal_end
-                        if sc_end > sc_start and (p_type in (0, 1, 4, 5) or marker_hits):
-                            rnd = os.urandom(sc_end - sc_start)
-                            safe_bytes = bytes(0x04 + (b % 250) for b in rnd)
-                            data[sc_start:sc_end] = safe_bytes
-                            stats["sei_scrambled"] += 1
-                            stats["bytes_scrambled"] += sc_end - sc_start
+                        sei_offset = cursor
+                        while sei_offset + 1 < nal_end and data[sei_offset] != 0x80:
+                            p_type = 0
+                            while sei_offset < nal_end - 1 and data[sei_offset] == 0xFF:
+                                p_type += 255
+                                sei_offset += 1
+                            if sei_offset >= nal_end:
+                                break
+                            p_type += data[sei_offset]
+                            sei_offset += 1
+
+                            p_size = 0
+                            while sei_offset < nal_end - 1 and data[sei_offset] == 0xFF:
+                                p_size += 255
+                                sei_offset += 1
+                            if sei_offset >= nal_end:
+                                break
+                            p_size += data[sei_offset]
+                            sei_offset += 1
+
+                            stats["sei_detected"] += 1
+                            msg_start = sei_offset
+                            msg_end = min(nal_end, msg_start + p_size)
+
+                            p_text = data[msg_start:min(msg_end, msg_start + 512)].decode("ascii", errors="ignore").lower()
+                            for mk in markers:
+                                if mk in p_text:
+                                    marker_hits.add(mk)
+
+                            if msg_end > msg_start:
+                                rnd = os.urandom(msg_end - msg_start)
+                                safe_bytes = bytes(0x04 + (b % 250) for b in rnd)
+                                data[msg_start:msg_end] = safe_bytes
+                                stats["sei_scrambled"] += 1
+                                stats["bytes_scrambled"] += msg_end - msg_start
+
+                            sei_offset = msg_end
 
                     pos = nal_end
 
