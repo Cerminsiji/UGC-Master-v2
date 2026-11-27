@@ -23,6 +23,7 @@ const KNOWN_ACTIVE_KEYS = new Set([
   LOCAL_ACTIVE_PROJECT_KEY,
   DEPLOY_LOGS_KEY,
   'ugc_studio_gate_auth_v3',
+  'ugc_studio_talent_kits_v1',
 ]);
 
 const IDB_NAME = 'ugc_master_studio_db';

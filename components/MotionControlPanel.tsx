@@ -20,9 +20,14 @@ import {
   Clock,
   Film,
   Zap,
+  Link2,
+  FileVideo,
+  Loader2,
+  Layers,
 } from 'lucide-react';
-import type { Scene, SceneMotionControl } from '@/types';
-import { copyToClipboard } from '@/utils/helpers';
+import type { Scene, SceneMotionControl, ReferenceRole, VisualContinuityBible } from '@/types';
+import { copyToClipboard, filesToReferenceImages, postJsonWithRetry } from '@/utils/helpers';
+import { getReferenceRoleLabel } from '@/lib/gemini-ugc';
 
 export const DANCE_STYLE_OPTIONS = [
   'Tanpa Dance (Demo Produk Natural)',
@@ -92,6 +97,11 @@ interface MotionControlPanelProps {
   productName?: string;
   persona?: string;
   referenceImages?: string[];
+  referenceRoles?: ReferenceRole[];
+  visualBible?: VisualContinuityBible;
+  characterReferenceImage?: string;
+  characterReferenceName?: string;
+  onChangeCharacterReference?: (imgDataUrl: string, fileName: string) => void;
   onUpdateScene: (updatedScene: Scene) => void;
   onBatchUpdateScenes?: (updater: (scenes: Scene[]) => Scene[]) => void;
   onNotify?: (message: string) => void;
@@ -102,7 +112,9 @@ export function buildMotionControlPrompt(
   productName?: string,
   persona?: string,
   hasCharacterRef?: boolean,
-  hasMotionVideoRef?: boolean
+  hasMotionVideoRef?: boolean,
+  referenceRoles?: ReferenceRole[],
+  visualBible?: VisualContinuityBible
 ): string {
   const mc = scene.motionControl || {};
   const dance = mc.danceStyle || DANCE_STYLE_OPTIONS[0];
@@ -113,21 +125,34 @@ export function buildMotionControlPrompt(
   const ratio = mc.aspectRatio || '9:16';
 
   const refs: string[] = [];
-  if (productName) refs.push(`[Product Ref: ${productName}]`);
+  if (scene.referencedImageIndexes && scene.referencedImageIndexes.length > 0 && referenceRoles && referenceRoles.length > 0) {
+    scene.referencedImageIndexes.forEach((idx) => {
+      const role = referenceRoles[idx - 1] || (idx === 1 ? 'product' : 'detail');
+      refs.push(`[Image ${idx} (${getReferenceRoleLabel(role, true)})]`);
+    });
+  } else if (productName) {
+    refs.push(`[Product Ref: ${productName}]`);
+  }
   if (hasCharacterRef) refs.push(`[Character Ref: Uploaded Talent]`);
-  if (hasMotionVideoRef) refs.push(`[Motion Video Ref: Choreography Guide]`);
+  if (hasMotionVideoRef || mc.motionVideoAnalyzed) refs.push(`[Motion Video Ref: Choreography Guide]`);
+
+  const negativeConstraint = (scene.negativePrompt || visualBible?.negativePromptGlobal || '').trim();
 
   const parts = [
     refs.length > 0 ? refs.join(' ') : `[Scene ${scene.order}]`,
     `Duration: ${scene.duration}s | Aspect: ${ratio}`,
+    visualBible?.exactLabelText ? `Exact Label Lock: "${visualBible.exactLabelText}" (${visualBible.packagingColors || 'match reference'})` : '',
+    visualBible?.environmentLighting ? `Lighting Lock: ${visualBible.environmentLighting}` : '',
     `Dance & Body Motion: ${dance} (${intensity} intensity, ${tempo})`,
     `Camera Movement: ${camera} (${scene.cameraAngle || 'Medium Shot'})`,
     `Aesthetic & Lighting: ${aesthetic}`,
     scene.visualAction ? `Action: ${scene.visualAction}` : '',
+    scene.transitionBridge ? `Transition Bridge: ${scene.transitionBridge}` : '',
     persona ? `Talent Persona: ${persona}` : '',
     mc.customMotionNotes ? `Notes: ${mc.customMotionNotes}` : '',
     `No floating text, no on-screen text overlay, no subtitles, no voiceover dialogue, pure visual choreography and camera motion.`,
     `Strict physics consistency: realistic mass inertia, biomechanical constraint adherence, solid contact, zero morphing.`,
+    negativeConstraint ? `Negative: ${negativeConstraint}` : '',
   ].filter(Boolean);
 
   return parts.join(' • ');
@@ -139,6 +164,11 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
   productName,
   persona,
   referenceImages = [],
+  referenceRoles = [],
+  visualBible,
+  characterReferenceImage,
+  characterReferenceName,
+  onChangeCharacterReference,
   onUpdateScene,
   onBatchUpdateScenes,
   onNotify,
@@ -146,7 +176,10 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
   const [characterPreviewUrl, setCharacterPreviewUrl] = useState<string | null>(null);
   const [characterFileName, setCharacterFileName] = useState<string>('');
   const [motionVideoUrl, setMotionVideoUrl] = useState<string | null>(null);
+  const [motionVideoDataUrl, setMotionVideoDataUrl] = useState<string | null>(null);
   const [motionVideoName, setMotionVideoName] = useState<string>('');
+  const [isAnalyzingMotionVideo, setIsAnalyzingMotionVideo] = useState<boolean>(false);
+  const [motionAnalysisNotes, setMotionAnalysisNotes] = useState<string>('');
 
   const [batchDance, setBatchDance] = useState<string>(DANCE_STYLE_OPTIONS[1]);
   const [batchCamera, setBatchCamera] = useState<string>(CAMERA_MOVEMENT_OPTIONS[2]);
@@ -159,31 +192,142 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
   const charInputRef = useRef<HTMLInputElement | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
 
+  const effectiveCharacterPreview = characterReferenceImage || characterPreviewUrl;
+  const effectiveCharacterName = characterReferenceName || characterFileName || 'Talent Reference';
+
   useEffect(() => {
     return () => {
-      if (characterPreviewUrl) URL.revokeObjectURL(characterPreviewUrl);
-      if (motionVideoUrl) URL.revokeObjectURL(motionVideoUrl);
+      if (characterPreviewUrl && characterPreviewUrl.startsWith('blob:')) URL.revokeObjectURL(characterPreviewUrl);
+      if (motionVideoUrl && motionVideoUrl.startsWith('blob:')) URL.revokeObjectURL(motionVideoUrl);
     };
   }, [characterPreviewUrl, motionVideoUrl]);
 
-  const handleCharacterUpload = (fileList: FileList | null) => {
+  const handleCharacterUpload = async (fileList: FileList | null) => {
     const file = fileList?.[0];
     if (!file) return;
-    if (characterPreviewUrl) URL.revokeObjectURL(characterPreviewUrl);
-    const url = URL.createObjectURL(file);
-    setCharacterPreviewUrl(url);
-    setCharacterFileName(file.name);
-    onNotify?.(`Referensi karakter "${file.name}" dimuat untuk pratinjau Motion Control.`);
+    const compressed = await filesToReferenceImages(fileList, 1);
+    const dataUrl = compressed[0];
+    if (dataUrl) {
+      if (characterPreviewUrl && characterPreviewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(characterPreviewUrl);
+      }
+      setCharacterPreviewUrl(dataUrl);
+      setCharacterFileName(file.name);
+      onChangeCharacterReference?.(dataUrl, file.name);
+      onNotify?.(`Referensi karakter "${file.name}" disimpan ke proyek untuk Motion Control.`);
+    }
+    if (charInputRef.current) charInputRef.current.value = '';
   };
 
   const handleMotionVideoUpload = (fileList: FileList | null) => {
     const file = fileList?.[0];
     if (!file) return;
-    if (motionVideoUrl) URL.revokeObjectURL(motionVideoUrl);
+    if (motionVideoUrl && motionVideoUrl.startsWith('blob:')) URL.revokeObjectURL(motionVideoUrl);
     const url = URL.createObjectURL(file);
     setMotionVideoUrl(url);
     setMotionVideoName(file.name);
-    onNotify?.(`Video referensi gerakan "${file.name}" siap dipratinjau.`);
+    setMotionAnalysisNotes('');
+
+    if (file.size <= 12 * 1024 * 1024) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setMotionVideoDataUrl(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+      onNotify?.(`Video referensi "${file.name}" siap. Klik "Analisis Video → Auto-Isi Motion Control" untuk membaca koreo & tempo.`);
+    } else {
+      setMotionVideoDataUrl(null);
+      onNotify?.(`Video "${file.name}" dimuat untuk pratinjau (>12MB tidak bisa dianalisis AI multimodal).`);
+    }
+  };
+
+  const handleAnalyzeMotionVideo = async () => {
+    if (!motionVideoDataUrl) {
+      onNotify?.('Upload video referensi (MP4/WebM <= 12MB) terlebih dahulu.');
+      return;
+    }
+    setIsAnalyzingMotionVideo(true);
+    try {
+      const resp = await postJsonWithRetry<{
+        success?: boolean;
+        error?: string;
+        analysis?: {
+          danceStyle?: string;
+          cameraMovement?: string;
+          aestheticEffect?: string;
+          motionIntensity?: SceneMotionControl['motionIntensity'];
+          beatTempo?: SceneMotionControl['beatTempo'];
+          customMotionNotes?: string;
+          loopNote?: string;
+          segments?: Array<{ beatCue?: string; choreographyMove?: string; cameraChoreo?: string; duration?: number }>;
+        };
+      }>('/api/analyze-motion-video', {
+        videoDataUrl: motionVideoDataUrl,
+        productName: productName || projectTitle || '',
+        sceneCount: Math.max(3, Math.min(8, scenes.length || 6)),
+      });
+
+      const analysis = resp?.analysis;
+      if (!resp?.success || !analysis) {
+        onNotify?.(resp?.error || 'Gagal menganalisis video motion referensi.');
+        return;
+      }
+
+      const matchedDance =
+        DANCE_STYLE_OPTIONS.find((opt) => opt.toLowerCase().includes((analysis.danceStyle || '').toLowerCase().split(' ')[0])) ||
+        DANCE_STYLE_OPTIONS[1];
+      const matchedCam =
+        CAMERA_MOVEMENT_OPTIONS.find((opt) => opt.toLowerCase().includes((analysis.cameraMovement || '').toLowerCase().split(' ')[0])) ||
+        CAMERA_MOVEMENT_OPTIONS[0];
+      const matchedAesthetic =
+        AESTHETIC_EFFECT_OPTIONS.find((opt) => opt.toLowerCase().includes((analysis.aestheticEffect || '').toLowerCase().split(' ')[0])) ||
+        AESTHETIC_EFFECT_OPTIONS[0];
+
+      setBatchDance(matchedDance);
+      setBatchCamera(matchedCam);
+      setBatchAesthetic(matchedAesthetic);
+      setMotionAnalysisNotes(
+        [analysis.customMotionNotes, analysis.loopNote ? `Loop: ${analysis.loopNote}` : ''].filter(Boolean).join(' • ')
+      );
+
+      const mapSegmentsToScene = (sc: Scene, idx: number): Scene => {
+        const seg = analysis.segments?.[idx];
+        const noteParts = [
+          seg?.beatCue ? `[${seg.beatCue}]` : '',
+          seg?.choreographyMove || analysis.customMotionNotes || '',
+        ].filter(Boolean);
+        return {
+          ...sc,
+          transitionBridge: seg?.cameraChoreo ? `Koreo Kamera: ${seg.cameraChoreo}` : sc.transitionBridge,
+          motionControl: {
+            ...sc.motionControl,
+            danceStyle: matchedDance,
+            cameraMovement: matchedCam,
+            aestheticEffect: matchedAesthetic,
+            motionIntensity: analysis.motionIntensity || sc.motionControl?.motionIntensity || 'Dynamic',
+            beatTempo: analysis.beatTempo || sc.motionControl?.beatTempo || 'Medium (100-120 BPM)',
+            aspectRatio: sc.motionControl?.aspectRatio || '9:16',
+            customMotionNotes: noteParts.join(' '),
+            characterRefName: effectiveCharacterPreview ? effectiveCharacterName : undefined,
+            motionVideoAnalyzed: true,
+          },
+        };
+      };
+
+      if (onBatchUpdateScenes) {
+        onBatchUpdateScenes((list) => list.map(mapSegmentsToScene));
+      } else {
+        scenes.forEach((sc, idx) => onUpdateScene(mapSegmentsToScene(sc, idx)));
+      }
+
+      onNotify?.('Analisis Video selesai! Gaya dance, kamera, tempo & catatan gerak otomatis diisi ke semua adegan.');
+    } catch (err: any) {
+      onNotify?.(err?.message || 'Gagal menganalisis video motion.');
+    } finally {
+      setIsAnalyzingMotionVideo(false);
+    }
   };
 
   const updateSceneMotion = (scene: Scene, patch: Partial<SceneMotionControl>) => {
@@ -195,6 +339,8 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
       beatTempo: scene.motionControl?.beatTempo || 'Medium (100-120 BPM)',
       aspectRatio: scene.motionControl?.aspectRatio || '9:16',
       customMotionNotes: scene.motionControl?.customMotionNotes || '',
+      characterRefName: scene.motionControl?.characterRefName,
+      motionVideoAnalyzed: scene.motionControl?.motionVideoAnalyzed,
       ...patch,
     };
 
@@ -240,13 +386,38 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
     onNotify?.(`Preset Motion Control (tanpa floating text & VO) diterapkan ke semua ${scenes.length} adegan!`);
   };
 
+  const handleSyncAllToGoogleFlow = () => {
+    const syncOne = (sc: Scene): Scene => ({
+      ...sc,
+      popupText: '',
+      dialogVO: '',
+      googleFlowPrompt: buildMotionControlPrompt(
+        sc,
+        productName,
+        persona,
+        Boolean(effectiveCharacterPreview),
+        Boolean(motionVideoUrl),
+        referenceRoles,
+        visualBible
+      ),
+    });
+    if (onBatchUpdateScenes) {
+      onBatchUpdateScenes((list) => list.map(syncOne));
+    } else {
+      scenes.forEach((sc) => onUpdateScene(syncOne(sc)));
+    }
+    onNotify?.(`Seluruh ${scenes.length} adegan Motion Control disinkronkan ke Google Flow!`);
+  };
+
   const handleCopyPrompt = async (scene: Scene) => {
     const prompt = buildMotionControlPrompt(
       scene,
       productName,
       persona,
-      Boolean(characterPreviewUrl),
-      Boolean(motionVideoUrl)
+      Boolean(effectiveCharacterPreview),
+      Boolean(motionVideoUrl),
+      referenceRoles,
+      visualBible
     );
     const ok = await copyToClipboard(prompt);
     if (ok) {
@@ -261,8 +432,10 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
       scene,
       productName,
       persona,
-      Boolean(characterPreviewUrl),
-      Boolean(motionVideoUrl)
+      Boolean(effectiveCharacterPreview),
+      Boolean(motionVideoUrl),
+      referenceRoles,
+      visualBible
     );
     onUpdateScene({
       ...scene,
@@ -353,13 +526,16 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
                 <UserCheck className="w-3.5 h-3.5 text-purple-400" />
                 <span>Referensi Karakter / Talent</span>
               </span>
-              {characterPreviewUrl && (
+              {effectiveCharacterPreview && (
                 <button
                   type="button"
                   onClick={() => {
-                    if (characterPreviewUrl) URL.revokeObjectURL(characterPreviewUrl);
+                    if (characterPreviewUrl && characterPreviewUrl.startsWith('blob:')) {
+                      URL.revokeObjectURL(characterPreviewUrl);
+                    }
                     setCharacterPreviewUrl(null);
                     setCharacterFileName('');
+                    onChangeCharacterReference?.('', '');
                   }}
                   className="text-slate-400 hover:text-rose-400 transition-colors"
                   title="Hapus referensi karakter"
@@ -375,15 +551,15 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
               onChange={(e) => handleCharacterUpload(e.target.files)}
               className="hidden"
             />
-            {characterPreviewUrl ? (
+            {effectiveCharacterPreview ? (
               <div className="flex items-center gap-2.5">
                 <img
-                  src={characterPreviewUrl}
+                  src={effectiveCharacterPreview}
                   alt="Referensi Karakter"
                   className="w-12 h-12 rounded-lg object-cover border border-purple-500/50 shrink-0"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="text-[11px] font-semibold text-white truncate">{characterFileName}</div>
+                  <div className="text-[11px] font-semibold text-white truncate">{effectiveCharacterName}</div>
                   <button
                     type="button"
                     onClick={() => charInputRef.current?.click()}
@@ -416,9 +592,11 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    if (motionVideoUrl) URL.revokeObjectURL(motionVideoUrl);
+                    if (motionVideoUrl && motionVideoUrl.startsWith('blob:')) URL.revokeObjectURL(motionVideoUrl);
                     setMotionVideoUrl(null);
+                    setMotionVideoDataUrl(null);
                     setMotionVideoName('');
+                    setMotionAnalysisNotes('');
                   }}
                   className="text-slate-400 hover:text-rose-400 transition-colors"
                   title="Hapus video referensi"
@@ -442,16 +620,38 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
                   muted
                   className="w-full h-24 rounded-lg object-cover bg-black border border-fuchsia-500/40"
                 />
-                <div className="flex items-center justify-between text-[10px] text-slate-400">
-                  <span className="truncate max-w-[160px]">{motionVideoName}</span>
-                  <button
-                    type="button"
-                    onClick={() => videoInputRef.current?.click()}
-                    className="text-fuchsia-400 hover:text-fuchsia-300 font-semibold shrink-0"
-                  >
-                    Ganti Video
-                  </button>
+                <div className="flex items-center justify-between text-[10px] text-slate-400 gap-2">
+                  <span className="truncate max-w-[140px]">{motionVideoName}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {motionVideoDataUrl && (
+                      <button
+                        type="button"
+                        onClick={handleAnalyzeMotionVideo}
+                        disabled={isAnalyzingMotionVideo}
+                        className="flex items-center gap-1 text-[10px] font-bold bg-fuchsia-600 hover:bg-fuchsia-500 text-white px-2 py-1 rounded-md transition-colors cursor-pointer disabled:opacity-60"
+                      >
+                        {isAnalyzingMotionVideo ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <FileVideo className="w-3 h-3" />
+                        )}
+                        <span>{isAnalyzingMotionVideo ? 'Analisis...' : 'Analisis Video → Auto-Isi'}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => videoInputRef.current?.click()}
+                      className="text-fuchsia-400 hover:text-fuchsia-300 font-semibold"
+                    >
+                      Ganti
+                    </button>
+                  </div>
                 </div>
+                {motionAnalysisNotes && (
+                  <p className="text-[10px] text-emerald-300 bg-emerald-950/40 border border-emerald-700/40 rounded-lg p-1.5 line-clamp-2">
+                    {motionAnalysisNotes}
+                  </p>
+                )}
               </div>
             ) : (
               <button
@@ -519,14 +719,26 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleApplyBatchToAll}
-            className="flex items-center justify-center gap-1.5 bg-[#19223a] hover:bg-fuchsia-950/60 text-fuchsia-200 border border-fuchsia-500/40 text-xs font-bold px-4 py-2 rounded-xl transition-all active:scale-95 cursor-pointer shrink-0"
-          >
-            <Sliders className="w-3.5 h-3.5 text-fuchsia-400" />
-            <span>Terapkan ke Semua Adegan</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleApplyBatchToAll}
+              className="flex items-center justify-center gap-1.5 bg-[#19223a] hover:bg-fuchsia-950/60 text-fuchsia-200 border border-fuchsia-500/40 text-xs font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer"
+            >
+              <Sliders className="w-3.5 h-3.5 text-fuchsia-400" />
+              <span>Terapkan ke Semua Adegan</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSyncAllToGoogleFlow}
+              className="flex items-center justify-center gap-1.5 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white border border-cyan-400/40 text-xs font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer shadow-md"
+              title="Salin seluruh compiled Motion Prompt ke Google Flow setiap adegan"
+            >
+              <Layers className="w-3.5 h-3.5 text-cyan-200" />
+              <span>Sync Semua Adegan ke Google Flow</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -548,8 +760,10 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
             { ...scene, motionControl: mc },
             productName,
             persona,
-            Boolean(characterPreviewUrl),
-            Boolean(motionVideoUrl)
+            Boolean(effectiveCharacterPreview),
+            Boolean(motionVideoUrl),
+            referenceRoles,
+            visualBible
           );
 
           const isCopied = copiedSceneId === scene.id;
@@ -594,14 +808,23 @@ export const MotionControlPanel: React.FC<MotionControlPanelProps> = ({
               </div>
 
               {/* Scene Context Snippet (Pure Visual — No Floating Text or VO) */}
-              <div className="bg-[#090d17] border border-[#192236] rounded-xl px-3.5 py-2.5 text-xs text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <p className="line-clamp-2">
-                  <span className="font-bold text-slate-400 uppercase text-[10px] mr-1.5">Aksi Visual:</span>
-                  {scene.visualAction || 'Belum ada deskripsi aksi visual.'}
-                </p>
-                <span className="text-[10px] font-bold text-emerald-300 bg-emerald-950/50 border border-emerald-700/40 px-2 py-0.5 rounded shrink-0">
-                  Pure Visual • No Text/VO
-                </span>
+              <div className="bg-[#090d17] border border-[#192236] rounded-xl px-3.5 py-2.5 text-xs text-slate-300 space-y-1.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <p className="line-clamp-2">
+                    <span className="font-bold text-slate-400 uppercase text-[10px] mr-1.5">Aksi Visual:</span>
+                    {scene.visualAction || 'Belum ada deskripsi aksi visual.'}
+                  </p>
+                  <span className="text-[10px] font-bold text-emerald-300 bg-emerald-950/50 border border-emerald-700/40 px-2 py-0.5 rounded shrink-0">
+                    Pure Visual • No Text/VO
+                  </span>
+                </div>
+                {scene.transitionBridge && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-indigo-200 bg-indigo-950/35 border border-indigo-800/40 px-2.5 py-1 rounded-lg">
+                    <Link2 className="w-3 h-3 text-indigo-400 shrink-0" />
+                    <span className="font-bold text-indigo-300">Transisi:</span>
+                    <span className="truncate">{scene.transitionBridge}</span>
+                  </div>
+                )}
               </div>
 
               {/* Controls Grid */}

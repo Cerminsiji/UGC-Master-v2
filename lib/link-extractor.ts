@@ -13,6 +13,8 @@ export interface ExtractedLinkData {
   ogDescription?: string;
   metaDescription?: string;
   ogImage?: string;
+  images?: string[];
+  extractedPainPoints?: string[];
   productName?: string;
   brand?: string;
   price?: string;
@@ -22,6 +24,51 @@ export interface ExtractedLinkData {
   cleanedSummary?: string;
   success: boolean;
   error?: string;
+}
+
+export function extractPainPointsFromText(input: string): string[] {
+  if (!input || typeof input !== 'string') return [];
+  const cleaned = decodeHtmlEntities(input)
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return [];
+
+  const chunks = cleaned
+    .split(/[\n•;|]+|(?<=[.!?])\s+/)
+    .map((c) => c.trim())
+    .filter((c) => c.length >= 12 && c.length <= 220);
+
+  const painKeywordRegex =
+    /(susah|sulit|ribet|mahal|keluhan|masalah|capek|bosen|gagal|pecah|luntur|lengket|bau|panas|kusam|berjerawat|flek|kering|berminyak|rontok|pegal|berat|boros|lelet|panik|telat|anti|solusi|mengatasi|meredakan|tahan lama|cepat|praktis|cocok|ampuh|nggak|tidak|bukan|padahal|ternyata|sayang|kurang)/i;
+
+  const picked: string[] = [];
+  for (const chunk of chunks) {
+    if (painKeywordRegex.test(chunk) && !picked.includes(chunk)) {
+      picked.push(chunk);
+    }
+    if (picked.length >= 5) break;
+  }
+  return picked;
+}
+
+function isValidProductGalleryUrl(candidate: string): boolean {
+  if (!candidate || typeof candidate !== 'string') return false;
+  const trimmed = candidate.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return false;
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.includes('branch-assets') ||
+    lower.includes('favicon') ||
+    lower.includes('sprite') ||
+    lower.includes('avatar') ||
+    lower.includes('logo') ||
+    lower.includes('.svg') ||
+    lower.includes('1x1')
+  ) {
+    return false;
+  }
+  return true;
 }
 
 // Decode basic HTML entities
@@ -798,10 +845,25 @@ export async function extractProductFromLink(
       result.metaDescription = metaMap['description'];
     }
 
+    const gallerySet = new Set<string>();
+    const addGalleryUrl = (raw?: string | null) => {
+      if (!raw || gallerySet.size >= 5) return;
+      const decoded = decodeHtmlEntities(String(raw)).trim();
+      if (isValidProductGalleryUrl(decoded)) {
+        gallerySet.add(decoded);
+      }
+    };
+
+    if (result.ogImage) addGalleryUrl(result.ogImage);
+
     // Image & Price
     if (metaMap['og:image'] && !metaMap['og:image'].includes('branch-assets')) {
       result.ogImage = metaMap['og:image'];
+      addGalleryUrl(metaMap['og:image']);
     }
+    if (metaMap['og:image:secure_url']) addGalleryUrl(metaMap['og:image:secure_url']);
+    if (metaMap['twitter:image']) addGalleryUrl(metaMap['twitter:image']);
+    if (metaMap['twitter:image:src']) addGalleryUrl(metaMap['twitter:image:src']);
     if (metaMap['product:price:amount']) result.price = metaMap['product:price:amount'];
     if (metaMap['product:price:currency']) result.currency = metaMap['product:price:currency'];
     if (metaMap['product:brand'] && !result.brand) result.brand = metaMap['product:brand'];
@@ -853,8 +915,15 @@ export async function extractProductFromLink(
             if (item.brand && !result.brand) {
               result.brand = typeof item.brand === 'string' ? item.brand : item.brand.name || result.brand;
             }
-            if (item.image && !result.ogImage) {
-              result.ogImage = Array.isArray(item.image) ? item.image[0] : item.image;
+            if (item.image) {
+              const imgArr = Array.isArray(item.image) ? item.image : [item.image];
+              for (const entry of imgArr) {
+                const candidateUrl = typeof entry === 'string' ? entry : entry?.url || entry?.contentUrl;
+                addGalleryUrl(candidateUrl);
+              }
+              if (!result.ogImage && gallerySet.size > 0) {
+                result.ogImage = Array.from(gallerySet)[0];
+              }
             }
             if (item.offers) {
               const offer = Array.isArray(item.offers) ? item.offers[0] : item.offers;
@@ -867,6 +936,26 @@ export async function extractProductFromLink(
       } catch {
         // Skip malformed json-ld
       }
+    }
+
+    // Also harvest clean marketplace CDN product images if < 5 gallery items
+    if (gallerySet.size < 5) {
+      const cdnImgRegex = /https:\/\/(?:images\.tokopedia\.net|down-id\.img\.susercontent\.com|cf\.shopee\.co\.id|p\d+-oec-va\.ibyteimg\.com)[^\s"'<>\\]+/gi;
+      let cdnMatch;
+      while ((cdnMatch = cdnImgRegex.exec(htmlSlice)) !== null && gallerySet.size < 5) {
+        addGalleryUrl(cdnMatch[0]);
+      }
+    }
+
+    if (gallerySet.size > 0) {
+      result.images = Array.from(gallerySet).slice(0, 5);
+      if (!result.ogImage) result.ogImage = result.images[0];
+    }
+
+    const painSource = [rawInputUrl, result.ogDescription, result.metaDescription].filter(Boolean).join('\n');
+    const painPoints = extractPainPointsFromText(painSource);
+    if (painPoints.length > 0) {
+      result.extractedPainPoints = painPoints;
     }
 
     // 5. Slug intelligence from resolved final URL

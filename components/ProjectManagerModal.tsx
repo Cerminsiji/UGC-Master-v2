@@ -20,11 +20,14 @@ import {
   Eraser,
   Activity,
   AlertTriangle,
+  Download,
+  Upload,
 } from 'lucide-react';
 import {
   StoryboardProject,
   StorageAuditReport,
   StorageDeployLogEntry,
+  TalentKitPreset,
 } from '../types';
 import { formatDuration, copyToClipboard } from '../utils/helpers';
 import { UGC_CATEGORIES } from '../data/categories';
@@ -35,6 +38,7 @@ import {
   clearDeployLogs,
   getDeployLogs,
 } from '../utils/storyboardStorage';
+import { loadTalentKits, replaceTalentKits } from '../utils/talentKitStorage';
 import { ProjectDeployLogPanel } from './ProjectDeployLogPanel';
 
 interface ProjectManagerModalProps {
@@ -80,6 +84,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
   const [copiedCaption, setCopiedCaption] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
 
   const [auditReport, setAuditReport] = useState<StorageAuditReport | null>(null);
   const [deployLogs, setDeployLogs] = useState<StorageDeployLogEntry[]>([]);
@@ -172,6 +177,78 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
   const handleClearLogs = () => {
     clearDeployLogs();
     setDeployLogs([]);
+  };
+
+  const handleExportWorkspaceBackup = () => {
+    const talentKits = loadTalentKits();
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      projects,
+      talentKits,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ugc_workspace_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setBackupNotice(`Backup ${projects.length} naskah + ${talentKits.length} Talent Kit berhasil diunduh.`);
+    setTimeout(() => setBackupNotice(null), 4000);
+  };
+
+  const handleImportWorkspaceBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const parsed = JSON.parse(String(ev.target?.result || ''));
+        const importedProjectsRaw = Array.isArray(parsed?.projects)
+          ? parsed.projects
+          : Array.isArray(parsed)
+          ? parsed
+          : null;
+        if (!importedProjectsRaw || importedProjectsRaw.length === 0) {
+          setBackupNotice('File backup tidak valid: array projects kosong atau tidak ditemukan.');
+          return;
+        }
+        const validProjects: StoryboardProject[] = importedProjectsRaw.filter(
+          (item: any): item is StoryboardProject =>
+            Boolean(item && typeof item.id === 'string' && Array.isArray(item.scenes))
+        );
+        if (validProjects.length === 0) {
+          setBackupNotice('Tidak ada struktur naskah yang valid dalam file backup.');
+          return;
+        }
+        let kitCount = 0;
+        if (Array.isArray(parsed?.talentKits)) {
+          const validKits = parsed.talentKits.filter(
+            (k: any): k is TalentKitPreset => Boolean(k && typeof k.name === 'string')
+          );
+          replaceTalentKits(validKits);
+          kitCount = validKits.length;
+        }
+        const nextActiveId = validProjects[0].id;
+        if (onReplaceProjects) {
+          onReplaceProjects(validProjects, nextActiveId, 0, [
+            `Workspace di-restore: ${validProjects.length} naskah, ${kitCount} Talent Kit.`,
+          ]);
+        }
+        setSelectedId(nextActiveId);
+        const report = await auditProjectStorage(validProjects, nextActiveId);
+        setAuditReport(report);
+        setBackupNotice(`Restore berhasil: ${validProjects.length} naskah & ${kitCount} Talent Kit dimuat.`);
+        setTimeout(() => setBackupNotice(null), 4500);
+      } catch {
+        setBackupNotice('Gagal membaca file JSON backup.');
+      }
+    };
+    reader.readAsText(file);
   };
 
   if (!isOpen) return null;
@@ -279,6 +356,30 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleExportWorkspaceBackup}
+              className="flex items-center gap-1.5 bg-[#141c2f] hover:bg-[#1c2842] text-emerald-300 text-xs font-bold px-3 py-2 rounded-xl border border-emerald-700/50 transition-all active:scale-95 cursor-pointer"
+              title="Unduh Backup Workspace (.json) berisi seluruh Naskah & Talent Kit"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Export Backup (.json)</span>
+            </button>
+
+            <label
+              className="flex items-center gap-1.5 bg-[#141c2f] hover:bg-[#1c2842] text-sky-300 text-xs font-bold px-3 py-2 rounded-xl border border-sky-700/50 transition-all active:scale-95 cursor-pointer"
+              title="Restore Backup Workspace (.json) ke Local Storage"
+            >
+              <Upload className="w-3.5 h-3.5 text-sky-400" />
+              <span>Import Backup (.json)</span>
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleImportWorkspaceBackup}
+                className="hidden"
+              />
+            </label>
+
             {onClearAllProjects && (
               <button
                 type="button"
@@ -309,6 +410,15 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
             </button>
           </div>
         </div>
+
+        {backupNotice && (
+          <div className="px-4 py-2 bg-emerald-950/70 border-b border-emerald-700/50 text-xs text-emerald-200 font-semibold flex items-center justify-between">
+            <span>{backupNotice}</span>
+            <button type="button" onClick={() => setBackupNotice(null)} className="text-emerald-300 hover:text-white">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Top-Level Modal Mode Switcher: Project Inspector vs Deploy Log & Storage Audit */}
         <div className="px-4 md:px-5 py-2.5 border-b border-[#182136] bg-[#0a0e19] flex flex-wrap items-center justify-between gap-2 shrink-0">

@@ -29,6 +29,9 @@ import {
   Plus,
   Trash2,
   ShieldCheck,
+  Bookmark,
+  BookmarkPlus,
+  Lock,
 } from 'lucide-react';
 import {
   UGC_CATEGORIES,
@@ -39,9 +42,10 @@ import {
   CameraAngleStyleOption,
   ExtendedPersonaOption
 } from '../data/categories';
-import { AIGenerateParams, AutoDetectResult, UGCPersona } from '../types';
+import { AIGenerateParams, AutoDetectResult, ReferenceRole, TalentKitPreset, UGCPersona } from '../types';
 import { postJsonWithRetry, filesToReferenceImages } from '../utils/helpers';
-import { heuristicAutoDetect } from '../lib/gemini-ugc';
+import { heuristicAutoDetect, REFERENCE_ROLE_OPTIONS } from '../lib/gemini-ugc';
+import { loadTalentKits, saveTalentKit, deleteTalentKit } from '../utils/talentKitStorage';
 
 interface AIGeneratorModalProps {
   isOpen: boolean;
@@ -67,6 +71,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   const [productUrl, setProductUrl] = useState('');
   const [referenceImage, setReferenceImage] = useState('');
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [referenceRoles, setReferenceRoles] = useState<ReferenceRole[]>([]);
   const [isUploadingRefs, setIsUploadingRefs] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [productDescription, setProductDescription] = useState('');
@@ -123,6 +128,13 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
   const [detectTags, setDetectTags] = useState<string[]>([]);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [highlightFields, setHighlightFields] = useState(false);
+  const [detectedExactLabel, setDetectedExactLabel] = useState<string | null>(null);
+  const [detectedPainPoints, setDetectedPainPoints] = useState<string[]>([]);
+
+  // Reusable Talent & Location Kit Presets
+  const [talentKits, setTalentKits] = useState<TalentKitPreset[]>(() => loadTalentKits());
+  const [showSaveKitForm, setShowSaveKitForm] = useState(false);
+  const [kitNameInput, setKitNameInput] = useState('');
 
   if (!isOpen) return null;
 
@@ -208,6 +220,13 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
           if (!referenceImage && combined[0]) {
             setReferenceImage(combined[0]);
           }
+          setReferenceRoles((prevRoles) => {
+            const nextRoles: ReferenceRole[] = Array.from({ length: combined.length }, (_, idx) => {
+              if (prevRoles[idx]) return prevRoles[idx];
+              return idx === 0 ? 'product' : 'detail';
+            });
+            return nextRoles;
+          });
           return combined;
         });
       }
@@ -224,7 +243,11 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
     if (!trimmed) return;
     setReferenceImages((prev) => {
       if (prev.includes(trimmed)) return prev;
-      return [...prev, trimmed].slice(0, 8);
+      const combined = [...prev, trimmed].slice(0, 8);
+      setReferenceRoles((prevRoles) =>
+        Array.from({ length: combined.length }, (_, idx) => prevRoles[idx] || (idx === 0 ? 'product' : 'detail'))
+      );
+      return combined;
     });
   };
 
@@ -234,8 +257,68 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       if (referenceImage === prev[idx]) {
         setReferenceImage(next[0] || '');
       }
+      setReferenceRoles((prevRoles) => prevRoles.filter((_, i) => i !== idx));
       return next;
     });
+  };
+
+  const handleRoleChange = (idx: number, nextRole: ReferenceRole) => {
+    setReferenceRoles((prev) => {
+      const updated = Array.from(
+        { length: Math.max(prev.length, referenceImages.length) },
+        (_, i) => prev[i] || (i === 0 ? 'product' : 'detail')
+      );
+      updated[idx] = nextRole;
+      return updated;
+    });
+  };
+
+  const handleSaveCurrentTalentKit = () => {
+    const activePersona = isCustomPersonaOpen && customPersonaText.trim() ? customPersonaText.trim() : persona;
+    const presetName = kitNameInput.trim() || `Kit ${activePersona.split('/')[0].trim().slice(0, 20)}`;
+    const talentIdx = referenceRoles.findIndex((r) => r === 'talent');
+    const envIdx = referenceRoles.findIndex((r) => r === 'environment');
+
+    const nextKits = saveTalentKit({
+      name: presetName,
+      persona: activePersona,
+      tone,
+      talentAppearance: `${activePersona} dengan gaya ${tone}`,
+      environmentLighting: 'Natural single-direction daylight / clean indoor aesthetic',
+      talentImage: talentIdx >= 0 ? referenceImages[talentIdx] : undefined,
+      environmentImage: envIdx >= 0 ? referenceImages[envIdx] : undefined,
+    });
+    setTalentKits(nextKits);
+    setKitNameInput('');
+    setShowSaveKitForm(false);
+  };
+
+  const handleApplyTalentKit = (kit: TalentKitPreset) => {
+    setPersona(kit.persona);
+    setIsCustomPersonaOpen(false);
+    if (kit.tone) setTone(kit.tone);
+
+    const injectedImgs: string[] = [...referenceImages];
+    const injectedRoles: ReferenceRole[] = Array.from(
+      { length: referenceImages.length },
+      (_, i) => referenceRoles[i] || (i === 0 ? 'product' : 'detail')
+    );
+
+    if (kit.talentImage && !injectedImgs.includes(kit.talentImage) && injectedImgs.length < 8) {
+      injectedImgs.push(kit.talentImage);
+      injectedRoles.push('talent');
+    }
+    if (kit.environmentImage && !injectedImgs.includes(kit.environmentImage) && injectedImgs.length < 8) {
+      injectedImgs.push(kit.environmentImage);
+      injectedRoles.push('environment');
+    }
+    setReferenceImages(injectedImgs);
+    setReferenceRoles(injectedRoles);
+  };
+
+  const handleDeleteTalentKit = (id: string) => {
+    const next = deleteTalentKit(id);
+    setTalentKits(next);
   };
 
   // Handle Smart AI Auto-Detection from 1 single input (link + notes + optional reference images)
@@ -337,15 +420,35 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       if (detected.detectedTags && Array.isArray(detected.detectedTags)) {
         setDetectTags(detected.detectedTags);
       }
+      let resolvedDetectedRefs = [...referenceImages];
+      let resolvedDetectedRoles: ReferenceRole[] = [...referenceRoles];
       if (detected.referenceImage || detected.imageUrl) {
         const detImg = detected.referenceImage || detected.imageUrl || '';
         setReferenceImage(detImg);
-        if (detImg) {
-          setReferenceImages((prev) => (prev.includes(detImg) ? prev : [detImg, ...prev].slice(0, 8)));
+        if (detImg && !resolvedDetectedRefs.includes(detImg)) {
+          resolvedDetectedRefs = [detImg, ...resolvedDetectedRefs].slice(0, 8);
+          resolvedDetectedRoles = (['product', ...resolvedDetectedRoles] as ReferenceRole[]).slice(0, 8);
+          setReferenceImages(resolvedDetectedRefs);
+          setReferenceRoles(resolvedDetectedRoles);
         }
       }
       if (detected.price) setDetectedPrice(detected.price);
       if (detected.platform) setDetectedPlatformName(detected.platform);
+      setDetectedExactLabel(detected.exactLabelText || null);
+      setDetectedPainPoints(
+        Array.isArray(detected.extractedPainPoints) ? detected.extractedPainPoints : []
+      );
+      if (
+        Array.isArray(detected.extractedPainPoints) &&
+        detected.extractedPainPoints.length > 0 &&
+        (!detected.keySellingPoints || !detected.keySellingPoints.includes(detected.extractedPainPoints[0]))
+      ) {
+        setKeySellingPoints((prev) => {
+          const base = (detected.keySellingPoints || prev || '').trim();
+          const painSnippet = detected.extractedPainPoints!.slice(0, 2).join(', ');
+          return base ? `${base} • Solusi keluhan: ${painSnippet}` : `Mengatasi keluhan: ${painSnippet}`;
+        });
+      }
 
       setDetectSuccess(detected.detectionSummary || `Berhasil mendeteksi "${detected.productName}"`);
       setHighlightFields(true);
@@ -359,13 +462,16 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
             c.id.toLowerCase() === detected.category?.toLowerCase()
         );
         const resolvedCategory = catMatch ? catMatch.name : (detected.category || category);
-        const primaryRef = (detected.referenceImage || detected.imageUrl || referenceImages[0] || referenceImage).trim() || undefined;
+        const primaryRef = (detected.referenceImage || detected.imageUrl || resolvedDetectedRefs[0] || referenceImage).trim() || undefined;
         const allRefs =
-          referenceImages.length > 0
-            ? referenceImages
+          resolvedDetectedRefs.length > 0
+            ? resolvedDetectedRefs
             : primaryRef
             ? [primaryRef]
             : undefined;
+        const alignedRoles = allRefs
+          ? allRefs.map((_, i) => resolvedDetectedRoles[i] || (i === 0 ? 'product' : 'detail'))
+          : undefined;
 
         await onGenerate({
           category: resolvedCategory,
@@ -374,6 +480,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
           productUrl: extractedUrl,
           referenceImage: primaryRef,
           referenceImages: allRefs,
+          referenceRoles: alignedRoles,
           productDescription: (detected.productDescription || '').trim(),
           targetAudience: (detected.targetAudience || '').trim(),
           keySellingPoints: (detected.keySellingPoints || '').trim(),
@@ -420,6 +527,9 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
         : referenceImage.trim()
         ? [referenceImage.trim()]
         : undefined;
+    const alignedRoles = mergedRefs
+      ? mergedRefs.map((_, i) => referenceRoles[i] || (i === 0 ? 'product' : 'detail'))
+      : undefined;
 
     await onGenerate({
       category,
@@ -428,6 +538,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
       productUrl: activeUrl,
       referenceImage: mergedRefs?.[0] || referenceImage.trim() || undefined,
       referenceImages: mergedRefs,
+      referenceRoles: alignedRoles,
       productDescription: productDescription.trim(),
       targetAudience: targetAudience.trim(),
       keySellingPoints: keySellingPoints.trim(),
@@ -614,6 +725,11 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                    {detectedExactLabel && (
+                      <span className="text-[10px] bg-indigo-900/70 text-indigo-200 px-1.5 py-0.5 rounded border border-indigo-600/50 font-mono font-bold">
+                        OCR: {detectedExactLabel}
+                      </span>
+                    )}
                     {detectedPlatformName && (
                       <span className="text-[10px] bg-purple-900/60 text-purple-200 px-1.5 py-0.5 rounded border border-purple-700/50 font-bold">
                         {detectedPlatformName}
@@ -624,6 +740,11 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                         💰 {detectedPrice}
                       </span>
                     )}
+                    {detectedPainPoints.slice(0, 2).map((pain, idx) => (
+                      <span key={`pain_${idx}`} className="text-[10px] bg-amber-950/70 text-amber-200 px-1.5 py-0.5 rounded border border-amber-700/50">
+                        Pain: {pain}
+                      </span>
+                    ))}
                     {detectTags.length > 0 && (
                       <>
                         {detectTags.map((tag, i) => (
@@ -731,6 +852,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                           type="button"
                           onClick={() => {
                             setReferenceImages([]);
+                            setReferenceRoles([]);
                             setReferenceImage('');
                           }}
                           className="text-[10px] text-red-300 hover:text-red-200 bg-red-950/50 border border-red-800/50 px-2 py-0.5 rounded flex items-center gap-1 transition-colors"
@@ -792,42 +914,54 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Multi-Image Thumbnails Gallery */}
+                  {/* Multi-Image Thumbnails Gallery with Role Selector */}
                   {referenceImages.length > 0 && (
                     <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 pt-1">
-                      {referenceImages.map((imgSrc, idx) => (
-                        <div
-                          key={idx}
-                          className="relative group bg-[#0e1626] border border-cyan-800/60 rounded-xl p-1.5 flex flex-col gap-1 shadow-sm"
-                        >
-                          <div className="relative w-full h-16 rounded-lg overflow-hidden bg-[#080d17]">
-                            <img
-                              src={imgSrc}
-                              alt={`Reference ${idx + 1}`}
-                              className="w-full h-full object-cover"
-                            />
-                            <span className="absolute top-1 left-1 bg-cyan-950/90 text-cyan-200 border border-cyan-600/60 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded">
-                              Image {idx + 1}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveReferenceImage(idx)}
-                              className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/80 hover:bg-red-600 text-white flex items-center justify-center opacity-90 group-hover:opacity-100 transition-colors"
-                              title="Hapus foto referensi ini"
+                      {referenceImages.map((imgSrc, idx) => {
+                        const currentRole: ReferenceRole = referenceRoles[idx] || (idx === 0 ? 'product' : 'detail');
+                        return (
+                          <div
+                            key={idx}
+                            className="relative group bg-[#0e1626] border border-cyan-800/60 rounded-xl p-1.5 flex flex-col gap-1.5 shadow-sm"
+                          >
+                            <div className="relative w-full h-16 rounded-lg overflow-hidden bg-[#080d17]">
+                              <img
+                                src={imgSrc}
+                                alt={`Reference ${idx + 1}`}
+                                className="w-full h-full object-cover"
+                              />
+                              <span className="absolute top-1 left-1 bg-cyan-950/90 text-cyan-200 border border-cyan-600/60 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded">
+                                Image {idx + 1}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveReferenceImage(idx)}
+                                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/80 hover:bg-red-600 text-white flex items-center justify-center opacity-90 group-hover:opacity-100 transition-colors"
+                                title="Hapus foto referensi ini"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <select
+                              value={currentRole}
+                              onChange={(e) => handleRoleChange(idx, e.target.value as ReferenceRole)}
+                              aria-label={`Peran gambar referensi ${idx + 1}`}
+                              className="w-full bg-[#080d17] border border-cyan-800/70 focus:border-cyan-400 rounded-lg px-1.5 py-1 text-[10px] font-semibold text-cyan-200 outline-none cursor-pointer"
                             >
-                              <X className="w-3 h-3" />
-                            </button>
+                              {REFERENCE_ROLE_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                          <span className="text-[9px] text-cyan-300/90 font-medium truncate text-center">
-                            {idx === 0 ? '★ Referensi Utama' : `Angle / Detail #${idx + 1}`}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                       {referenceImages.length < 8 && (
                         <button
                           type="button"
                           onClick={() => fileInputRef.current?.click()}
-                          className="h-full min-h-[82px] border border-dashed border-cyan-800/60 hover:border-cyan-400 bg-[#0d1422]/50 hover:bg-[#111c30] rounded-xl flex flex-col items-center justify-center gap-1 text-cyan-400 transition-colors p-2"
+                          className="h-full min-h-[96px] border border-dashed border-cyan-800/60 hover:border-cyan-400 bg-[#0d1422]/50 hover:bg-[#111c30] rounded-xl flex flex-col items-center justify-center gap-1 text-cyan-400 transition-colors p-2"
                         >
                           <Plus className="w-4 h-4" />
                           <span className="text-[9px] font-bold text-center">Tambah Foto Lagi</span>
@@ -837,7 +971,7 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                   )}
 
                   <p className="text-[11px] text-cyan-200/80 italic">
-                    ✨ Semua foto referensi yang di-upload akan dianalisis AI untuk menyusun visual storyboard yang akurat dan menjadi rujukan multi-image (`[Image 1 Reference]`, `[Image 2 Reference]`, dst.) pada Google Flow Video UGC.
+                    ✨ Pilih peran tiap foto (Produk Utama, Detail/Label, Talent, Lokasi, atau Gaya) agar AI mengunci Visual Continuity Bible &amp; memetakan `[Image X (Peran)]` secara cerdas ke adegan yang relevan!
                   </p>
                 </div>
 
@@ -1056,6 +1190,76 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({
                 <span className="text-[10px] bg-purple-950 text-purple-300 border border-purple-700/50 px-2.5 py-0.5 rounded-full font-bold self-start sm:self-auto">
                   Aktif: {persona}
                 </span>
+              </div>
+
+              {/* Talent & Lokasi Kit (Reusable Presets) */}
+              <div className="p-3 rounded-xl bg-[#0b101d] border border-indigo-800/40 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-200">
+                    <Bookmark className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Talent &amp; Lokasi Kit ({talentKits.length} Preset Tersimpan)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSaveKitForm((prev) => !prev)}
+                    className="flex items-center gap-1 text-[10px] font-bold text-indigo-200 hover:text-white bg-indigo-950 hover:bg-indigo-900 border border-indigo-600/50 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <BookmarkPlus className="w-3 h-3" />
+                    <span>{showSaveKitForm ? 'Tutup' : 'Simpan Talent & Lokasi Saat Ini'}</span>
+                  </button>
+                </div>
+
+                {showSaveKitForm && (
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <input
+                      type="text"
+                      value={kitNameInput}
+                      onChange={(e) => setKitNameInput(e.target.value)}
+                      placeholder="Nama Kit (e.g. Studio Kamar Estetik / Dapur Ibu Muda)"
+                      className="flex-1 min-w-[200px] bg-[#121929] border border-indigo-700/50 focus:border-indigo-400 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveCurrentTalentKit}
+                      className="text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg cursor-pointer"
+                    >
+                      Simpan Preset
+                    </button>
+                  </div>
+                )}
+
+                {talentKits.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {talentKits.map((kit) => (
+                      <div
+                        key={kit.id}
+                        className="inline-flex items-center gap-1.5 bg-[#12192b] border border-indigo-700/50 rounded-lg pl-2.5 pr-1 py-1 text-[11px]"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleApplyTalentKit(kit)}
+                          className="text-indigo-200 hover:text-white font-semibold flex items-center gap-1.5 cursor-pointer"
+                          title={`Terapkan persona "${kit.persona}"${kit.talentImage ? ' + Foto Talent' : ''}${kit.environmentImage ? ' + Foto Lokasi' : ''}`}
+                        >
+                          <Lock className="w-2.5 h-2.5 text-indigo-400" />
+                          <span>{kit.name}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTalentKit(kit.id)}
+                          className="text-slate-500 hover:text-rose-400 p-0.5 rounded"
+                          title="Hapus preset ini"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-slate-400">
+                    Simpan kombinasi persona, tone suara, foto Talent, dan foto Lokasi studio Anda untuk sekali klik dipakai ulang di produk berikutnya.
+                  </p>
+                )}
               </div>
 
               {detectedPersonaExplanation && (

@@ -17,8 +17,9 @@ import {
   Wand2,
   Image as ImageIcon
 } from 'lucide-react';
-import { Scene, HookVariant } from '../types';
+import { Scene, HookVariant, ReferenceRole, VisualContinuityBible } from '../types';
 import { copyToClipboard, formatDuration } from '../utils/helpers';
+import { formatReferenceTagsForScene, getReferenceRoleLabel } from '../lib/gemini-ugc';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -30,6 +31,9 @@ interface ExportModalProps {
   targetPlatform?: string;
   tone?: string;
   referenceImage?: string;
+  referenceImages?: string[];
+  referenceRoles?: ReferenceRole[];
+  visualBible?: VisualContinuityBible;
   caption?: string;
   scenes: Scene[];
   hookVariants?: HookVariant[];
@@ -47,6 +51,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   targetPlatform,
   tone,
   referenceImage,
+  referenceImages = [],
+  referenceRoles = [],
+  visualBible,
   caption: initialCaption,
   scenes,
   hookVariants,
@@ -75,6 +82,27 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   if (!isOpen) return null;
 
   const totalDuration = scenes.reduce((sum, sc) => sum + (Number(sc.duration) || 0), 0);
+  const allRefs =
+    referenceImages.length > 0
+      ? referenceImages
+      : referenceImage
+      ? [referenceImage]
+      : [];
+
+  const getSceneAttachGuide = (sc: Scene, sceneIndex: number) => {
+    const refTotal = allRefs.length;
+    if (refTotal === 0) return [];
+    const promptMatches = Array.from((sc.googleFlowPrompt || '').matchAll(/\[Image\s+(\d+)/gi))
+      .map((m) => Number(m[1]))
+      .filter((n) => n >= 1 && n <= refTotal);
+    const indexes =
+      sc.referencedImageIndexes && sc.referencedImageIndexes.length > 0
+        ? sc.referencedImageIndexes.filter((n) => n >= 1 && n <= refTotal)
+        : promptMatches.length > 0
+        ? promptMatches
+        : [Math.min(sceneIndex + 1, refTotal)];
+    return indexes.map((n) => `#${n} (${getReferenceRoleLabel(referenceRoles[n - 1] || (n === 1 ? 'product' : 'detail'), true)})`);
+  };
 
   // Generate plain voiceover script
   const getPlainScript = () => {
@@ -84,6 +112,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     scenes.forEach((sc, i) => {
       output += `[ADEGAN ${i + 1} - ${sc.duration}s | ${sc.cameraAngle || 'Shot'}]\n`;
       output += `Visual: ${sc.visualAction}\n`;
+      if (sc.transitionBridge) output += `Transisi Pose: ${sc.transitionBridge}\n`;
       if (sc.popupText) output += `Teks Layar: ${sc.popupText}\n`;
       if (sc.soundEffect) output += `SFX: ${sc.soundEffect}\n`;
       output += `DIALOG: "${sc.dialogVO}"\n`;
@@ -97,6 +126,48 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     Boolean(sc.motionControl) ||
     /no floating text|no on-screen text|\[TikTok Dance Ref:/i.test(sc.googleFlowPrompt || '') ||
     (!sc.popupText?.trim() && !sc.dialogVO?.trim());
+
+  const formatSrtTimestamp = (totalSecs: number) => {
+    const clamped = Math.max(0, Math.round(totalSecs * 1000));
+    const hrs = Math.floor(clamped / 3600000);
+    const mins = Math.floor((clamped % 3600000) / 60000);
+    const secs = Math.floor((clamped % 60000) / 1000);
+    const ms = clamped % 1000;
+    return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+  };
+
+  const getCapCutSrtText = () => {
+    const blocks: string[] = [];
+    let accumulated = 0;
+    let subtitleIndex = 1;
+    scenes.forEach((sc) => {
+      const dur = Math.max(1, Number(sc.duration) || 3);
+      const start = accumulated;
+      const end = accumulated + dur;
+      accumulated = end;
+      const line = (sc.dialogVO || '').trim() || (sc.popupText || '').trim();
+      if (!line) return;
+      blocks.push(`${subtitleIndex}\n${formatSrtTimestamp(start)} --> ${formatSrtTimestamp(end)}\n${line}`);
+      subtitleIndex += 1;
+    });
+    if (blocks.length === 0) {
+      return `1\n00:00:00,000 --> 00:00:03,000\n${title || 'UGC Video'}\n`;
+    }
+    return `${blocks.join('\n\n')}\n`;
+  };
+
+  const handleDownloadSRT = () => {
+    const srtContent = getCapCutSrtText();
+    const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.toLowerCase().replace(/\s+/g, '_')}_subtitles.srt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
 
   // Generate CapCut subtitle and sticker cue
   const getCapCutCueText = () => {
@@ -143,12 +214,20 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const getGoogleFlowPromptsText = () => {
     let output = `🌊 GOOGLE FLOW VIDEO UGC - AI PROMPTS LIST: ${title.toUpperCase()}\n`;
     output += `Total Adegan: ${scenes.length} Scenes | Durasi: ${totalDuration}s\n`;
-    output += `Referensi Image: ${referenceImage ? referenceImage : 'Gunakan gambar produk/kemasan resmi'}\n`;
-    output += `Panduan: Unggah referensi image produk ke Google Flow / Veo / AI Video generator, lalu masukkan prompt tiap adegan.\n`;
+    output += `Referensi Image: ${allRefs.length > 0 ? `${allRefs.length} foto terlampir (${allRefs.map((_, idx) => `#${idx + 1} ${getReferenceRoleLabel(referenceRoles[idx] || (idx === 0 ? 'product' : 'detail'), true)}`).join(', ')})` : 'Gunakan gambar produk/kemasan resmi'}\n`;
+    if (visualBible) {
+      output += `Visual Continuity Bible:\n`;
+      output += `  • Exact Label Lock: ${visualBible.exactLabelText}\n`;
+      output += `  • Packaging Colors: ${visualBible.packagingColors}\n`;
+      output += `  • Talent Consistency: ${visualBible.talentAppearance}\n`;
+      output += `  • Location & Lighting: ${visualBible.environmentLighting}\n`;
+    }
+    output += `Panduan: Unggah referensi image produk ke Google Flow / Veo / AI Video generator sesuai Attach Guide tiap adegan.\n`;
     output += `--------------------------------------------------------\n\n`;
 
     scenes.forEach((sc, i) => {
       const pureVisual = isPureVisualMotionScene(sc);
+      const attachList = getSceneAttachGuide(sc, i);
       const popupText = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
         ? sc.popupText.trim()
         : pureVisual
@@ -161,16 +240,30 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
       let flowPrompt = sc.googleFlowPrompt && sc.googleFlowPrompt.trim() ? sc.googleFlowPrompt.trim() : '';
       if (!flowPrompt) {
+        const refTag = allRefs.length > 0
+          ? formatReferenceTagsForScene(sc.referencedImageIndexes || [1], referenceRoles, productName || title)
+          : `[Image 1 Reference: ${title}]`;
         flowPrompt = pureVisual
-          ? `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - no floating text, no on-screen text overlay, no voiceover dialogue, vertical 9:16 4k 60fps.`
-          : `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`;
+          ? `${refTag} Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - no floating text, no on-screen text overlay, no voiceover dialogue, vertical 9:16 4k 60fps.`
+          : `${refTag} Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging in reference image, vertical 9:16 smartphone UGC video, photorealistic 4k 60fps.`;
       } else if (!pureVisual && !/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
         flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
       }
 
+      const negPrompt = (sc.negativePrompt || visualBible?.negativePromptGlobal || '').trim();
+
       output += `=== ADEGAN ${i + 1} (${sc.duration}s | ${sc.cameraAngle || 'Shot'}) ===\n`;
+      if (attachList.length > 0) {
+        output += `Attach Guide Referensi: ${attachList.join(', ')}\n`;
+      }
+      if (sc.transitionBridge) {
+        output += `Transisi Pose (Match-Cut): ${sc.transitionBridge}\n`;
+      }
       output += `Prompt Google Flow (Image-to-Video):\n`;
       output += `${flowPrompt}\n`;
+      if (negPrompt) {
+        output += `Negative Prompt: ${negPrompt}\n`;
+      }
       output += `Teks Pop-up Layar: ${popupText ? `"${popupText}"` : '(Tanpa Floating Text)'}\n`;
       output += `Kepatuhan Referensi Image: ${sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached'}\n`;
       output += `Dialog VO: ${sc.dialogVO ? `"${sc.dialogVO}"` : '(Tanpa Voice Over)'}\n`;
@@ -186,6 +279,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         projectName: title,
         category: categoryName,
         referenceImage: referenceImage || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+        referenceCount: allRefs.length,
+        referenceRoles,
+        visualBible,
         totalDuration,
         googleFlowPipeline: scenes.map((sc, i) => {
           const pureVisual = isPureVisualMotionScene(sc);
@@ -212,8 +308,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             sceneNumber: i + 1,
             cameraAngle: sc.cameraAngle || 'Medium Shot',
             duration: Number(sc.duration) || 3,
+            attachGuide: getSceneAttachGuide(sc, i),
+            referencedImageIndexes: sc.referencedImageIndexes || [1],
+            transitionBridge: sc.transitionBridge || '',
             popupText,
             googleFlowPrompt: flowPrompt,
+            negativePrompt: sc.negativePrompt || visualBible?.negativePromptGlobal || '',
             imageReferenceNote: sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
             visualAction: sc.visualAction,
             dialogVO: sc.dialogVO || '',
@@ -256,6 +356,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         title,
         category: categoryName,
         totalDuration,
+        referenceRoles,
+        visualBible,
         caption,
         hookVariants,
         scenes: scenes.map((sc, i) => {
@@ -576,22 +678,33 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   </span>
                 </div>
 
-                <button
-                  onClick={() => handleCopyText(getCapCutCueText(), 'capcut')}
-                  className="flex items-center gap-1.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-md transition-all active:scale-95"
-                >
-                  {copiedType === 'capcut' ? (
-                    <>
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Format CapCut Tersalin!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Salin Semua Cue CapCut</span>
-                    </>
-                  )}
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={handleDownloadSRT}
+                    className="flex items-center gap-1.5 bg-[#121c2e] hover:bg-[#1a2942] text-sky-300 border border-sky-700/50 text-xs font-bold px-3 py-1.5 rounded-xl transition-all active:scale-95 cursor-pointer"
+                    title="Download file subtitle .srt siap import ke CapCut / Premiere"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download .srt</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleCopyText(getCapCutCueText(), 'capcut')}
+                    className="flex items-center gap-1.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-md transition-all active:scale-95"
+                  >
+                    {copiedType === 'capcut' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Format CapCut Tersalin!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Salin Semua Cue CapCut</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
               <pre className="p-4 rounded-xl bg-[#0b0e17] border border-[#212c44] text-xs font-mono text-sky-200 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto custom-scrollbar">
@@ -739,10 +852,21 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   <p className="text-xs text-slate-400 mt-0.5">
                     Prompt AI Video yang selalu mengikuti referensi image produk secara ketat dan bebas dari typo.
                   </p>
-                  {referenceImage && (
-                    <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-cyan-200/90 bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded-lg max-w-xl truncate">
-                      <ImageIcon className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-                      <span className="truncate">Referensi Image: {referenceImage}</span>
+                  {(allRefs.length > 0 || visualBible) && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {allRefs.length > 0 && (
+                        <span className="inline-flex items-center gap-1.5 text-[10px] text-cyan-200 bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded-lg">
+                          <ImageIcon className="w-3 h-3 shrink-0 text-cyan-400" />
+                          <span>
+                            {allRefs.length} Foto Referensi ({allRefs.map((_, idx) => `#${idx + 1} ${getReferenceRoleLabel(referenceRoles[idx] || (idx === 0 ? 'product' : 'detail'), true)}`).join(', ')})
+                          </span>
+                        </span>
+                      )}
+                      {visualBible?.exactLabelText && (
+                        <span className="text-[10px] font-mono text-indigo-200 bg-indigo-950/70 border border-indigo-700/60 px-2 py-0.5 rounded-lg">
+                          Visual Lock: {visualBible.exactLabelText}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -796,90 +920,120 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
               {/* Per-Scene Prompt Cards */}
               <div className="space-y-3">
-                {scenes.map((sc, i) => (
-                  <div
-                    key={sc.id || i}
-                    className="bg-[#0b101d] border border-cyan-900/40 rounded-xl p-3.5 space-y-2 hover:border-cyan-600/50 transition-colors"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/80 px-2 py-0.5 rounded uppercase font-mono">
-                          Adegan {i + 1} • {sc.duration}s
-                        </span>
-                        <span className="text-xs font-semibold text-slate-300">
-                          {sc.cameraAngle || 'Sudut Kamera'}
-                        </span>
+                {scenes.map((sc, i) => {
+                  const attachGuide = getSceneAttachGuide(sc, i);
+                  const effectiveNegative = (sc.negativePrompt || visualBible?.negativePromptGlobal || '').trim();
+                  const effectiveFlowPrompt =
+                    sc.googleFlowPrompt ||
+                    `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle}): ${sc.visualAction}. Follow reference image packaging, photorealistic 9:16 vertical smartphone camera video, 4k 60fps.`;
+                  const copyBundle = effectiveNegative
+                    ? `${effectiveFlowPrompt}\nNegative Prompt: ${effectiveNegative}`
+                    : effectiveFlowPrompt;
+
+                  return (
+                    <div
+                      key={sc.id || i}
+                      className="bg-[#0b101d] border border-cyan-900/40 rounded-xl p-3.5 space-y-2 hover:border-cyan-600/50 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/80 px-2 py-0.5 rounded uppercase font-mono">
+                            Adegan {i + 1} • {sc.duration}s
+                          </span>
+                          <span className="text-xs font-semibold text-slate-300">
+                            {sc.cameraAngle || 'Sudut Kamera'}
+                          </span>
+                          {attachGuide.length > 0 && (
+                            <span className="text-[10px] font-mono font-bold bg-emerald-950/70 text-emerald-300 border border-emerald-700/50 px-2 py-0.5 rounded">
+                              Attach: {attachGuide.join(', ')}
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => handleCopyText(copyBundle, `flow_sc_${i}`)}
+                          className="flex items-center gap-1 text-[11px] font-bold text-cyan-300 hover:text-cyan-200 bg-[#121c2e] hover:bg-[#18263e] px-2.5 py-1 rounded-lg border border-cyan-800/60 transition-colors"
+                        >
+                          {copiedType === `flow_sc_${i}` ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span>Tersalin!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Salin Prompt Scene {i + 1}</span>
+                            </>
+                          )}
+                        </button>
                       </div>
 
-                      <button
-                        onClick={() => handleCopyText(sc.googleFlowPrompt || `[Image 1 Reference: ${title}] Scene ${i + 1}: ${sc.visualAction}`, `flow_sc_${i}`)}
-                        className="flex items-center gap-1 text-[11px] font-bold text-cyan-300 hover:text-cyan-200 bg-[#121c2e] hover:bg-[#18263e] px-2.5 py-1 rounded-lg border border-cyan-800/60 transition-colors"
-                      >
-                        {copiedType === `flow_sc_${i}` ? (
-                          <>
-                            <Check className="w-3 h-3 text-emerald-400" />
-                            <span>Tersalin!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3 h-3" />
-                            <span>Salin Prompt Scene {i + 1}</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Teks Pop-up Layar */}
-                    {(() => {
-                      const effectivePopup = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
-                        ? sc.popupText.trim()
-                        : (() => {
-                            const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
-                            if (match && match[1]) return match[1].trim();
-                            return i === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨';
-                          })();
-                      return (
-                        <div className="flex items-center justify-between bg-[#0a1526] border border-cyan-800/40 px-3 py-1.5 rounded-lg text-xs">
-                          <div className="flex items-center gap-2 truncate">
-                            <span className="text-cyan-400 font-bold uppercase text-[10px] tracking-wider shrink-0">
-                              💬 Teks Pop-up:
-                            </span>
-                            <span className="font-extrabold text-cyan-100 truncate">
-                              {effectivePopup}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => handleCopyText(effectivePopup, `flow_popup_${i}`)}
-                            className="text-[10px] font-bold text-cyan-300 hover:text-cyan-100 flex items-center gap-1 font-mono shrink-0 ml-2 bg-cyan-950 hover:bg-cyan-900 border border-cyan-800/60 px-2 py-0.5 rounded transition-colors"
-                          >
-                            {copiedType === `flow_popup_${i}` ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-400" />
-                                <span>Tersalin!</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" />
-                                <span>Salin Teks</span>
-                              </>
-                            )}
-                          </button>
+                      {sc.transitionBridge && (
+                        <div className="text-[11px] text-indigo-200 bg-indigo-950/40 border border-indigo-800/50 px-3 py-1.5 rounded-lg">
+                          <span className="font-bold text-indigo-300 mr-1.5">Transisi Pose:</span>
+                          <span>{sc.transitionBridge}</span>
                         </div>
-                      );
-                    })()}
+                      )}
 
-                    <div className="bg-[#060a12] p-2.5 rounded-lg border border-cyan-950">
-                      <p className="text-xs font-mono text-cyan-200/90 leading-relaxed whitespace-pre-wrap">
-                        {sc.googleFlowPrompt || `[Image 1 Reference: ${title}] Scene ${i + 1} (${sc.cameraAngle}): ${sc.visualAction}. Follow reference image packaging, photorealistic 9:16 vertical smartphone camera video, 4k 60fps.`}
-                      </p>
-                    </div>
+                      {/* Teks Pop-up Layar */}
+                      {(() => {
+                        const effectivePopup = sc.popupText && sc.popupText.trim() && sc.popupText.trim() !== '-'
+                          ? sc.popupText.trim()
+                          : (() => {
+                              const match = sc.googleFlowPrompt?.match(/On-Screen Pop-up Text Overlay:\s*["']?([^"'\-\}\]]+)["']?/i);
+                              if (match && match[1]) return match[1].trim();
+                              return i === 0 ? 'JANGAN SKIP DULU! 🔥' : 'SOLUSI TERBAIK ✨';
+                            })();
+                        return (
+                          <div className="flex items-center justify-between bg-[#0a1526] border border-cyan-800/40 px-3 py-1.5 rounded-lg text-xs">
+                            <div className="flex items-center gap-2 truncate">
+                              <span className="text-cyan-400 font-bold uppercase text-[10px] tracking-wider shrink-0">
+                                💬 Teks Pop-up:
+                              </span>
+                              <span className="font-extrabold text-cyan-100 truncate">
+                                {effectivePopup}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => handleCopyText(effectivePopup, `flow_popup_${i}`)}
+                              className="text-[10px] font-bold text-cyan-300 hover:text-cyan-100 flex items-center gap-1 font-mono shrink-0 ml-2 bg-cyan-950 hover:bg-cyan-900 border border-cyan-800/60 px-2 py-0.5 rounded transition-colors"
+                            >
+                              {copiedType === `flow_popup_${i}` ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                  <span>Tersalin!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" />
+                                  <span>Salin Teks</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })()}
 
-                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 italic">
-                      <span className="text-cyan-400 font-semibold not-italic">🎯 Kepatuhan Visual:</span>
-                      <span>{sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached'}</span>
+                      <div className="bg-[#060a12] p-2.5 rounded-lg border border-cyan-950">
+                        <p className="text-xs font-mono text-cyan-200/90 leading-relaxed whitespace-pre-wrap">
+                          {effectiveFlowPrompt}
+                        </p>
+                      </div>
+
+                      {effectiveNegative && (
+                        <div className="text-[10px] font-mono text-rose-300/90 bg-rose-950/30 border border-rose-800/40 px-2.5 py-1 rounded-lg">
+                          <span className="font-bold text-rose-300 mr-1">Negative:</span>
+                          <span>{effectiveNegative}</span>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 italic">
+                        <span className="text-cyan-400 font-semibold not-italic">🎯 Kepatuhan Visual:</span>
+                        <span>{sc.imageReferenceNote || 'Pastikan Produk sesuai Gambar referensi yang sudah di attached'}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

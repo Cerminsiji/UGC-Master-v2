@@ -23,11 +23,15 @@ import {
   Wand2,
   GripVertical,
   X,
+  Link2,
+  ShieldAlert,
 } from 'lucide-react';
 import type { DraggableAttributes } from '@dnd-kit/core';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
-import { Scene, HookVariant } from '../types';
+import { Scene, HookVariant, ReferenceRole, VisualContinuityBible } from '../types';
 import { copyToClipboard } from '../utils/helpers';
+import { scanTextCompliance } from '../utils/complianceChecker';
+import { formatReferenceTagsForScene, getReferenceRoleLabel } from '../lib/gemini-ugc';
 import {
   CAMERA_ANGLE_PRESETS,
   SFX_PRESETS,
@@ -43,7 +47,10 @@ export interface SceneCardProps {
   index: number;
   totalScenes: number;
   productName?: string;
+  targetPlatform?: string;
   referenceImages?: string[];
+  referenceRoles?: ReferenceRole[];
+  visualBible?: VisualContinuityBible;
   onUpdate: (updatedScene: Scene) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -68,7 +75,10 @@ export const SceneCard: React.FC<SceneCardProps> = ({
   index,
   totalScenes,
   productName = 'Produk',
+  targetPlatform = 'TikTok Shop',
   referenceImages = [],
+  referenceRoles = [],
+  visualBible,
   onUpdate,
   onMoveUp,
   onMoveDown,
@@ -114,6 +124,22 @@ export const SceneCard: React.FC<SceneCardProps> = ({
   const currentDuration = Number(scene.duration) || 3;
   const estimatedSeconds = wordCount > 0 ? (wordCount / 2.7).toFixed(1) : '0';
   const isTooFast = wordCount > 0 && wordCount / currentDuration > 3.8;
+
+  // Anti-Shadowban & Affiliate Compliance Scanner
+  const complianceScan = scanTextCompliance(
+    `${scene.dialogVO || ''} ${scene.popupText || ''}`,
+    targetPlatform
+  );
+
+  const handleFixCompliance = () => {
+    const fixedVo = scanTextCompliance(scene.dialogVO || '', targetPlatform).sanitizedText;
+    const fixedPopup = scanTextCompliance(scene.popupText || '', targetPlatform).sanitizedText;
+    onUpdate({
+      ...scene,
+      dialogVO: fixedVo,
+      popupText: fixedPopup,
+    });
+  };
 
   return (
     <div
@@ -722,6 +748,39 @@ export const SceneCard: React.FC<SceneCardProps> = ({
           </div>
         </div>
 
+        {/* ANTI-SHADOWBAN & AFFILIATE COMPLIANCE GUARDRAIL */}
+        {complianceScan.issues.length > 0 && (
+          <div className="bg-amber-950/35 border border-amber-500/45 rounded-xl p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="text-[11px] font-bold text-amber-200">
+                  Guardrail Kepatuhan {targetPlatform} ({complianceScan.issues.length} kata berisiko terdeteksi)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleFixCompliance}
+                className="text-[10px] font-bold bg-amber-600 hover:bg-amber-500 text-slate-950 px-2.5 py-1 rounded-lg transition-colors cursor-pointer shrink-0"
+              >
+                Perbaiki Kata Aman
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {complianceScan.issues.map((issue) => (
+                <span
+                  key={issue.id}
+                  className="text-[10px] bg-black/40 border border-amber-700/50 text-amber-100 px-2 py-0.5 rounded-lg"
+                  title={`${issue.category}: ${issue.suggestion}`}
+                >
+                  <span className="text-rose-300 font-semibold line-through mr-1">{issue.matchedText}</span>
+                  <span className="text-emerald-300 font-semibold">→ {issue.safeReplacement}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ZONE 3: MOOD & PRODUCTION NOTES */}
         <div className="relative">
           <div className="flex items-center justify-between mb-1">
@@ -790,7 +849,11 @@ export const SceneCard: React.FC<SceneCardProps> = ({
                 type="button"
                 onClick={async () => {
                   if (scene.googleFlowPrompt) {
-                    const ok = await copyToClipboard(scene.googleFlowPrompt);
+                    const neg = (scene.negativePrompt || visualBible?.negativePromptGlobal || '').trim();
+                    const fullCopyText = neg
+                      ? `${scene.googleFlowPrompt}\nNegative Prompt: ${neg}`
+                      : scene.googleFlowPrompt;
+                    const ok = await copyToClipboard(fullCopyText);
                     if (ok) {
                       setCopiedFlow(true);
                       setTimeout(() => setCopiedFlow(false), 2000);
@@ -798,7 +861,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({
                   }
                 }}
                 className="flex items-center gap-1 bg-[#101c2e] hover:bg-[#16273f] text-cyan-300 text-[10px] font-bold px-2 py-1 rounded-lg border border-cyan-800/60 transition-colors"
-                title="Salin Prompt Google Flow untuk Scene ini"
+                title="Salin Prompt Google Flow + Negative Prompt untuk Scene ini"
               >
                 {copiedFlow ? (
                   <>
@@ -814,67 +877,122 @@ export const SceneCard: React.FC<SceneCardProps> = ({
               </button>
             </div>
 
-            {/* Multi-Image Reference Selector Badges for Google Flow */}
-            {referenceImages.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap bg-[#080d17]/90 border border-cyan-950 rounded-lg p-1.5">
-                <span className="text-[10px] text-cyan-400 font-semibold px-1">
-                  Pilih Referensi Google Flow:
-                </span>
-                {referenceImages.map((imgSrc, refIdx) => {
-                  const refNum = refIdx + 1;
-                  const totalRefs = referenceImages.length;
-                  const tagText =
-                    totalRefs > 1
-                      ? `[Image ${refNum} of ${totalRefs} Reference: ${productName}]`
-                      : `[Image 1 Reference: ${productName}]`;
-                  const isActiveRef = (scene.googleFlowPrompt || '').includes(`Image ${refNum}`);
-                  return (
-                    <button
-                      key={refIdx}
-                      type="button"
-                      onClick={() => {
-                        const currentPrompt = scene.googleFlowPrompt || '';
-                        const updatedPrompt = /\[Image\s+\d+[^\]]*\]/i.test(currentPrompt)
-                          ? currentPrompt.replace(/\[Image\s+\d+[^\]]*\]/i, tagText)
-                          : `${tagText} ${currentPrompt}`.trim();
-                        const updatedNote =
-                          totalRefs > 1
-                            ? `Pastikan Produk sesuai Gambar referensi #${refNum} (dari ${totalRefs} foto referensi terlampir)`
-                            : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
-                        onUpdate({
-                          ...scene,
-                          googleFlowPrompt: updatedPrompt,
-                          imageReferenceNote: updatedNote,
-                        });
-                      }}
-                      className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-mono font-bold transition-all ${
-                        isActiveRef
-                          ? 'bg-cyan-900/70 border-cyan-400 text-white shadow-sm'
-                          : 'bg-[#0d1526] border-cyan-900/60 text-cyan-300 hover:border-cyan-600'
-                      }`}
-                      title={`Gunakan Foto Referensi #${refNum} pada Scene ${index + 1}`}
-                    >
-                      <img
-                        src={imgSrc}
-                        alt={`Ref ${refNum}`}
-                        className="w-4 h-4 rounded object-cover border border-cyan-600/50"
-                      />
-                      <span>Image {refNum}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            {/* Multi-Image Reference Toggle Badges for Google Flow (Role-Aware) */}
+            {referenceImages.length > 0 && (() => {
+              const totalRefs = referenceImages.length;
+              const promptMatches = Array.from((scene.googleFlowPrompt || '').matchAll(/\[Image\s+(\d+)/gi))
+                .map((m) => Number(m[1]))
+                .filter((n) => n >= 1 && n <= totalRefs);
+              const activeIndexes =
+                scene.referencedImageIndexes && scene.referencedImageIndexes.length > 0
+                  ? scene.referencedImageIndexes.filter((n) => n >= 1 && n <= totalRefs)
+                  : promptMatches.length > 0
+                  ? promptMatches
+                  : [1];
+
+              return (
+                <div className="flex items-center gap-1.5 flex-wrap bg-[#080d17]/90 border border-cyan-950 rounded-lg p-1.5">
+                  <span className="text-[10px] text-cyan-400 font-semibold px-1">
+                    Referensi Terkunci ({activeIndexes.length}):
+                  </span>
+                  {referenceImages.map((imgSrc, refIdx) => {
+                    const refNum = refIdx + 1;
+                    const role = referenceRoles[refIdx] || (refIdx === 0 ? 'product' : 'detail');
+                    const roleLabel = getReferenceRoleLabel(role, true);
+                    const isActiveRef = activeIndexes.includes(refNum);
+
+                    return (
+                      <button
+                        key={refIdx}
+                        type="button"
+                        onClick={() => {
+                          const exists = activeIndexes.includes(refNum);
+                          let nextIndexes = exists
+                            ? activeIndexes.filter((n) => n !== refNum)
+                            : [...activeIndexes, refNum];
+                          if (nextIndexes.length === 0) {
+                            nextIndexes = [refNum];
+                          }
+                          nextIndexes.sort((a, b) => a - b);
+
+                          const refTag = formatReferenceTagsForScene(nextIndexes, referenceRoles, productName);
+                          const currentPrompt = scene.googleFlowPrompt || '';
+                          const strippedPrompt = currentPrompt.replace(/^(?:\[Image\s+\d+[^\]]*\]\s*)+/i, '').trim();
+                          const updatedPrompt = `${refTag} ${strippedPrompt}`.trim();
+                          const refDesc = nextIndexes
+                            .map((n) => `#${n} (${getReferenceRoleLabel(referenceRoles[n - 1] || (n === 1 ? 'product' : 'detail'), true)})`)
+                            .join(', ');
+                          const updatedNote =
+                            totalRefs > 1
+                              ? `Kunci visual mengikuti Gambar Referensi ${refDesc}`
+                              : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
+
+                          onUpdate({
+                            ...scene,
+                            referencedImageIndexes: nextIndexes,
+                            googleFlowPrompt: updatedPrompt,
+                            imageReferenceNote: updatedNote,
+                          });
+                        }}
+                        className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-mono font-bold transition-all cursor-pointer ${
+                          isActiveRef
+                            ? 'bg-cyan-900/70 border-cyan-400 text-white shadow-sm'
+                            : 'bg-[#0d1526] border-cyan-900/60 text-cyan-300/75 hover:border-cyan-600'
+                        }`}
+                        title={`Toggle Foto Referensi #${refNum} (${roleLabel}) pada Adegan ${index + 1}`}
+                      >
+                        <img
+                          src={imgSrc}
+                          alt={`Ref ${refNum}`}
+                          className="w-4 h-4 rounded object-cover border border-cyan-600/50"
+                        />
+                        <span>Image {refNum}</span>
+                        <span className="text-[9px] font-sans font-semibold text-cyan-200/80 bg-cyan-950/80 px-1 rounded">
+                          {roleLabel}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* Prompt input / editor */}
             <div className="space-y-1">
               <textarea
                 value={scene.googleFlowPrompt || ''}
                 onChange={(e) => handleChange('googleFlowPrompt', e.target.value)}
-                placeholder="[Image 1 Reference: Produk] Handheld POV 9:16 vertical UGC video..."
+                placeholder="[Image 1 (Produk): Produk] Handheld POV 9:16 vertical UGC video..."
                 rows={2}
                 className="w-full bg-[#080d17] border border-cyan-950 focus:border-cyan-500 rounded-lg p-2 text-xs font-mono text-cyan-200 placeholder-slate-600 outline-none resize-none leading-relaxed"
               />
+            </div>
+
+            {/* Transition Bridge & Negative Prompt */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="flex items-center gap-1.5 bg-[#09101b] border border-indigo-900/40 rounded-lg px-2.5 py-1.5 text-[10px]">
+                <Link2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span className="text-indigo-300 font-bold shrink-0">Transisi Pose:</span>
+                <input
+                  type="text"
+                  value={scene.transitionBridge || ''}
+                  onChange={(e) => handleChange('transitionBridge', e.target.value)}
+                  placeholder="Start Pose -> End Pose agar cut mulus..."
+                  className="flex-1 min-w-0 bg-transparent text-slate-200 placeholder-slate-600 outline-none text-[10px]"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-[#09101b] border border-rose-900/40 rounded-lg px-2.5 py-1.5 text-[10px]">
+                <ShieldAlert className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                <span className="text-rose-300 font-bold shrink-0">Negative:</span>
+                <input
+                  type="text"
+                  value={scene.negativePrompt || ''}
+                  onChange={(e) => handleChange('negativePrompt', e.target.value)}
+                  placeholder={visualBible?.negativePromptGlobal || 'no altered brand text, no extra fingers, no clipping...'}
+                  className="flex-1 min-w-0 bg-transparent text-rose-200/90 placeholder-slate-600 outline-none text-[10px] font-mono"
+                />
+              </div>
             </div>
 
             {/* Catatan Kepatuhan Referensi Image */}

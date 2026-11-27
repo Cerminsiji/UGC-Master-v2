@@ -11,7 +11,7 @@ import {
   Plus,
   Layers,
 } from 'lucide-react';
-import { AIHookOption } from '../types';
+import { AIHookOption, ReferenceRole, VisualContinuityBible } from '../types';
 import { postJsonWithRetry } from '../utils/helpers';
 
 interface HookGeneratorModalProps {
@@ -24,6 +24,10 @@ interface HookGeneratorModalProps {
   persona?: string;
   tone?: string;
   targetPlatform?: string;
+  referenceImages?: string[];
+  referenceRoles?: ReferenceRole[];
+  visualBible?: VisualContinuityBible;
+  painPoints?: string[];
   onSelectHook: (hook: AIHookOption, mode?: 'replace' | 'add_variant') => void;
 }
 
@@ -50,11 +54,17 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
   persona = '',
   tone = '',
   targetPlatform = 'TikTok Shop',
+  referenceImages = [],
+  referenceRoles = [],
+  visualBible,
+  painPoints = [],
   onSelectHook,
 }) => {
   const [hooks, setHooks] = useState<AIHookOption[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeGroupFilter, setActiveGroupFilter] = useState<(typeof FORMULA_FILTERS)[number]>('Semua');
+
+  const hasVisualLock = Boolean(visualBible?.exactLabelText || referenceImages.length > 0);
 
   const fetchHooks = async () => {
     setIsLoading(true);
@@ -69,6 +79,10 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
           persona,
           tone,
           targetPlatform,
+          referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+          referenceRoles: referenceRoles.length > 0 ? referenceRoles : undefined,
+          visualBible,
+          painPoints: painPoints.length > 0 ? painPoints : undefined,
         }
       );
       if (data && data.success && Array.isArray(data.hooks) && data.hooks.length > 0) {
@@ -206,6 +220,11 @@ export const HookGeneratorModal: React.FC<HookGeneratorModalProps> = ({
                 <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-700/50 px-2 py-0.5 rounded-full font-bold">
                   Anti-Klise R&amp;D
                 </span>
+                {hasVisualLock && (
+                  <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-700/50 px-2 py-0.5 rounded-full font-bold">
+                    Visual Lock Aktif ({referenceImages.length} Foto)
+                  </span>
+                )}
               </h2>
               <p className="text-xs text-slate-400">
                 Tambahkan sebagai varian A/B Hook baru atau ganti Hook aktif di Adegan 1 untuk meningkatkan retensi.

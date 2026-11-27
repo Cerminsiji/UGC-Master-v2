@@ -5,8 +5,17 @@ import {
   parseSafeJson,
   buildNicheHashtags,
   fitCaptionWithHashtags,
+  REFERENCE_ROLE_OPTIONS,
+  getReferenceRoleLabel,
+  selectSceneReferenceIndexes,
+  formatReferenceTagsForScene,
 } from '@/lib/gemini-ugc';
-import type { DanceStoryboardResult, DanceStoryboardScene } from '@/types';
+import type {
+  DanceStoryboardResult,
+  DanceStoryboardScene,
+  ReferenceRole,
+  VisualContinuityBible,
+} from '@/types';
 
 function pickRandom<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)] || items[0];
@@ -53,6 +62,9 @@ function buildDanceFallback(params: {
   targetSceneCount: number;
   targetPlatform: string;
   physicsConsistencyCheck: boolean;
+  refCount: number;
+  normalizedRoles: ReferenceRole[];
+  visualBible?: Partial<VisualContinuityBible> | null;
 }): DanceStoryboardResult {
   const {
     danceMode,
@@ -67,6 +79,9 @@ function buildDanceFallback(params: {
     targetSceneCount,
     targetPlatform,
     physicsConsistencyCheck,
+    refCount,
+    normalizedRoles,
+    visualBible,
   } = params;
 
   const isProductMode = danceMode !== 'Pure Viral Dance Trend';
@@ -82,6 +97,9 @@ function buildDanceFallback(params: {
 
   const pureVisualToken =
     'no floating text, no on-screen text overlay, no subtitles, no voiceover dialogue, pure visual choreography and camera motion';
+  const defaultNegPrompt =
+    visualBible?.negativePromptGlobal ||
+    'no altered brand text, no gibberish label, no extra fingers, no clipping limbs, no floating zero-G motion, no floating text overlay, no subtitles';
 
   const baseSegments: Array<{
     beatLabel: string;
@@ -91,6 +109,7 @@ function buildDanceFallback(params: {
     visual: string;
     sfx: string;
     mood: string;
+    bridge: string;
   }> = [
     {
       beatLabel: 'Intro 1x8 (Ketukan 1–4) • Hook Pose',
@@ -101,10 +120,11 @@ function buildDanceFallback(params: {
       cam: '0.5x Ultra-Wide Snap Push-In mengikuti gerakan tangan ke kamera.',
       cameraAngle: '0.5x Ultra-Wide Gen-Z Selfie (Ekspresif & Dekat)',
       visual: isProductMode
-        ? `${talentPersona} masuk frame dengan pose pembuka enerjik sambil memegang ${safeProd} secara solid, menatap lensa di bawah cahaya natural.`
-        : `${talentPersona} membuka frame dengan pose siap dance penuh energi, tatapan tajam ke kamera dan gerakan bahu sinkron ketukan intro.`,
+        ? `${talentPersona} masuk frame dengan pose pembuka enerjik sambil memegang ${safeProd} secara solid, menatap lensa di bawah cahaya natural ${backgroundSetting}.`
+        : `${talentPersona} membuka frame dengan pose siap dance penuh energi, tatapan tajam ke kamera dan gerakan bahu sinkron ketukan intro di ${backgroundSetting}.`,
       sfx: 'Intro riser whoosh & Finger snap click',
       mood: 'Pure visual dance intro. Pencahayaan natural stabil, tempo intro membangun antisipasi.',
+      bridge: 'Mulai dari pose tengah stabil menghadap kamera → akhiri dengan bahu miring kanan siap groove.',
     },
     {
       beatLabel: 'Verse 1x8 (Ketukan 5–8) • Hand-Sync Groove',
@@ -119,6 +139,7 @@ function buildDanceFallback(params: {
         : `Penari mengeksekusi kombinasi gerakan tangan ${danceStyle} dengan artikulasi jari jelas dan postur tegak di ${outfitWardrobe}.`,
       sfx: 'Crisp snare clap & Sub-bass groove',
       mood: 'Pure visual groove. Ekspresi ceria & eye-contact kuat tanpa teks layar.',
+      bridge: 'Lanjut dari bahu miring kanan → akhiri dengan telapak tangan kanan terangkat mendekati lensa.',
     },
     {
       beatLabel: 'Pre-Chorus • Match-Cut Hand Cover',
@@ -130,6 +151,7 @@ function buildDanceFallback(params: {
         : `Transisi tutup lensa mulus mengubah sudut framing dan posisi pose penari tepat saat musik naik menuju beat drop.`,
       sfx: 'Match-cut hand slap whoosh & Risers swell',
       mood: 'Speed-ramp transition tepat di frame tutup lensa. Pure visual.',
+      bridge: 'Tangan menutup penuh frame → reveal posisi lutut siap drop menyambut beat chorus.',
     },
     {
       beatLabel: 'CHORUS BEAT DROP! (1x8 Ketukan Utama)',
@@ -141,9 +163,10 @@ function buildDanceFallback(params: {
       cameraAngle: 'Snap-Zoom Product Punch (Zoom Cepat Beat Drop)',
       visual: isProductMode
         ? `Puncak koreografi ${danceStyle}: ${talentPersona} menari enerjik memamerkan kelenturan & siluet ${safeProd} di tengah gerakan chorus berenergi tinggi.`
-        : `Puncak koreografi ${danceStyle} penuh energi di ruang terbuka/studio dengan gerakan kaki dan tangan serempak bersama irama bass drop.`,
+        : `Puncak koreografi ${danceStyle} penuh energi di ${backgroundSetting} dengan gerakan kaki dan tangan serempak bersama irama bass drop.`,
       sfx: 'Heavy sub-bass beat drop hit & Crowd cheer shimmer',
       mood: 'Dynamic micro-zoom di tiap bass hit. Tanpa teks overlay & tanpa VO.',
+      bridge: 'Mendarat dari beat drop chorus → lanjut melangkah mundur ringan masuk ke groove detail.',
     },
     {
       beatLabel: 'Post-Chorus • Detail Groove / Fit-Check',
@@ -155,17 +178,19 @@ function buildDanceFallback(params: {
         : `${talentPersona} melangkah santai mengikuti groove sambil memamerkan detail ${outfitWardrobe} di pencahayaan hangat konsisten.`,
       sfx: 'Hi-hat groove & Camera shutter click',
       mood: 'Fokus proporsi gerakan tubuh & detail visual jernih.',
+      bridge: 'Langkah mundur selesai → siapkan putaran torso kembali ke pose tengah untuk loop frame.',
     },
     {
       beatLabel: 'Outro • Freeze Pose & Seamless Loop',
-      choreo: 'Freeze pose ikonik (peace sign / heart / pose stylish) mengikuti irama ketukan terakhir sebelum kembali ke posisi pembuka.',
-      cam: 'Smooth Pull-Back Reveal perlahan dengan framing bersih vertikal 9:16.',
+      choreo: 'Kembali ke pose pembuka tengah dengan head-tilt & senyum percaya diri, posisi tangan dan produk kembali identik dengan frame detik ke-1 agar loop mulus.',
+      cam: 'Smooth Pull-Back Reveal perlahan mengunci framing vertikal 9:16 identik dengan frame awal.',
       cameraAngle: 'Front Camera / Selfie Mode (Clean Framing)',
       visual: isProductMode
-        ? `${talentPersona} melakukan pose penutup elegan sambil menampilkan ${safeProd} secara utuh di bawah cahaya terarah konsisten.`
-        : `${talentPersona} menahan pose ikonik penutup selama 1 detik agar video bisa looping mulus ke detik pertama.`,
+        ? `${talentPersona} mengembalikan posisi tubuh dan ${safeProd} ke pose awal pembuka di bawah cahaya terarah konsisten untuk seamless loop.`
+        : `${talentPersona} kembali ke pose ikonik pembuka selama 1 detik terakhir agar video terputar ulang mulus ke ketukan ke-1.`,
       sfx: 'Final beat chime & Sparkle magic ting',
       mood: 'Loop-ready end frame tanpa teks layar maupun voice over.',
+      bridge: 'Outro End Pose kembali identik dengan Intro Start Pose (Seamless Loop Lock).',
     },
     {
       beatLabel: 'Bridge Breakdown • Slow-Mo Wave',
@@ -175,19 +200,21 @@ function buildDanceFallback(params: {
       visual: `Gerakan slow-motion halus menonjolkan kontrol tubuh ${talentPersona} dengan ${outfitWardrobe} di bawah rim light lembut.`,
       sfx: 'Slow-motion bass sweep & Synth shimmer',
       mood: 'Speed ramp 0.5x ke 1x, pencahayaan rim light bersih.',
+      bridge: 'Akhir body wave melambat → snap kembali ke tempo penuh untuk penutup.',
     },
     {
       beatLabel: 'Encore Pose • Quick Turn Loop',
-      choreo: 'Putar badan cepat menghadap belakang lalu menoleh balik ke kamera siap menyambung ke ketukan pertama.',
+      choreo: 'Putar badan cepat 180° lalu menoleh balik ke kamera kembali tepat ke posisi frame detik pertama.',
       cam: 'Whip Pan kiri ke kanan untuk menciptakan seamless loop.',
       cameraAngle: 'Panning & Whip Pan (Transisi Cepat)',
       visual: `${talentPersona} berputar mulus kembali ke posisi awal pembuka agar video terputar ulang mulus.`,
       sfx: 'Whip pan whoosh & Beat restart tick',
       mood: 'Loop continuity frame, tanpa floating text.',
+      bridge: 'Putaran 180° berhenti persis di framing & jarak kamera Intro Adegan 1.',
     },
   ];
 
-  const extraPool = baseSegments.slice(-2);
+  const extraPool = baseSegments.slice(6);
   let chosen: typeof baseSegments = [];
 
   if (sceneCount <= 4) {
@@ -203,6 +230,21 @@ function buildDanceFallback(params: {
   const perDur = Math.max(2, Math.round(targetDuration / chosen.length));
   const scenes: DanceStoryboardScene[] = chosen.map((seg, idx) => {
     const dur = idx === chosen.length - 1 ? Math.max(2, targetDuration - perDur * (chosen.length - 1)) : perDur;
+    const referencedImageIndexes = selectSceneReferenceIndexes(
+      seg.cameraAngle,
+      normalizedRoles,
+      refCount,
+      idx,
+      chosen.length
+    );
+    const refTag =
+      refCount > 0
+        ? formatReferenceTagsForScene(referencedImageIndexes, normalizedRoles, safeProd)
+        : `[TikTok Dance Ref: ${danceStyle}]`;
+    const refDesc = referencedImageIndexes
+      .map((n) => `#${n} (${getReferenceRoleLabel(normalizedRoles[n - 1], true)})`)
+      .join(', ');
+
     return {
       id: `dance_sc_${Date.now()}_${idx + 1}`,
       order: idx + 1,
@@ -216,10 +258,16 @@ function buildDanceFallback(params: {
       dialogVO: '',
       notesMood: seg.mood,
       duration: dur,
-      imageReferenceNote: isProductMode
-        ? 'Pastikan Produk & Outfit sesuai Gambar referensi yang sudah di attached'
-        : 'Pastikan karakter & outfit penari konsisten dengan referensi visual',
-      googleFlowPrompt: `[TikTok Dance Ref: ${danceStyle}] Scene ${idx + 1} (${seg.beatLabel}) - ${seg.cameraAngle}, ${seg.cam} - Dancer Action: ${seg.choreo}. ${seg.visual} - Tempo: ${beatTempo}, Intensity: ${intensity}, ${pureVisualToken}, ${physicsSnippet}, 9:16 vertical 60fps crisp smartphone video.`,
+      referencedImageIndexes,
+      transitionBridge: seg.bridge,
+      negativePrompt: defaultNegPrompt,
+      imageReferenceNote:
+        refCount > 1
+          ? `Kunci visual mengikuti Gambar Referensi ${refDesc}`
+          : isProductMode
+          ? 'Pastikan Produk & Outfit sesuai Gambar referensi yang sudah di attached'
+          : 'Pastikan karakter & outfit penari konsisten dengan referensi visual',
+      googleFlowPrompt: `${refTag} [TikTok Dance: ${danceStyle}] Scene ${idx + 1} (${seg.beatLabel}) - ${seg.cameraAngle}, ${seg.cam} - Dancer Action: ${seg.choreo}. ${seg.visual} - Tempo: ${beatTempo}, Intensity: ${intensity}, ${pureVisualToken}, ${physicsSnippet}, 9:16 vertical 60fps crisp smartphone video.`,
       motionControl: {
         danceStyle,
         cameraMovement: seg.cam,
@@ -259,6 +307,8 @@ function buildDanceFallback(params: {
     choreoConcept: `Koreografi ${danceStyle} bergaya ${danceMode} dengan tempo ${musicVibe} (pure visual dance tanpa floating text & tanpa voice over).`,
     soundRecommendation: `Gunakan sound trending kategori "${musicVibe}" (${beatTempo}) dengan ketukan bass drop jelas di detik ke-3 sampai ke-5.`,
     outfitNotes: outfitWardrobe || 'OOTD kasual streetwear/clean aesthetic dengan kontras warna mencolok terhadap latar agar gerakan tangan terbaca jelas.',
+    loopAnchorNote:
+      'Outro End Pose mengembalikan tubuh penari, posisi tangan/produk, serta jarak kamera 9:16 tepat ke Intro Start Pose agar loop TikTok berputar mulus tanpa jump-cut.',
     caption: fitCaptionWithHashtags(captionBody, nicheTags, 150),
     hashtags: nicheTags,
     scenes,
@@ -288,7 +338,24 @@ export async function POST(req: NextRequest) {
     targetSceneCount = 6,
     targetPlatform = 'TikTok Shop',
     physicsConsistencyCheck = true,
+    referenceImages: rawReferenceImages = [],
+    referenceRoles: rawReferenceRoles = [],
+    visualBible: rawVisualBible = null,
+    videoAnalysisSummary = '',
   } = body || {};
+
+  const allReferenceImages: string[] = Array.isArray(rawReferenceImages)
+    ? rawReferenceImages.filter((x: unknown) => typeof x === 'string' && x.trim().length > 0)
+    : [];
+  const validRoleSet = new Set<ReferenceRole>(REFERENCE_ROLE_OPTIONS.map((r) => r.value));
+  const refTotal = allReferenceImages.length;
+  const normalizedRoles: ReferenceRole[] = Array.from({ length: Math.max(1, refTotal) }, (_, idx) => {
+    const candidate = Array.isArray(rawReferenceRoles) ? rawReferenceRoles[idx] : undefined;
+    if (candidate && validRoleSet.has(candidate)) return candidate as ReferenceRole;
+    return idx === 0 ? 'product' : 'detail';
+  });
+  const visualBible: Partial<VisualContinuityBible> | null =
+    rawVisualBible && typeof rawVisualBible === 'object' ? rawVisualBible : null;
 
   const isProductMode = danceMode !== 'Pure Viral Dance Trend';
   const sceneTarget = Math.max(4, Math.min(8, Number(targetSceneCount) || 6));
@@ -296,9 +363,20 @@ export async function POST(req: NextRequest) {
   const beatTempo = mapTempoToMotionEnum(musicVibe);
   const intensity = mapIntensityToMotionEnum(danceStyle, musicVibe);
 
+  const referenceInventoryLines =
+    refTotal > 0
+      ? allReferenceImages
+          .map((_, idx) => {
+            const roleMeta =
+              REFERENCE_ROLE_OPTIONS.find((r) => r.value === normalizedRoles[idx]) || REFERENCE_ROLE_OPTIONS[0];
+            return `  * Image #${idx + 1} -> Peran: ${roleMeta.label} (${roleMeta.promptHint})`;
+          })
+          .join('\n')
+      : '';
+
   try {
     const prompt = `Kamu adalah Koreografer Viral TikTok & Creative Video Director profesional Indonesia.
-Buatkan **Storyboard Dance ala TikTok Style** yang lengkap per bar/ketukan (beat-synced), enerjik, variatif, tidak monoton, dan mudah langsung dieksekusi syuting oleh kreator!
+Buatkan **Storyboard Dance ala TikTok Style** yang lengkap per bar/ketukan (beat-synced), enerjik, variatif, tidak monoton, dan terhubung dengan Seamless Loop Frame Lock!
 
 PARAMETER KOREOGRAFI & PRODUKSI:
 - Mode Konten: "${danceMode}"
@@ -312,19 +390,20 @@ ${isProductMode ? `- Produk yang Terintegrasi ke Dance: "${productName || 'Produ
 - Target Platform: "${targetPlatform}"
 - Total Durasi: ${durationTarget} detik
 - Jumlah Segmen Beat/Adegan: WAJIB TEPAT ${sceneTarget} segmen (jumlah integer durasi mendekati ${durationTarget}s)
-
+${videoAnalysisSummary ? `\nHASIL ANALISIS VIDEO REFERENSI (IKUTI RITME & GERAK INI):\n${videoAnalysisSummary}\n` : ''}${refTotal > 0 ? `\nREFERENSI VISUAL TERLAMPIR (${refTotal} foto):\n${referenceInventoryLines}\n` : ''}${visualBible ? `\nVISUAL CONTINUITY BIBLE AKTIF:\n- Kemasan/Warna: ${visualBible.packagingColors || '-'}\n- Label Persis: ${visualBible.exactLabelText || productName || '-'}\n- Talent: ${visualBible.talentAppearance || talentPersona}\n- Lighting/Setting: ${visualBible.environmentLighting || backgroundSetting}\n` : ''}
 ATURAN MUTLAK TIKTOK DANCE STORYBOARD (TANPA FLOATING TEXT & TANPA VOICE OVER):
 1. DILARANG KERAS MEMBUAT NARASI FLOATING TEXT / POP-UP TEXT DI LAYAR! Video dance ini 100% bersih tanpa teks stiker melayang atau subtitle overlay.
 2. DILARANG KERAS MEMBUAT NARASI VOICE OVER (VO) ATAU DIALOG UCAPAN! Fokus penuh hanya pada gerakan fisik koreografi, sinkronisasi ketukan musik, ekspresi visual, pergerakan kamera, pencahayaan, dan cue SFX beat.
-3. Adegan 1 WAJIB menjadi Hook Visual 2-3 detik (pose pembuka, tatapan kamera, hand-snap atau gerakan antisipasi menuju beat drop).
+3. SEAMLESS LOOP FRAME LOCK (WAJIB):
+   - Rancang \`loopAnchorNote\` yang mengunci agar Outro End Pose (segmen terakhir) kembali mulus ke posisi badan, arah pandang, dan jarak framing Intro Start Pose (segmen pertama) supaya video berputar infinite loop mulus di TikTok!
 4. Setiap segmen WAJIB memiliki:
-   - \`beatCue\`: Penanda musik & hitungan tari yang jelas (misal: "Intro 1x8 (Ketukan 1-4)", "Pre-Chorus Match-Cut", "CHORUS BEAT DROP! (Ketukan 1-8)", "Outro Seamless Loop").
-   - \`choreographyMove\`: Instruksi detail gerakan badan, koordinasi tangan/jari, bahu, pinggul, dan footwork agar mudah ditiru.
-   - \`cameraChoreo\`: Instruksi spesifik gerakan kamera mengikuti ketukan (misal: "0.5x Ultra-Wide push-in di ketukan 4", "Crash zoom tiap kick drum", "Match-cut hand cover + whip pan").
-   - \`soundEffect\`: Cue SFX/Foley beat musik yang hidup (misal: "Finger snap & Sub-bass drop", "Match-cut whoosh & Snare clap").
-   - \`googleFlowPrompt\`: Prompt siap video AI yang WAJIB menyertakan "no floating text, no on-screen text overlay, no subtitles, no voiceover dialogue" dan dilarang menyebut overlay teks.
-5. ${physicsConsistencyCheck ? 'PHYSICS & ANATOMY MANDATE: Semua gerakan tari wajib mematuhi batas biomekanika sendi manusia, kontak kaki dengan lantai yang solid, inersia tubuh realistis, genggaman 5 jari normal bila memegang barang, tanpa clipping/melayang di visualAction & googleFlowPrompt.' : ''}
-6. \`caption\`: Buatkan 1 caption postingan media sosial ala TikTok Dance lengkap dengan 3-4 hashtag relevan (WAJIB <= 150 karakter total!).
+   - \`beatCue\`, \`choreographyMove\`, \`cameraChoreo\`, \`cameraAngle\`, \`visualAction\`, \`soundEffect\`, \`notesMood\`, \`duration\`
+   - \`transitionBridge\`: Start Pose -> End Pose untuk menyambung mulus antar segmen (terutama Outro -> Intro loop).
+   - \`referencedImageIndexes\`: Indeks 1-based dari foto referensi yang relevan${refTotal > 0 ? ` (1..${refTotal})` : ' (default [1])'}.
+   - \`negativePrompt\`: Larangan visual bahasa Inggris (termasuk no floating text, no subtitles, no extra fingers, no altered label).
+   - \`googleFlowPrompt\`: Prompt siap video AI yang memuat tag referensi [Image X (Peran): ...] jika relevan, WAJIB menyertakan "no floating text, no on-screen text overlay, no subtitles, no voiceover dialogue".
+5. ${physicsConsistencyCheck ? 'PHYSICS & ANATOMY MANDATE: Semua gerakan tari wajib mematuhi batas biomekanika sendi manusia, kontak kaki dengan lantai yang solid, inersia tubuh realistis, genggaman 5 jari normal bila memegang barang, tanpa clipping/melayang.' : ''}
+6. \`caption\`: Buatkan 1 caption TikTok Dance lengkap dengan 3-4 hashtag relevan (WAJIB <= 150 karakter total!).
 
 Kembalikan JSON sesuai skema.`;
 
@@ -337,6 +416,7 @@ Kembalikan JSON sesuai skema.`;
           choreoConcept: { type: Type.STRING },
           soundRecommendation: { type: Type.STRING },
           outfitNotes: { type: Type.STRING },
+          loopAnchorNote: { type: Type.STRING },
           caption: { type: Type.STRING },
           hashtags: { type: Type.ARRAY, items: { type: Type.STRING } },
           scenes: {
@@ -352,6 +432,12 @@ Kembalikan JSON sesuai skema.`;
                 soundEffect: { type: Type.STRING },
                 notesMood: { type: Type.STRING },
                 duration: { type: Type.INTEGER },
+                referencedImageIndexes: {
+                  type: Type.ARRAY,
+                  items: { type: Type.INTEGER },
+                },
+                transitionBridge: { type: Type.STRING },
+                negativePrompt: { type: Type.STRING },
                 googleFlowPrompt: { type: Type.STRING },
               },
               required: [
@@ -363,34 +449,77 @@ Kembalikan JSON sesuai skema.`;
                 'soundEffect',
                 'notesMood',
                 'duration',
+                'referencedImageIndexes',
+                'transitionBridge',
+                'negativePrompt',
                 'googleFlowPrompt',
               ],
             },
           },
         },
-        required: ['title', 'choreoConcept', 'soundRecommendation', 'outfitNotes', 'caption', 'scenes'],
+        required: [
+          'title',
+          'choreoConcept',
+          'soundRecommendation',
+          'outfitNotes',
+          'loopAnchorNote',
+          'caption',
+          'scenes',
+        ],
       },
     };
 
     const raw = await generateWithFallback(
       prompt,
       config,
-      'You are an elite TikTok Viral Dance Choreographer & Video Director. Create energetic, beat-synced pure visual dance storyboards with ZERO floating text overlays and ZERO voiceover dialogue. Enforce strict human biomechanics and physics in every scene.',
-      20000
+      'You are an elite TikTok Viral Dance Choreographer & Video Director. Create energetic, beat-synced pure visual dance storyboards locked to attached visual references, Visual Continuity Bible, and Seamless Loop framing with ZERO floating text overlays and ZERO voiceover dialogue.',
+      22000,
+      allReferenceImages,
+      normalizedRoles
     );
 
     const parsed = parseSafeJson<any>(raw);
     if (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
+      const safeProd = productName?.trim() || danceStyle;
+      const totalSegs = parsed.scenes.length;
+
       const normalizedScenes: DanceStoryboardScene[] = parsed.scenes.map((sc: any, idx: number) => {
+        const angle = sc.cameraAngle || 'Medium Shot (Setengah Badan)';
+        const rawIdx = Array.isArray(sc.referencedImageIndexes)
+          ? sc.referencedImageIndexes
+              .map((n: any) => Number(n))
+              .filter(
+                (n: number, pos: number, arr: number[]) =>
+                  Number.isInteger(n) && n >= 1 && n <= Math.max(1, refTotal) && arr.indexOf(n) === pos
+              )
+          : [];
+        const referencedImageIndexes =
+          refTotal > 0
+            ? rawIdx.length > 0
+              ? rawIdx
+              : selectSceneReferenceIndexes(angle, normalizedRoles, refTotal, idx, totalSegs)
+            : [1];
+        const refTag =
+          refTotal > 0
+            ? formatReferenceTagsForScene(referencedImageIndexes, normalizedRoles, safeProd)
+            : `[TikTok Dance Ref: ${danceStyle}]`;
+
         const baseFlow =
           sc.googleFlowPrompt ||
-          `[TikTok Dance Ref: ${danceStyle}] Scene ${idx + 1} (${sc.beatCue || ''}) - ${sc.visualAction || sc.choreographyMove} - Camera: ${sc.cameraChoreo || cameraDynamic} - natural human biomechanics, realistic inertia, 9:16 vertical 60fps.`;
-        const cleanedFlow = baseFlow
+          `${refTag} Scene ${idx + 1} (${sc.beatCue || ''}) - ${sc.visualAction || sc.choreographyMove} - Camera: ${sc.cameraChoreo || cameraDynamic} - natural human biomechanics, realistic inertia, 9:16 vertical 60fps.`;
+        let cleanedFlow = baseFlow
           .replace(/\s*-?\s*On-Screen Pop-up Text Overlay:\s*["']?[^"'\-]+["']?/gi, '')
           .trim();
+        if (refTotal > 0 && !/\[Image\s+\d+/i.test(cleanedFlow)) {
+          cleanedFlow = `${refTag} ${cleanedFlow}`;
+        }
         const finalFlow = /no floating text|no on-screen text/i.test(cleanedFlow)
           ? cleanedFlow
           : `${cleanedFlow} - no floating text, no on-screen text overlay, no subtitles, no voiceover dialogue, pure visual dance & camera motion`;
+
+        const refDesc = referencedImageIndexes
+          .map((n: number) => `#${n} (${getReferenceRoleLabel(normalizedRoles[n - 1], true)})`)
+          .join(', ');
 
         return {
           id: `dance_sc_${Date.now()}_${idx + 1}`,
@@ -398,17 +527,30 @@ Kembalikan JSON sesuai skema.`;
           beatCue: sc.beatCue || `Bar ${idx + 1} • Ketukan 1–8`,
           choreographyMove: sc.choreographyMove || sc.visualAction || '',
           cameraChoreo: sc.cameraChoreo || cameraDynamic,
-          cameraAngle: sc.cameraAngle || 'Medium Shot (Setengah Badan)',
+          cameraAngle: angle,
           visualAction: sc.visualAction || sc.choreographyMove || '',
           popupText: '',
           soundEffect: sc.soundEffect || 'Sub-bass beat drop hit',
           dialogVO: '',
           notesMood: sc.notesMood || 'Pure visual beat-synced choreography.',
           duration: Math.max(1, Number(sc.duration) || 3),
+          referencedImageIndexes,
+          transitionBridge:
+            sc.transitionBridge ||
+            (idx === totalSegs - 1
+              ? 'Outro End Pose kembali identik dengan Intro Start Pose (Seamless Loop Lock).'
+              : `Sambung pose dari segmen ${idx + 1} → siapkan transisi ketukan ke segmen ${idx + 2}.`),
+          negativePrompt:
+            sc.negativePrompt ||
+            visualBible?.negativePromptGlobal ||
+            'no floating text, no subtitles, no altered brand text, no extra fingers, no clipping',
           googleFlowPrompt: finalFlow,
-          imageReferenceNote: isProductMode
-            ? 'Pastikan Produk & Outfit sesuai Gambar referensi yang sudah di attached'
-            : 'Pastikan karakter & outfit penari konsisten dengan referensi visual',
+          imageReferenceNote:
+            refTotal > 1
+              ? `Kunci visual mengikuti Gambar Referensi ${refDesc}`
+              : isProductMode
+              ? 'Pastikan Produk & Outfit sesuai Gambar referensi yang sudah di attached'
+              : 'Pastikan karakter & outfit penari konsisten dengan referensi visual',
           motionControl: {
             danceStyle,
             cameraMovement: sc.cameraChoreo || cameraDynamic,
@@ -453,6 +595,9 @@ Kembalikan JSON sesuai skema.`;
         choreoConcept: parsed.choreoConcept || '',
         soundRecommendation: parsed.soundRecommendation || `${musicVibe} (${beatTempo})`,
         outfitNotes: parsed.outfitNotes || outfitWardrobe,
+        loopAnchorNote:
+          parsed.loopAnchorNote ||
+          'Outro End Pose kembali ke posisi awal Intro Start Pose untuk seamless infinite loop.',
         caption: finalCaption,
         hashtags: Array.isArray(parsed.hashtags) && parsed.hashtags.length > 0 ? parsed.hashtags : fallbackTags,
         scenes: normalizedScenes,
@@ -474,6 +619,9 @@ Kembalikan JSON sesuai skema.`;
       targetSceneCount: sceneTarget,
       targetPlatform,
       physicsConsistencyCheck: physicsConsistencyCheck !== false,
+      refCount: refTotal,
+      normalizedRoles,
+      visualBible,
     });
 
     return NextResponse.json({ success: true, data: fallbackResult, source: 'smart-dance-template' });
@@ -491,6 +639,9 @@ Kembalikan JSON sesuai skema.`;
       targetSceneCount: sceneTarget,
       targetPlatform,
       physicsConsistencyCheck: physicsConsistencyCheck !== false,
+      refCount: refTotal,
+      normalizedRoles,
+      visualBible,
     });
     return NextResponse.json({ success: true, data: fallbackResult, source: 'smart-dance-template' });
   }

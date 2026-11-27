@@ -241,9 +241,19 @@ import {
   AutoDetectResult,
   StorageDeployAction,
   DanceStoryboardResult,
+  ReferenceRole,
+  VisualContinuityBible,
 } from '@/types';
 import { copyToClipboard, generateId, postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
-import { formatShortCaption, generateRichFallback, UGC_RD_HOOK_ARCHETYPES } from '@/lib/gemini-ugc';
+import {
+  formatShortCaption,
+  generateRichFallback,
+  UGC_RD_HOOK_ARCHETYPES,
+  REFERENCE_ROLE_OPTIONS,
+  getReferenceRoleLabel,
+  selectSceneReferenceIndexes,
+  formatReferenceTagsForScene,
+} from '@/lib/gemini-ugc';
 import {
   Plus,
   Sparkles,
@@ -264,6 +274,8 @@ import {
   Loader2,
   GripVertical,
   Clock,
+  Lock,
+  Link2,
 } from 'lucide-react';
 
 // Initial project matching UGC Before & After format with 6 rich scenes
@@ -425,12 +437,13 @@ export default function HomePage() {
   const [isHooksModalOpen, setIsHooksModalOpen] = useState(false);
   const [isTeleprompterOpen, setIsTeleprompterOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-  const [exportModalInitialTab, setExportModalInitialTab] = useState<'table' | 'caption' | 'script' | 'capcut' | 'json'>('table');
+  const [exportModalInitialTab, setExportModalInitialTab] = useState<'table' | 'caption' | 'script' | 'capcut' | 'json' | 'googleflow'>('table');
   const [isProjectsModalOpen, setIsProjectsModalOpen] = useState(false);
   const [isJsonCopied, setIsJsonCopied] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [isAuditingContinuity, setIsAuditingContinuity] = useState(false);
   const [enhancingSceneId, setEnhancingSceneId] = useState<string | null>(null);
   const [activeDragSceneId, setActiveDragSceneId] = useState<string | null>(null);
 
@@ -780,7 +793,7 @@ export default function HomePage() {
     }
   };
 
-  const handleOpenExportWithTab = (tab: 'table' | 'caption' | 'script' | 'capcut' | 'json' = 'table') => {
+  const handleOpenExportWithTab = (tab: 'table' | 'caption' | 'script' | 'capcut' | 'json' | 'googleflow' = 'table') => {
     setExportModalInitialTab(tab);
     setIsExportModalOpen(true);
   };
@@ -1141,6 +1154,12 @@ export default function HomePage() {
     const resolvedIndex = sceneIdx >= 0 ? sceneIdx : Math.max(0, (targetScene.order || 1) - 1);
 
     try {
+      const activeRefs =
+        currentProject.referenceImages && currentProject.referenceImages.length > 0
+          ? currentProject.referenceImages
+          : currentProject.referenceImage
+          ? [currentProject.referenceImage]
+          : [];
       const data = await postJsonWithRetry<{ success?: boolean; scene?: Partial<Scene>; contextual?: boolean }>(
         '/api/enhance-scene',
         {
@@ -1155,6 +1174,8 @@ export default function HomePage() {
             dialogVO: s.dialogVO,
             notesMood: s.notesMood,
             duration: s.duration,
+            transitionBridge: s.transitionBridge,
+            referencedImageIndexes: s.referencedImageIndexes,
           })),
           category: activeCategory.name,
           productName: currentProject.productName,
@@ -1166,8 +1187,11 @@ export default function HomePage() {
           targetPlatform: currentProject.targetPlatform,
           targetAudience: currentProject.targetAudience,
           physicsConsistencyCheck: currentProject.physicsConsistencyCheck,
+          referenceImages: activeRefs,
+          referenceRoles: currentProject.referenceRoles,
+          visualBible: currentProject.visualBible,
           instruction:
-            'Poles adegan ini dengan menjaga kesinambungan narasi dan visual dari adegan sebelum dan sesudahnya, menggunakan gaya bahasa VO dan angle kamera yang segar serta tidak monoton.',
+            'Poles adegan ini dengan menjaga kesinambungan narasi dan visual dari adegan sebelum dan sesudahnya, mengunci Visual Continuity Bible, serta menggunakan gaya bahasa VO dan angle kamera yang segar.',
         }
       );
 
@@ -1406,6 +1430,7 @@ export default function HomePage() {
 
   const workspaceRefInput = useRef<HTMLInputElement | null>(null);
   const [isUploadingWorkspaceRefs, setIsUploadingWorkspaceRefs] = useState(false);
+  const [isVisualBibleOpen, setIsVisualBibleOpen] = useState(false);
 
   const handleWorkspaceUploadReferences = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -1417,23 +1442,34 @@ export default function HomePage() {
           const existing = p.referenceImages || (p.referenceImage ? [p.referenceImage] : []);
           const combined = [...existing, ...dataUrls].slice(0, 8);
           const total = combined.length;
+          const prevRoles = p.referenceRoles || [];
+          const nextRoles: ReferenceRole[] = Array.from({ length: total }, (_, idx) => {
+            if (prevRoles[idx]) return prevRoles[idx];
+            return idx === 0 ? 'product' : 'detail';
+          });
           const prodName = p.productName || 'Produk';
           const updatedScenes = p.scenes.map((sc, idx) => {
-            const refIdx = (idx % total) + 1;
-            const refTag =
-              total > 1
-                ? `[Image ${refIdx} of ${total} Reference: ${prodName}]`
-                : `[Image 1 Reference: ${prodName}]`;
+            const refIndexes = selectSceneReferenceIndexes(
+              sc.cameraAngle,
+              nextRoles,
+              total,
+              idx,
+              p.scenes.length
+            );
+            const refTag = formatReferenceTagsForScene(refIndexes, nextRoles, prodName);
             const curPrompt = sc.googleFlowPrompt || '';
-            const nextPrompt = /\[Image\s+\d+[^\]]*\]/i.test(curPrompt)
-              ? curPrompt.replace(/\[Image\s+\d+[^\]]*\]/i, refTag)
-              : `${refTag} ${curPrompt}`.trim();
+            const stripped = curPrompt.replace(/^(?:\[Image\s+\d+[^\]]*\]\s*)+/i, '').trim();
+            const nextPrompt = `${refTag} ${stripped}`.trim();
+            const refDesc = refIndexes
+              .map((n) => `#${n} (${getReferenceRoleLabel(nextRoles[n - 1], true)})`)
+              .join(', ');
             const nextNote =
               total > 1
-                ? `Pastikan Produk sesuai Gambar referensi #${refIdx} (dari ${total} foto referensi terlampir)`
+                ? `Kunci visual mengikuti Gambar Referensi ${refDesc}`
                 : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
             return {
               ...sc,
+              referencedImageIndexes: refIndexes,
               googleFlowPrompt: nextPrompt,
               imageReferenceNote: nextNote,
             };
@@ -1441,6 +1477,7 @@ export default function HomePage() {
           return {
             ...p,
             referenceImages: combined,
+            referenceRoles: nextRoles,
             referenceImage: combined[0] || p.referenceImage,
             scenes: updatedScenes,
           };
@@ -1457,13 +1494,108 @@ export default function HomePage() {
     updateCurrentProject((p) => {
       const existing = p.referenceImages || (p.referenceImage ? [p.referenceImage] : []);
       const next = existing.filter((_, i) => i !== removeIdx);
+      const nextRoles = (p.referenceRoles || []).filter((_, i) => i !== removeIdx);
+      const total = next.length;
+      const prodName = p.productName || 'Produk';
+      const updatedScenes =
+        total > 0
+          ? p.scenes.map((sc, idx) => {
+              const refIndexes = selectSceneReferenceIndexes(
+                sc.cameraAngle,
+                nextRoles,
+                total,
+                idx,
+                p.scenes.length
+              );
+              const refTag = formatReferenceTagsForScene(refIndexes, nextRoles, prodName);
+              const curPrompt = sc.googleFlowPrompt || '';
+              const stripped = curPrompt.replace(/^(?:\[Image\s+\d+[^\]]*\]\s*)+/i, '').trim();
+              const refDesc = refIndexes
+                .map((n) => `#${n} (${getReferenceRoleLabel(nextRoles[n - 1] || (n === 1 ? 'product' : 'detail'), true)})`)
+                .join(', ');
+              return {
+                ...sc,
+                referencedImageIndexes: refIndexes,
+                googleFlowPrompt: `${refTag} ${stripped}`.trim(),
+                imageReferenceNote:
+                  total > 1
+                    ? `Kunci visual mengikuti Gambar Referensi ${refDesc}`
+                    : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+              };
+            })
+          : p.scenes;
       return {
         ...p,
         referenceImages: next,
+        referenceRoles: nextRoles,
         referenceImage: next[0] || undefined,
+        scenes: updatedScenes,
       };
     });
     showToast('Foto referensi dihapus');
+  };
+
+  const handleWorkspaceRoleChange = (roleIdx: number, nextRole: ReferenceRole) => {
+    updateCurrentProject((p) => {
+      const existing = p.referenceImages || (p.referenceImage ? [p.referenceImage] : []);
+      const total = Math.max(1, existing.length);
+      const nextRoles: ReferenceRole[] = Array.from({ length: total }, (_, idx) => {
+        if (idx === roleIdx) return nextRole;
+        return p.referenceRoles?.[idx] || (idx === 0 ? 'product' : 'detail');
+      });
+      const prodName = p.productName || 'Produk';
+      const updatedScenes = p.scenes.map((sc, idx) => {
+        const refIndexes = selectSceneReferenceIndexes(
+          sc.cameraAngle,
+          nextRoles,
+          total,
+          idx,
+          p.scenes.length
+        );
+        const refTag = formatReferenceTagsForScene(refIndexes, nextRoles, prodName);
+        const curPrompt = sc.googleFlowPrompt || '';
+        const stripped = curPrompt.replace(/^(?:\[Image\s+\d+[^\]]*\]\s*)+/i, '').trim();
+        const refDesc = refIndexes
+          .map((n) => `#${n} (${getReferenceRoleLabel(nextRoles[n - 1], true)})`)
+          .join(', ');
+        return {
+          ...sc,
+          referencedImageIndexes: refIndexes,
+          googleFlowPrompt: `${refTag} ${stripped}`.trim(),
+          imageReferenceNote:
+            total > 1
+              ? `Kunci visual mengikuti Gambar Referensi ${refDesc}`
+              : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached',
+        };
+      });
+      return {
+        ...p,
+        referenceRoles: nextRoles,
+        scenes: updatedScenes,
+      };
+    });
+    showToast(`Peran Image #${roleIdx + 1} diubah ke "${getReferenceRoleLabel(nextRole)}" & disinkronkan!`);
+  };
+
+  const handleUpdateVisualBible = (field: keyof VisualContinuityBible, value: string) => {
+    updateCurrentProject((p) => {
+      const currentBible: VisualContinuityBible = p.visualBible || {
+        packagingColors: `Warna kemasan asli ${p.productName || 'Produk'}`,
+        exactLabelText: p.productName || 'Produk',
+        productShapeMaterial: `Bentuk fisik asli ${p.productName || 'Produk'}`,
+        talentAppearance: `Talent ${p.persona || 'Kreator UGC'} konsisten`,
+        environmentLighting: 'Single unified 45° directional window/softbox light, matching cast shadows',
+        negativePromptGlobal:
+          'no altered brand text, no gibberish label, no packaging distortion, no extra fingers, no clipping, no lighting jump',
+      };
+      return {
+        ...p,
+        visualBible: {
+          ...currentBible,
+          [field]: value,
+        },
+      };
+    });
   };
 
   // AI Full Storyboard Generate
@@ -1482,6 +1614,10 @@ export default function HomePage() {
           ? [params.referenceImage]
           : [];
       const refTotal = Math.max(1, allParamRefs.length);
+      const paramRoles: ReferenceRole[] = Array.from({ length: refTotal }, (_, idx) => {
+        const r = params.referenceRoles?.[idx];
+        return r || (idx === 0 ? 'product' : 'detail');
+      });
 
       const enforcePhysicsCheck = params.physicsConsistencyCheck !== false;
 
@@ -1502,7 +1638,9 @@ export default function HomePage() {
                 : `Gambar Referensi Produk ${params.productName}`,
               params.targetPlatform || 'TikTok Shop',
               allParamRefs,
-              enforcePhysicsCheck
+              enforcePhysicsCheck,
+              params.tone,
+              paramRoles
             );
 
       const isShopee = (params.targetPlatform || '').toLowerCase().includes('shopee');
@@ -1511,13 +1649,35 @@ export default function HomePage() {
         ? 'KLIK KERANJANG OREN DI BAWAH! 🛒👇'
         : (isTikTok ? 'CEK KERANJANG KUNING SEKARANG! 🛒👇' : 'KLIK KERANJANG DI BAWAH SEKARANG! 🛒👇');
 
+      const resolvedVisualBible: VisualContinuityBible | undefined =
+        resolvedData.visualBible && typeof resolvedData.visualBible === 'object'
+          ? {
+              packagingColors: resolvedData.visualBible.packagingColors || `Warna asli ${params.productName}`,
+              exactLabelText: resolvedData.visualBible.exactLabelText || params.productName,
+              productShapeMaterial: resolvedData.visualBible.productShapeMaterial || `Bentuk kemasan ${params.productName}`,
+              talentAppearance: resolvedData.visualBible.talentAppearance || `Talent ${params.persona || 'Kreator'} konsisten`,
+              environmentLighting:
+                resolvedData.visualBible.environmentLighting ||
+                'Single unified 45° directional window/softbox light with matching cast shadows',
+              negativePromptGlobal:
+                resolvedData.visualBible.negativePromptGlobal ||
+                'no altered brand text, no gibberish label, no packaging distortion, no extra fingers, no clipping, no morphing',
+            }
+          : undefined;
+
       const scenesArray = resolvedData.scenes || [];
       const genScenes: Scene[] = scenesArray.map((sc: any, i: number) => {
-        const refIdx = (i % refTotal) + 1;
-        const refTag =
-          refTotal > 1
-            ? `[Image ${refIdx} of ${refTotal} Reference: ${params.productName}]`
-            : `[Image 1 Reference: ${params.productName}]`;
+        const angle = sc.cameraAngle || 'Medium Shot';
+        const rawRefIdxs = Array.isArray(sc.referencedImageIndexes)
+          ? sc.referencedImageIndexes
+              .map((n: any) => Number(n))
+              .filter((n: number, pos: number, arr: number[]) => Number.isInteger(n) && n >= 1 && n <= refTotal && arr.indexOf(n) === pos)
+          : [];
+        const referencedImageIndexes =
+          rawRefIdxs.length > 0
+            ? rawRefIdxs
+            : selectSceneReferenceIndexes(angle, paramRoles, refTotal, i, scenesArray.length);
+        const refTag = formatReferenceTagsForScene(referencedImageIndexes, paramRoles, params.productName);
 
         const popupText =
           sc.popupText && typeof sc.popupText === 'string' && sc.popupText.trim() && sc.popupText.trim() !== '-'
@@ -1530,11 +1690,13 @@ export default function HomePage() {
 
         if (!flowPrompt) {
           flowPrompt = enforcePhysicsCheck
-            ? `${refTag} Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - ${physicsTokens}.`
-            : `${refTag} Scene ${i + 1} (${sc.cameraAngle || 'Medium Shot'}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - photorealistic 9:16 vertical, 4k 60fps.`;
+            ? `${refTag} Scene ${i + 1} (${angle}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - ${physicsTokens}.`
+            : `${refTag} Scene ${i + 1} (${angle}): ${sc.visualAction || ''} - On-Screen Pop-up Text Overlay: "${popupText}" - photorealistic 9:16 vertical, 4k 60fps.`;
         } else {
-          if (refTotal > 1 && /\[Image 1 Reference:/i.test(flowPrompt)) {
-            flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
+          if (/\[Image\s+\d+[^\]]*\]/i.test(flowPrompt)) {
+            flowPrompt = flowPrompt.replace(/(?:\[Image\s+\d+[^\]]*\]\s*)+/i, `${refTag} `);
+          } else {
+            flowPrompt = `${refTag} ${flowPrompt}`;
           }
           if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
             flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
@@ -1547,21 +1709,27 @@ export default function HomePage() {
           }
         }
 
+        const refDesc = referencedImageIndexes
+          .map((n: number) => `#${n} (${getReferenceRoleLabel(paramRoles[n - 1], true)})`)
+          .join(', ');
         const defaultRefNote =
           refTotal > 1
-            ? `Pastikan Produk sesuai Gambar referensi #${refIdx} (dari ${refTotal} foto referensi terlampir)`
+            ? `Kunci visual mengikuti Gambar Referensi ${refDesc}`
             : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
 
         return {
           id: generateId(),
           order: i + 1,
-          cameraAngle: sc.cameraAngle || 'Medium Shot',
+          cameraAngle: angle,
           visualAction: sc.visualAction || '',
           popupText,
           soundEffect: sc.soundEffect || '',
           dialogVO: sc.dialogVO || '',
           notesMood: sc.notesMood || '',
           duration: Number(sc.duration) || 3,
+          referencedImageIndexes,
+          transitionBridge: sc.transitionBridge || undefined,
+          negativePrompt: sc.negativePrompt || resolvedVisualBible?.negativePromptGlobal,
           googleFlowPrompt: flowPrompt,
           imageReferenceNote: sc.imageReferenceNote || defaultRefNote,
         };
@@ -1583,6 +1751,8 @@ export default function HomePage() {
         productUrl: params.productUrl,
         referenceImage: allParamRefs[0] || params.referenceImage,
         referenceImages: allParamRefs.length > 0 ? allParamRefs : undefined,
+        referenceRoles: allParamRefs.length > 0 ? paramRoles : undefined,
+        visualBible: resolvedVisualBible,
         productDescription: params.productDescription,
         keySellingPoints: params.keySellingPoints,
         persona: params.persona,
@@ -1637,6 +1807,56 @@ export default function HomePage() {
     }
   };
 
+  // 1-Click Continuity Audit across all scenes
+  const handleAuditContinuity = async () => {
+    if (isAuditingContinuity || currentProject.scenes.length === 0) return;
+    setIsAuditingContinuity(true);
+    try {
+      const refs =
+        currentProject.referenceImages && currentProject.referenceImages.length > 0
+          ? currentProject.referenceImages
+          : currentProject.referenceImage
+          ? [currentProject.referenceImage]
+          : [];
+      const resp = await postJsonWithRetry<{
+        success?: boolean;
+        auditSummary?: string;
+        scenes?: Scene[];
+        error?: string;
+      }>('/api/audit-continuity', {
+        scenes: currentProject.scenes,
+        productName: currentProject.productName || 'Produk Unggulan',
+        visualBible: currentProject.visualBible,
+        referenceImages: refs,
+        referenceRoles: currentProject.referenceRoles,
+        persona: currentProject.persona,
+        tone: currentProject.tone,
+        targetPlatform: currentProject.targetPlatform,
+      });
+
+      if (resp?.success && Array.isArray(resp.scenes) && resp.scenes.length > 0) {
+        updateCurrentProject((p) => ({
+          ...p,
+          scenes: resp.scenes!.map((sc, idx) => ({
+            ...sc,
+            id: p.scenes[idx]?.id || sc.id || generateId(),
+            order: idx + 1,
+          })),
+        }));
+        showToast(
+          resp.auditSummary ||
+            `Kontinuitas ${resp.scenes.length} adegan berhasil diselaraskan!`
+        );
+      } else {
+        showToast(resp?.error || 'Gagal menyelaraskan kontinuitas adegan.');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyelaraskan kontinuitas adegan.');
+    } finally {
+      setIsAuditingContinuity(false);
+    }
+  };
+
   // Generate Storyboard directly from extracted link data
   const handleGenerateFromExtracted = async (data: AutoDetectResult) => {
     const matchedCat =
@@ -1646,6 +1866,15 @@ export default function HomePage() {
           c.id.toLowerCase() === data.category.toLowerCase()
       ) || activeCategory;
 
+    const painNote =
+      Array.isArray(data.extractedPainPoints) && data.extractedPainPoints.length > 0
+        ? ` • Solusi keluhan konsumen: ${data.extractedPainPoints.slice(0, 3).join(', ')}`
+        : '';
+    const enrichedSellingPoints =
+      data.keySellingPoints && painNote && !data.keySellingPoints.includes(data.extractedPainPoints?.[0] || '')
+        ? `${data.keySellingPoints}${painNote}`
+        : data.keySellingPoints;
+
     const params: AIGenerateParams = {
       category: matchedCat.name,
       productName: data.productName,
@@ -1653,9 +1882,10 @@ export default function HomePage() {
       productUrl: data.productUrl,
       referenceImage: data.referenceImage || data.imageUrl,
       referenceImages: data.referenceImages || (data.referenceImage || data.imageUrl ? [data.referenceImage || data.imageUrl!] : undefined),
+      referenceRoles: data.referenceRoles,
       productDescription: data.productDescription,
       targetAudience: data.targetAudience,
-      keySellingPoints: data.keySellingPoints,
+      keySellingPoints: enrichedSellingPoints,
       persona: data.persona || 'Semua (Netral Universal)',
       personaExplanation: data.personaExplanation,
       tone: data.tone || 'Santai, Mengalir & Natural (Teman Curhat)',
@@ -1668,6 +1898,15 @@ export default function HomePage() {
     };
 
     await handleGenerateStoryboard(params);
+
+    if (data.exactLabelText) {
+      updateCurrentProject((p) => ({
+        ...p,
+        visualBible: p.visualBible
+          ? { ...p.visualBible, exactLabelText: data.exactLabelText! }
+          : undefined,
+      }));
+    }
   };
 
   // Apply extracted link data to current active project
@@ -1679,6 +1918,27 @@ export default function HomePage() {
           : data.referenceImage || data.imageUrl
           ? [data.referenceImage || data.imageUrl!]
           : p.referenceImages;
+      const painNote =
+        Array.isArray(data.extractedPainPoints) && data.extractedPainPoints.length > 0
+          ? ` • Solusi keluhan: ${data.extractedPainPoints.slice(0, 3).join(', ')}`
+          : '';
+      const nextUsp = data.keySellingPoints
+        ? `${data.keySellingPoints}${painNote && !data.keySellingPoints.includes(data.extractedPainPoints?.[0] || '') ? painNote : ''}`
+        : p.keySellingPoints;
+
+      const nextVisualBible: VisualContinuityBible | undefined = data.exactLabelText
+        ? {
+            packagingColors: p.visualBible?.packagingColors || `Warna asli ${data.productName}`,
+            exactLabelText: data.exactLabelText,
+            productShapeMaterial: p.visualBible?.productShapeMaterial || `Bentuk kemasan ${data.productName}`,
+            talentAppearance: p.visualBible?.talentAppearance || `Talent ${data.persona || p.persona || 'Kreator'} konsisten`,
+            environmentLighting: p.visualBible?.environmentLighting || 'Single unified directional lighting',
+            negativePromptGlobal:
+              p.visualBible?.negativePromptGlobal ||
+              'no altered brand text, no gibberish label, no packaging distortion, no extra fingers',
+          }
+        : p.visualBible;
+
       return {
         ...p,
         productName: data.productName,
@@ -1686,8 +1946,10 @@ export default function HomePage() {
         productUrl: data.productUrl || p.productUrl,
         referenceImage: mergedRefs?.[0] || data.referenceImage || data.imageUrl || p.referenceImage,
         referenceImages: mergedRefs,
+        referenceRoles: data.referenceRoles || p.referenceRoles,
+        visualBible: nextVisualBible,
         productDescription: data.productDescription || p.productDescription,
-        keySellingPoints: data.keySellingPoints || p.keySellingPoints,
+        keySellingPoints: nextUsp,
         persona: data.persona || p.persona,
         personaExplanation: data.personaExplanation || p.personaExplanation,
         tone: data.tone || p.tone,
@@ -1717,6 +1979,28 @@ export default function HomePage() {
       const firstScene = p.scenes[0];
       const newScenes = [...p.scenes];
       const updatedDuration = Math.max(2, Math.min(4, Number(firstScene.duration) || 3));
+
+      const refs =
+        p.referenceImages && p.referenceImages.length > 0
+          ? p.referenceImages
+          : p.referenceImage
+          ? [p.referenceImage]
+          : [];
+      const existingTags = firstScene.googleFlowPrompt?.match(/(?:\[Image\s+\d+[^\]]*\]\s*)+/i)?.[0]?.trim();
+      const computedRefTag =
+        existingTags ||
+        (refs.length > 0
+          ? formatReferenceTagsForScene(
+              firstScene.referencedImageIndexes || [1],
+              p.referenceRoles || [],
+              p.productName || 'Produk'
+            )
+          : `[Image 1 Reference: ${p.productName || p.title}]`);
+      const labelLock = p.visualBible?.exactLabelText
+        ? ` - Visual Lock: exact label "${p.visualBible.exactLabelText}" (${p.visualBible.packagingColors || 'match reference'})`
+        : '';
+      const updatedFlowPrompt = `${computedRefTag} Scene 1 (${firstScene.cameraAngle || 'POV / Close-up'}): ${hook.visualAction}${labelLock} - On-Screen Pop-up Text Overlay: "${hook.popupText}" - strict physical laws, realistic mass inertia, biomechanical constraint adherence, photorealistic 9:16 vertical, 4k 60fps.`;
+
       newScenes[0] = {
         ...firstScene,
         dialogVO: hook.hookDialog,
@@ -1724,6 +2008,7 @@ export default function HomePage() {
         popupText: hook.popupText,
         soundEffect: hook.sfx,
         duration: updatedDuration,
+        googleFlowPrompt: updatedFlowPrompt,
       };
 
       const existing =
@@ -2117,6 +2402,9 @@ export default function HomePage() {
       dialogVO: '',
       notesMood: `${sc.beatCue ? `${sc.beatCue} | ` : ''}${sc.notesMood || ''}`.trim(),
       duration: Math.max(1, Number(sc.duration) || 3),
+      referencedImageIndexes: sc.referencedImageIndexes,
+      transitionBridge: sc.transitionBridge,
+      negativePrompt: sc.negativePrompt || currentProject.visualBible?.negativePromptGlobal,
       googleFlowPrompt: sc.googleFlowPrompt,
       imageReferenceNote: sc.imageReferenceNote,
       motionControl: sc.motionControl,
@@ -2136,6 +2424,10 @@ export default function HomePage() {
       brandName: currentProject.brandName,
       referenceImage: currentProject.referenceImage,
       referenceImages: currentProject.referenceImages,
+      referenceRoles: currentProject.referenceRoles,
+      visualBible: currentProject.visualBible,
+      characterReferenceImage: currentProject.characterReferenceImage,
+      characterReferenceName: currentProject.characterReferenceName,
       keySellingPoints: currentProject.keySellingPoints || danceResult.choreoConcept,
       persona: currentProject.persona || 'Wanita Muda / Gen Z',
       tone: 'Spill Racun Enerjik & Hype (Fast-Cut FYP)',
@@ -2405,42 +2697,155 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* Active Multi-Image References Gallery in Workspace */}
+                {/* Active Multi-Image References Gallery with Role Selector */}
                 {((currentProject.referenceImages && currentProject.referenceImages.length > 0) ||
                   currentProject.referenceImage) && (
                   <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-purple-900/30">
                     <span className="text-[10px] font-bold text-cyan-300 flex items-center gap-1">
                       <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Referensi Image Google Flow & Storyboard:</span>
+                      <span>Referensi Image &amp; Peran:</span>
                     </span>
                     {(currentProject.referenceImages && currentProject.referenceImages.length > 0
                       ? currentProject.referenceImages
                       : currentProject.referenceImage
                       ? [currentProject.referenceImage]
                       : []
-                    ).map((src, idx) => (
-                      <div
-                        key={idx}
-                        className="relative group flex items-center gap-1.5 bg-[#091220] border border-cyan-800/60 rounded-lg px-2 py-1"
-                      >
-                        <img
-                          src={src}
-                          alt={`Ref ${idx + 1}`}
-                          className="w-6 h-6 rounded object-cover border border-cyan-600/50"
-                        />
-                        <span className="text-[10px] font-mono font-bold text-cyan-200">
-                          [Image {idx + 1}]
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleWorkspaceRemoveReference(idx)}
-                          className="text-slate-400 hover:text-red-400 transition-colors ml-0.5"
-                          title="Hapus foto referensi ini"
+                    ).map((src, idx) => {
+                      const activeRole: ReferenceRole =
+                        currentProject.referenceRoles?.[idx] || (idx === 0 ? 'product' : 'detail');
+                      return (
+                        <div
+                          key={idx}
+                          className="relative group flex items-center gap-1.5 bg-[#091220] border border-cyan-800/60 rounded-lg px-2 py-1"
                         >
-                          <X className="w-3 h-3" />
-                        </button>
+                          <img
+                            src={src}
+                            alt={`Ref ${idx + 1}`}
+                            className="w-6 h-6 rounded object-cover border border-cyan-600/50"
+                          />
+                          <span className="text-[10px] font-mono font-bold text-cyan-200">
+                            #{idx + 1}
+                          </span>
+                          <select
+                            value={activeRole}
+                            onChange={(e) => handleWorkspaceRoleChange(idx, e.target.value as ReferenceRole)}
+                            aria-label={`Peran referensi ${idx + 1}`}
+                            className="bg-[#0d192d] border border-cyan-800/60 rounded px-1 py-0.5 text-[10px] font-semibold text-cyan-200 outline-none cursor-pointer"
+                          >
+                            {REFERENCE_ROLE_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.shortLabel}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => handleWorkspaceRemoveReference(idx)}
+                            className="text-slate-400 hover:text-red-400 transition-colors ml-0.5"
+                            title="Hapus foto referensi ini"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Collapsible Visual Continuity Bible (Kunci DNA Visual Produk & Talent) */}
+                {currentProject.visualBible && (
+                  <div className="pt-2 border-t border-purple-900/30 space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsVisualBibleOpen(!isVisualBibleOpen)}
+                      className="w-full flex items-center justify-between text-left bg-[#091220] hover:bg-[#0d192c] border border-indigo-800/50 rounded-xl px-3 py-2 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Lock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                        <span className="text-[11px] font-bold text-indigo-200">
+                          Visual Continuity Bible (Kunci Label, Warna, Talent &amp; Lighting)
+                        </span>
+                        <span className="text-[10px] font-mono text-cyan-300 bg-cyan-950/70 border border-cyan-800/50 px-2 py-0.5 rounded">
+                          Label: {currentProject.visualBible.exactLabelText}
+                        </span>
                       </div>
-                    ))}
+                      {isVisualBibleOpen ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+                      )}
+                    </button>
+
+                    {isVisualBibleOpen && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 bg-[#080e1a] border border-indigo-900/40 rounded-xl p-2.5">
+                        <div>
+                          <label className="block text-[9px] font-bold text-indigo-300 uppercase mb-0.5">
+                            Teks Label Persis (Anti-Typo AI)
+                          </label>
+                          <input
+                            type="text"
+                            value={currentProject.visualBible.exactLabelText}
+                            onChange={(e) => handleUpdateVisualBible('exactLabelText', e.target.value)}
+                            className="w-full bg-[#0d1525] border border-indigo-900/50 focus:border-indigo-400 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-bold text-indigo-300 uppercase mb-0.5">
+                            Warna Kemasan
+                          </label>
+                          <input
+                            type="text"
+                            value={currentProject.visualBible.packagingColors}
+                            onChange={(e) => handleUpdateVisualBible('packagingColors', e.target.value)}
+                            className="w-full bg-[#0d1525] border border-indigo-900/50 focus:border-indigo-400 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-bold text-indigo-300 uppercase mb-0.5">
+                            Bentuk &amp; Material
+                          </label>
+                          <input
+                            type="text"
+                            value={currentProject.visualBible.productShapeMaterial}
+                            onChange={(e) => handleUpdateVisualBible('productShapeMaterial', e.target.value)}
+                            className="w-full bg-[#0d1525] border border-indigo-900/50 focus:border-indigo-400 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-bold text-indigo-300 uppercase mb-0.5">
+                            Konsistensi Talent / Tangan
+                          </label>
+                          <input
+                            type="text"
+                            value={currentProject.visualBible.talentAppearance}
+                            onChange={(e) => handleUpdateVisualBible('talentAppearance', e.target.value)}
+                            className="w-full bg-[#0d1525] border border-indigo-900/50 focus:border-indigo-400 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-bold text-indigo-300 uppercase mb-0.5">
+                            Pencahayaan &amp; Lokasi Tunggal
+                          </label>
+                          <input
+                            type="text"
+                            value={currentProject.visualBible.environmentLighting}
+                            onChange={(e) => handleUpdateVisualBible('environmentLighting', e.target.value)}
+                            className="w-full bg-[#0d1525] border border-indigo-900/50 focus:border-indigo-400 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-bold text-rose-300 uppercase mb-0.5">
+                            Negative Prompt Global
+                          </label>
+                          <input
+                            type="text"
+                            value={currentProject.visualBible.negativePromptGlobal}
+                            onChange={(e) => handleUpdateVisualBible('negativePromptGlobal', e.target.value)}
+                            className="w-full bg-[#0d1525] border border-rose-900/50 focus:border-rose-400 rounded-lg px-2 py-1 text-[11px] text-rose-200 font-mono outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2572,16 +2977,40 @@ export default function HomePage() {
                   )}
                 </div>
 
-                {/* Scene Reorder Hint Bar */}
-                {currentProject.scenes.length > 1 && (
-                  <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                    <span className="flex items-center gap-1.5">
-                      <GripVertical className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                      <span>Seret ikon pegangan di pojok kiri atas kartu untuk mengatur ulang urutan adegan</span>
-                    </span>
-                    <span className="font-mono tabular-nums text-slate-500 hidden sm:inline">
-                      {currentProject.scenes.length} adegan
-                    </span>
+                {/* Scene Reorder Hint Bar + 1-Click Continuity Audit */}
+                {currentProject.scenes.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 px-1">
+                    {currentProject.scenes.length > 1 ? (
+                      <span className="flex items-center gap-1.5">
+                        <GripVertical className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                        <span>Seret ikon pegangan di pojok kiri atas kartu untuk mengatur ulang urutan adegan</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">1 adegan aktif</span>
+                    )}
+                    <div className="flex items-center gap-2.5 ml-auto">
+                      <button
+                        type="button"
+                        onClick={handleAuditContinuity}
+                        disabled={isAuditingContinuity}
+                        className="flex items-center gap-1.5 text-[11px] font-bold bg-indigo-950/80 hover:bg-indigo-900/80 text-indigo-200 border border-indigo-500/40 px-3 py-1.5 rounded-xl transition-all active:scale-95 disabled:opacity-60 cursor-pointer"
+                        title="Audit & selaraskan variasi kamera, transisi pose (Start → End), dan pengunci Visual Bible di seluruh adegan"
+                      >
+                        {isAuditingContinuity ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-300" />
+                        ) : (
+                          <Link2 className="w-3.5 h-3.5 text-indigo-400" />
+                        )}
+                        <span>
+                          {isAuditingContinuity
+                            ? 'Menyelaraskan Kontinuitas...'
+                            : 'Selaraskan Kontinuitas Semua Adegan'}
+                        </span>
+                      </button>
+                      <span className="font-mono tabular-nums text-slate-500 hidden sm:inline">
+                        {currentProject.scenes.length} adegan
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -2606,6 +3035,7 @@ export default function HomePage() {
                           index={index}
                           totalScenes={currentProject.scenes.length}
                           productName={currentProject.productName}
+                          targetPlatform={currentProject.targetPlatform}
                           referenceImages={
                             currentProject.referenceImages && currentProject.referenceImages.length > 0
                               ? currentProject.referenceImages
@@ -2613,6 +3043,8 @@ export default function HomePage() {
                               ? [currentProject.referenceImage]
                               : []
                           }
+                          referenceRoles={currentProject.referenceRoles}
+                          visualBible={currentProject.visualBible}
                           onUpdate={handleUpdateScene}
                           onDelete={() => handleDeleteScene(scene.id)}
                           onDuplicate={() => handleDuplicateScene(scene)}
@@ -2707,6 +3139,17 @@ export default function HomePage() {
                     ? [currentProject.referenceImage]
                     : []
                 }
+                referenceRoles={currentProject.referenceRoles}
+                visualBible={currentProject.visualBible}
+                characterReferenceImage={currentProject.characterReferenceImage}
+                characterReferenceName={currentProject.characterReferenceName}
+                onChangeCharacterReference={(img, name) =>
+                  updateCurrentProject((p) => ({
+                    ...p,
+                    characterReferenceImage: img || undefined,
+                    characterReferenceName: name || undefined,
+                  }))
+                }
                 onUpdateScene={handleUpdateScene}
                 onBatchUpdateScenes={(updater) => {
                   updateCurrentProject((p) => ({
@@ -2727,6 +3170,15 @@ export default function HomePage() {
                 currentKeySellingPoints={currentProject.keySellingPoints}
                 currentPersona={currentProject.persona}
                 currentPlatform={currentProject.targetPlatform}
+                referenceImages={
+                  currentProject.referenceImages && currentProject.referenceImages.length > 0
+                    ? currentProject.referenceImages
+                    : currentProject.referenceImage
+                    ? [currentProject.referenceImage]
+                    : []
+                }
+                referenceRoles={currentProject.referenceRoles}
+                visualBible={currentProject.visualBible}
                 onCreateProjectFromDance={handleCreateProjectFromDance}
                 onApplyToCurrentProject={handleApplyDanceToCurrentProject}
                 onNotify={showToast}
@@ -2780,6 +3232,15 @@ export default function HomePage() {
           persona={currentProject.persona || ''}
           tone={currentProject.tone || ''}
           targetPlatform={currentProject.targetPlatform || 'TikTok Shop'}
+          referenceImages={
+            currentProject.referenceImages && currentProject.referenceImages.length > 0
+              ? currentProject.referenceImages
+              : currentProject.referenceImage
+              ? [currentProject.referenceImage]
+              : []
+          }
+          referenceRoles={currentProject.referenceRoles}
+          visualBible={currentProject.visualBible}
           onSelectHook={handleApplyHook}
         />
       )}
@@ -2804,6 +3265,15 @@ export default function HomePage() {
           targetPlatform={currentProject.targetPlatform}
           tone={currentProject.tone}
           referenceImage={currentProject.referenceImage}
+          referenceImages={
+            currentProject.referenceImages && currentProject.referenceImages.length > 0
+              ? currentProject.referenceImages
+              : currentProject.referenceImage
+              ? [currentProject.referenceImage]
+              : []
+          }
+          referenceRoles={currentProject.referenceRoles}
+          visualBible={currentProject.visualBible}
           caption={currentProject.caption}
           scenes={currentProject.scenes}
           hookVariants={currentProject.hookVariants}

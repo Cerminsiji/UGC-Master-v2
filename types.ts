@@ -1,3 +1,14 @@
+export type ReferenceRole = 'product' | 'detail' | 'talent' | 'environment' | 'style';
+
+export interface VisualContinuityBible {
+  packagingColors: string;
+  exactLabelText: string;
+  productShapeMaterial: string;
+  talentAppearance: string;
+  environmentLighting: string;
+  negativePromptGlobal: string;
+}
+
 export interface SceneMotionControl {
   danceStyle?: string;
   cameraMovement?: string;
@@ -6,6 +17,20 @@ export interface SceneMotionControl {
   beatTempo?: 'Slow (70-90 BPM)' | 'Medium (100-120 BPM)' | 'Fast (125-140 BPM)';
   aspectRatio?: '9:16' | '16:9' | '1:1';
   customMotionNotes?: string;
+  characterRefName?: string;
+  motionVideoAnalyzed?: boolean;
+}
+
+export interface TalentKitPreset {
+  id: string;
+  name: string;
+  persona: UGCPersona;
+  tone: string;
+  talentAppearance: string;
+  environmentLighting: string;
+  talentImage?: string;
+  environmentImage?: string;
+  createdAt: string;
 }
 
 export interface Scene {
@@ -20,6 +45,9 @@ export interface Scene {
   duration: number; // in seconds
   googleFlowPrompt?: string; // Prompt Google Flow Video UGC yang selalu mengikuti referensi image
   imageReferenceNote?: string; // Catatan kepatuhan visual terhadap referensi image
+  referencedImageIndexes?: number[]; // 1-based indexes dari referenceImages yang dikunci untuk adegan ini
+  transitionBridge?: string; // Pose awal -> Pose akhir untuk transisi mulus antar adegan
+  negativePrompt?: string; // Negative constraints agar kemasan/teks/tangan tidak terdistorsi
   motionControl?: SceneMotionControl;
 }
 
@@ -101,6 +129,10 @@ export interface StoryboardProject {
   productUrl?: string; // Link hasil ekstraksi produk
   referenceImage?: string; // Gambar referensi utama Google Flow
   referenceImages?: string[]; // Multi-gambar referensi visual (untuk pembuatan storyboard & Google Flow)
+  referenceRoles?: ReferenceRole[]; // Peran masing-masing gambar referensi sejajar index
+  visualBible?: VisualContinuityBible; // DNA visual tetap (warna, label, talent, lighting) pengunci konsistensi
+  characterReferenceImage?: string; // Foto karakter tersimpan di Motion Control
+  characterReferenceName?: string;
   productDescription?: string; // Deskripsi produk
   keySellingPoints?: string; // Parameter UGC / USP
   persona?: UGCPersona; // Persona talent
@@ -128,6 +160,7 @@ export interface AIGenerateParams {
   productUrl?: string;
   referenceImage?: string;
   referenceImages?: string[];
+  referenceRoles?: ReferenceRole[];
   productDescription?: string;
   targetAudience?: string;
   keySellingPoints?: string;
@@ -150,6 +183,9 @@ export interface AutoDetectResult {
   productUrl?: string;
   referenceImage?: string;
   referenceImages?: string[];
+  referenceRoles?: ReferenceRole[];
+  exactLabelText?: string;
+  extractedPainPoints?: string[];
   category: string;
   productDescription: string;
   targetAudience: string;
@@ -217,6 +253,7 @@ export interface DanceStoryboardResult {
   choreoConcept: string;
   soundRecommendation: string;
   outfitNotes: string;
+  loopAnchorNote?: string;
   caption: string;
   hashtags?: string[];
   scenes: DanceStoryboardScene[];

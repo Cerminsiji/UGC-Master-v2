@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Type } from '@google/genai';
+import type { ReferenceRole, VisualContinuityBible } from '@/types';
 import {
   generateWithFallback,
   parseSafeJson,
@@ -11,6 +12,10 @@ import {
   ensureVariedStoryboardScenes,
   buildNicheHashtags,
   fitCaptionWithHashtags,
+  REFERENCE_ROLE_OPTIONS,
+  getReferenceRoleLabel,
+  selectSceneReferenceIndexes,
+  formatReferenceTagsForScene,
 } from '@/lib/gemini-ugc';
 
 async function handleGenerateStoryboardRequest(body: any) {
@@ -21,6 +26,7 @@ async function handleGenerateStoryboardRequest(body: any) {
       brandName = '',
       referenceImage: rawReferenceImage = '',
       referenceImages: rawReferenceImages = [],
+      referenceRoles: rawReferenceRoles = [],
       referenceImageCount = 0,
       productDescription = '',
       targetAudience = 'Pengguna TikTok / Reels usia 18-35 tahun',
@@ -40,10 +46,25 @@ async function handleGenerateStoryboardRequest(body: any) {
       ? rawReferenceImages.filter(Boolean)
       : (rawReferenceImage ? [rawReferenceImage] : []);
 
+    const validRoleSet = new Set<ReferenceRole>(REFERENCE_ROLE_OPTIONS.map((r) => r.value));
     const totalRefCount = Math.max(
       allReferenceImages.length,
       Number(referenceImageCount) || (rawReferenceImage ? 1 : 0)
     );
+    const normalizedRoles: ReferenceRole[] = Array.from({ length: Math.max(1, totalRefCount) }, (_, idx) => {
+      const candidate = Array.isArray(rawReferenceRoles) ? rawReferenceRoles[idx] : undefined;
+      if (candidate && validRoleSet.has(candidate)) return candidate as ReferenceRole;
+      return idx === 0 ? 'product' : 'detail';
+    });
+
+    const referenceInventoryLines =
+      totalRefCount > 0
+        ? Array.from({ length: totalRefCount }, (_, idx) => {
+            const roleMeta =
+              REFERENCE_ROLE_OPTIONS.find((r) => r.value === normalizedRoles[idx]) || REFERENCE_ROLE_OPTIONS[0];
+            return `  * Image #${idx + 1} -> Peran: ${roleMeta.label} (${roleMeta.promptHint})`;
+          }).join('\n')
+        : `  * Image #1 -> Peran: Produk Utama (Kemasan fisik ${productName})`;
 
     const referenceImage =
       typeof rawReferenceImage === 'string' && rawReferenceImage.startsWith('data:')
@@ -137,26 +158,35 @@ Semua deskripsi visualAction dan googleFlowPrompt WAJIB lolos "Physics Consisten
 Jaga agar setiap adegan visualAction dan googleFlowPrompt tetap konsisten dengan pencahayaan produk, komposisi rapi, dan referensi gambar produk.`;
 
     const googleFlowReferenceInstruction = `
-=== ATURAN MUTLAK KEPATUHAN MULTI-REFERENSI IMAGE PADA STORYBOARD & GOOGLE FLOW VIDEO UGC ===
+=== ATURAN MUTLAK KEPATUHAN MULTI-REFERENSI ROLE-BASED & VISUAL CONTINUITY BIBLE ===
 Format ini WAJIB kompatibel dengan pipeline Google Flow Video UGC (Image-to-Video & Multi-Image Ingredients Workflow).
-Jumlah Gambar Referensi Produk Terlampir: ${Math.max(1, totalRefCount)} gambar (${referenceImage || `Kemasan dan visual asli produk ${productName}`}).
-${totalRefCount > 1 ? `Catatan Penting: Pengguna telah mengunggah ${totalRefCount} foto referensi produk ([Image 1 Reference] s/d [Image ${totalRefCount} Reference]). Analisis detail visual dari semua foto referensi yang dilampirkan dan distribusikan referensi gambar tersebut ke dalam adegan-adegan storyboard secara relevan!` : ''}
+Jumlah Gambar Referensi Terlampir: ${Math.max(1, totalRefCount)} gambar.
+Peta Peran Masing-Masing Referensi (WAJIB DIPATUHI):
+${referenceInventoryLines}
 
-SETIAP ADEGAN WAJIB:
-1. Selalu mengikuti referensi image (Product & Character Consistency): Bentuk kemasan, warna brand, proporsi kemasan, detail label, tekstur produk, dan lighting harus selalu konsisten dengan referensi image produk di atas tanpa distorsi visual.
-2. Menghasilkan 'googleFlowPrompt' (Prompt video AI untuk Google Flow / Veo / Runway / Kling):
-   Format prompt Google Flow:
-   "[Image 1 Reference: ${productName}] {Shot Type & Camera Motion: natural handheld camera with physical inertia} - {Subject Action & Talent Expression: authentic human biomechanics, realistic motion speed} - {Product Physical Interaction: solid contact physics, no clipping, real weight & gravity} - {Lighting & Environment: single unified directional lighting, natural cast shadows & ambient occlusion, consistent color temperature} - {On-Screen Pop-up Text Overlay: popupText} - {Aesthetic Style: Photorealistic 9:16 vertical smartphone UGC video, authentic real-world physics, raw sensor texture, crisp focus, 4K 60fps, no morphing, zero visual artifacts}"
-3. Menghasilkan 'imageReferenceNote':
-   Wajib persis bernilai: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"
-   Agar setiap adegan selalu mengunci konsistensi gambar referensi produk di pipeline Google Flow tanpa kesalahan.
-4. Menghasilkan 'popupText' (Teks Pop-up Layar):
-   Wajib SELALU MUNCUL di dalam JSON pada setiap adegan, berupa stiker teks pop-up kapital tebal yang mencolok dan selaras dengan perintah overlay teks pada Google Flow.
+ATURAN KUNCI REFERENSI & KONTINUITAS VISUAL:
+1. EKSTRAKSI VISUAL CONTINUITY BIBLE (visualBible):
+   Analisis semua gambar referensi di atas secara teliti dan isi object \`visualBible\` berisi:
+   - \`packagingColors\`: warna dominan kemasan & aksen spesifik sesuai gambar referensi.
+   - \`exactLabelText\`: teks merek/label persis yang tertulis pada produk "${productName}"${brandName ? ` (${brandName})` : ''} agar tidak berubah menjadi teks ngawur saat render AI.
+   - \`productShapeMaterial\`: bentuk fisik wadah (botol/tube/jar/box/pouch), jenis tutup/aplikator, dan tekstur material.
+   - \`talentAppearance\`: konsistensi wajah, rambut/hijab, pakaian talent (atau spesifikasi tangan bersih 5 jari jika Faceless/Hands-Only) sesuai referensi Talent.
+   - \`environmentLighting\`: arah cahaya tunggal terpadu (misal: cahaya jendela 45° dari kiri) dan suasana latar ruangan sesuai referensi Lokasi.
+   - \`negativePromptGlobal\`: daftar larangan visual dalam bahasa Inggris (no altered brand text, no gibberish label, no extra fingers, no clipping, no floating zero-G motion, no lighting jump).
+2. PEMETAAN MULTI-REFERENSI PER ADEGAN (referencedImageIndexes):
+   - Tentukan angka indeks (1-based, misal [1] atau [1, 3]) gambar referensi mana yang WAJIB menjadi acuan pada adegan tersebut sesuai perannya (JANGAN rotasi acak!).
+   - Contoh: adegan bicara/selfie memakai [Produk Utama + Karakter/Talent + Lokasi]; adegan makro tekstur memakai [Produk Utama + Detail/Label].
+3. TRANSITION BRIDGE (Start Pose -> End Pose):
+   - Di setiap adegan, isi \`transitionBridge\` untuk mengunci kesinambungan posisi objek, tangan, dan arah gerak dari akhir adegan sebelumnya menuju awal adegan berikutnya (anti jump-cut membingungkan).
+4. GOOGLE FLOW PROMPT & NEGATIVE PROMPT:
+   Format \`googleFlowPrompt\` wajib memuat tag \`[Image X (Peran): ${productName}]\` sesuai \`referencedImageIndexes\`, merujuk detail \`visualBible\` (warna kemasan, teks label persis "${productName}", konsistensi talent & pencahayaan tunggal), serta On-Screen Pop-up Text Overlay.
+   Isi juga \`negativePrompt\` spesifik adegan dalam bahasa Inggris.
+5. \`imageReferenceNote\`: catat indeks gambar referensi yang dipakai adegan tersebut, misal "Kunci visual mengikuti Gambar Referensi #1 (Produk)".
+6. \`popupText\`: WAJIB SELALU MUNCUL huruf kapital tebal singkat & mencolok di setiap adegan.
 
 === ATURAN BEBAS TYPO & KESALAHAN EJAAN (ZERO TYPO DISCIPLINE) ===
 - DILARANG KERAS ADA TYPO ATAU SALAH KETIK pada dialogVO, popupText, visualAction, soundEffect, notesMood, maupun googleFlowPrompt!
-- Gunakan tata bahasa Indonesia yang rapi, natural, dan ejaan yang tepat (PUEBI/EYD) untuk narasi, serta diksi gaul UGC yang tepat tanpa singkatan rusak.
-- Jangan ada huruf tertinggal atau dobel yang tidak disengaja.`;
+- Gunakan tata bahasa Indonesia yang rapi, natural, dan ejaan yang tepat.`;
 
     const prompt = `Kamu adalah pakar Creative Director & R&D Scriptwriter UGC (User-Generated Content) viral TikTok Shop, Shopee Video, dan Instagram Reels di Indonesia.
 Buatkan storyboard UGC video lengkap yang kaya riset produk, variatif, tidak monoton, dan terbukti memiliki Conversion Rate & Retention Rate tinggi untuk produk berikut:
@@ -215,6 +245,26 @@ Syarat Wajib Format Storyboard:
             type: Type.STRING,
             description: 'Auto caption posting media sosial lengkap dengan 2-4 hashtag viral. PENTING: Total panjang karakter WAJIB MAKSIMAL 150 KARAKTER.',
           },
+          visualBible: {
+            type: Type.OBJECT,
+            description: 'Visual Continuity Bible yang diekstrak dari gambar referensi & brief produk untuk mengunci konsistensi di semua adegan.',
+            properties: {
+              packagingColors: { type: Type.STRING },
+              exactLabelText: { type: Type.STRING },
+              productShapeMaterial: { type: Type.STRING },
+              talentAppearance: { type: Type.STRING },
+              environmentLighting: { type: Type.STRING },
+              negativePromptGlobal: { type: Type.STRING },
+            },
+            required: [
+              'packagingColors',
+              'exactLabelText',
+              'productShapeMaterial',
+              'talentAppearance',
+              'environmentLighting',
+              'negativePromptGlobal',
+            ],
+          },
           scenes: {
             type: Type.ARRAY,
             items: {
@@ -226,7 +276,7 @@ Syarat Wajib Format Storyboard:
                 },
                 visualAction: {
                   type: Type.STRING,
-                  description: 'Deskripsi aksi fisik, ekspresi wajah, dan pergerakan objek di depan kamera. WAJIB patuh hukum fisika (gravitasi nyata, bobot kemasan, interaksi solid tanpa tembus/clipping, biomekanika gerak tangan natural, dan pencahayaan konsisten).',
+                  description: 'Deskripsi aksi fisik, ekspresi wajah, dan pergerakan objek di depan kamera. WAJIB patuh hukum fisika dan konsisten dengan visualBible.',
                 },
                 popupText: {
                   type: Type.STRING,
@@ -248,13 +298,26 @@ Syarat Wajib Format Storyboard:
                   type: Type.INTEGER,
                   description: 'Durasi adegan dalam detik (integer, misal 1, 2, 3, 4, 5).',
                 },
+                referencedImageIndexes: {
+                  type: Type.ARRAY,
+                  items: { type: Type.INTEGER },
+                  description: 'Array indeks 1-based dari gambar referensi yang relevan untuk adegan ini (misal [1] atau [1, 3]).',
+                },
+                transitionBridge: {
+                  type: Type.STRING,
+                  description: 'Jembatan visual Start Pose -> End Pose agar transisi antar adegan menyambung mulus tanpa jump-cut.',
+                },
+                negativePrompt: {
+                  type: Type.STRING,
+                  description: 'Negative prompt bahasa Inggris spesifik adegan untuk mencegah distorsi label, jari berlebih, clipping, atau perubahan warna.',
+                },
                 googleFlowPrompt: {
                   type: Type.STRING,
-                  description: 'Prompt video AI untuk Google Flow / Veo / Runway / Kling yang mengikuti referensi image secara ketat ([Image 1 Reference: ProductName]), dengan mandat hukum fisika (gravity, realistic mass, authentic motion, consistent directional lighting & cast shadows, no morphing), 9:16 vertical.',
+                  description: 'Prompt video AI untuk Google Flow / Veo / Runway / Kling yang mengikuti referensi image sesuai peran & visualBible, 9:16 vertical.',
                 },
                 imageReferenceNote: {
                   type: Type.STRING,
-                  description: 'Wajib bernilai persis: "Pastikan Produk sesuai Gambar referensi yang sudah di attached"',
+                  description: 'Catatan kepatuhan gambar referensi yang dipakai adegan ini.',
                 },
               },
               required: [
@@ -265,26 +328,30 @@ Syarat Wajib Format Storyboard:
                 'dialogVO',
                 'notesMood',
                 'duration',
+                'referencedImageIndexes',
+                'transitionBridge',
+                'negativePrompt',
                 'googleFlowPrompt',
                 'imageReferenceNote',
               ],
             },
           },
         },
-        required: ['title', 'scenes'],
+        required: ['title', 'visualBible', 'scenes'],
       },
     };
 
     const systemPrompt = enforcePhysicsCheck
-      ? 'You are an elite UGC video R&D strategist and storyboard scriptwriter. You strictly execute a Physics Consistency Check enforcing realistic mass inertia, biomechanical constraint adherence, solid-contact mechanics without clipping, consistent directional lighting with matching cast shadows, and zero floaty motion artifacts in every visualAction and googleFlowPrompt. Analyze any attached product reference images carefully for visual details. Never use generic "Stop scrolling" or "Jangan skip dulu" clichés in Scene 1. Return strictly valid JSON matching the schema.'
-      : 'You are an elite UGC video R&D strategist and storyboard scriptwriter. Analyze any attached product reference images carefully for visual details. Never use generic "Stop scrolling" or "Jangan skip dulu" clichés in Scene 1. Return strictly valid JSON matching the schema.';
+      ? 'You are an elite UGC video R&D strategist and storyboard scriptwriter. You strictly extract a Visual Continuity Bible from attached role-labeled reference images (product packaging colors, exact label text, shape/material, talent appearance, unified lighting) and lock every scene to it while enforcing Physics Consistency Check (realistic mass inertia, biomechanical constraint adherence, solid-contact mechanics without clipping, zero floaty motion). Never use generic "Stop scrolling" or "Jangan skip dulu" clichés in Scene 1. Return strictly valid JSON matching the schema.'
+      : 'You are an elite UGC video R&D strategist and storyboard scriptwriter. Extract a Visual Continuity Bible from attached role-labeled reference images and keep every scene consistent with it. Never use generic "Stop scrolling" or "Jangan skip dulu" clichés in Scene 1. Return strictly valid JSON matching the schema.';
 
     const rawText = await generateWithFallback(
       prompt,
       config,
       systemPrompt,
-      18000,
-      allReferenceImages
+      20000,
+      allReferenceImages,
+      normalizedRoles
     );
 
     const parsedData = parseSafeJson<any>(rawText);
@@ -312,14 +379,52 @@ Syarat Wajib Format Storyboard:
       );
 
       const refTotal = Math.max(1, totalRefCount);
+      const vbRaw = parsedData.visualBible || {};
+      const visualBible: VisualContinuityBible = {
+        packagingColors:
+          typeof vbRaw.packagingColors === 'string' && vbRaw.packagingColors.trim()
+            ? vbRaw.packagingColors.trim()
+            : `Warna & aksen kemasan asli ${productName} sesuai foto referensi terlampir`,
+        exactLabelText:
+          typeof vbRaw.exactLabelText === 'string' && vbRaw.exactLabelText.trim()
+            ? vbRaw.exactLabelText.trim()
+            : brandName
+            ? `${brandName} ${productName}`
+            : productName,
+        productShapeMaterial:
+          typeof vbRaw.productShapeMaterial === 'string' && vbRaw.productShapeMaterial.trim()
+            ? vbRaw.productShapeMaterial.trim()
+            : `Bentuk fisik, tutup, dan material kemasan asli ${productName} tanpa distorsi`,
+        talentAppearance:
+          typeof vbRaw.talentAppearance === 'string' && vbRaw.talentAppearance.trim()
+            ? vbRaw.talentAppearance.trim()
+            : isHandsOnly
+            ? 'Faceless (hanya tangan rapi dengan 5 jari anatomis proporsional)'
+            : `Talent persona ${persona} konsisten wajah, gaya rambut/hijab, dan pakaian dari awal hingga akhir`,
+        environmentLighting:
+          typeof vbRaw.environmentLighting === 'string' && vbRaw.environmentLighting.trim()
+            ? vbRaw.environmentLighting.trim()
+            : 'Single unified 45° directional window/softbox light, warm natural ambient occlusion, matching cast shadows',
+        negativePromptGlobal:
+          typeof vbRaw.negativePromptGlobal === 'string' && vbRaw.negativePromptGlobal.trim()
+            ? vbRaw.negativePromptGlobal.trim()
+            : 'no altered brand text, no gibberish label, no packaging distortion, no extra fingers, no clipping, no floating zero-G motion, no lighting jump',
+      };
+      parsedData.visualBible = visualBible;
 
-      // Ensure every scene has popupText, googleFlowPrompt & imageReferenceNote in JSON
+      // Ensure every scene has popupText, role-mapped referencedImageIndexes, transitionBridge, negativePrompt, googleFlowPrompt & imageReferenceNote
       parsedData.scenes = sanitizedScenes.map((sc: any, idx: number) => {
-        const refIdx = (idx % refTotal) + 1;
-        const refTag =
-          refTotal > 1
-            ? `[Image ${refIdx} of ${refTotal} Reference: ${productName}]`
-            : `[Image 1 Reference: ${productName}]`;
+        const angle = sc.cameraAngle || 'Medium Shot';
+        const rawIndexes = Array.isArray(sc.referencedImageIndexes)
+          ? sc.referencedImageIndexes
+              .map((n: any) => Number(n))
+              .filter((n: number, pos: number, arr: number[]) => Number.isInteger(n) && n >= 1 && n <= refTotal && arr.indexOf(n) === pos)
+          : [];
+        const referencedImageIndexes =
+          rawIndexes.length > 0
+            ? rawIndexes
+            : selectSceneReferenceIndexes(angle, normalizedRoles, refTotal, idx, sanitizedScenes.length);
+        const refTag = formatReferenceTagsForScene(referencedImageIndexes, normalizedRoles, productName);
 
         let popupText =
           sc.popupText && typeof sc.popupText === 'string' && sc.popupText.trim() && sc.popupText.trim() !== '-'
@@ -351,17 +456,34 @@ Syarat Wajib Format Storyboard:
         }
 
         const visual = sc.visualAction || 'Kreator memperlihatkan manfaat produk secara otentik.';
-        const angle = sc.cameraAngle || 'Medium Shot';
+        const negativePrompt =
+          typeof sc.negativePrompt === 'string' && sc.negativePrompt.trim()
+            ? sc.negativePrompt.trim()
+            : visualBible.negativePromptGlobal;
+        const transitionBridge =
+          typeof sc.transitionBridge === 'string' && sc.transitionBridge.trim()
+            ? sc.transitionBridge.trim()
+            : idx === 0
+            ? `Mulai dengan fokus ${productName} → arahkan ke transisi detail adegan berikutnya.`
+            : idx === sanitizedScenes.length - 1
+            ? `Sambung pose produk dari adegan ${idx} → akhiri menunjuk keranjang sambil mengunci posisi kemasan.`
+            : `Lanjutkan pose akhir adegan ${idx} dengan pencahayaan seragam → siapkan transisi menuju adegan ${idx + 2}.`;
 
         const physicsTokens = enforcePhysicsCheck
           ? 'strict physical laws, realistic mass inertia, biomechanical constraint adherence, solid-contact gravity without clipping, consistent directional lighting with matching cast shadows, authentic camera motion, zero floaty artifacts, zero morphing, photorealistic 9:16 vertical 4k 60fps'
           : 'natural product showcase, consistent lighting, photorealistic 9:16 vertical 4k 60fps';
+
         let flowPrompt = sc.googleFlowPrompt && typeof sc.googleFlowPrompt === 'string' ? sc.googleFlowPrompt.trim() : '';
         if (!flowPrompt) {
-          flowPrompt = `${refTag} Scene ${idx + 1} (${angle}): ${visual} - On-Screen Pop-up Text Overlay: "${popupText}" - Follow physical packaging and branding in reference image #${refIdx}, ${physicsTokens}.`;
+          flowPrompt = `${refTag} Scene ${idx + 1} (${angle}): ${visual} - Visual Lock: exact label "${visualBible.exactLabelText}", colors (${visualBible.packagingColors}), lighting (${visualBible.environmentLighting}) - On-Screen Pop-up Text Overlay: "${popupText}" - ${physicsTokens}.`;
         } else {
-          if (refTotal > 1 && /\[Image 1 Reference:/i.test(flowPrompt)) {
-            flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
+          if (/\[Image\s+\d+[^\]]*\]/i.test(flowPrompt)) {
+            flowPrompt = flowPrompt.replace(/(?:\[Image\s+\d+[^\]]*\]\s*)+/i, `${refTag} `);
+          } else {
+            flowPrompt = `${refTag} ${flowPrompt}`;
+          }
+          if (!/exact label|packaging|visual lock/i.test(flowPrompt)) {
+            flowPrompt = `${flowPrompt} - Visual Lock: exact label "${visualBible.exactLabelText}" (${visualBible.packagingColors})`;
           }
           const hasOverlay = /on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt);
           if (!hasOverlay) {
@@ -375,9 +497,12 @@ Syarat Wajib Format Storyboard:
           }
         }
 
+        const refDesc = referencedImageIndexes
+          .map((n: number) => `#${n} (${getReferenceRoleLabel(normalizedRoles[n - 1], true)})`)
+          .join(', ');
         const defaultRefNote =
           refTotal > 1
-            ? `Pastikan Produk sesuai Gambar referensi #${refIdx} (dari ${refTotal} foto referensi terlampir)`
+            ? `Kunci visual mengikuti Gambar Referensi ${refDesc}`
             : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
 
         return {
@@ -385,8 +510,11 @@ Syarat Wajib Format Storyboard:
           cameraAngle: angle,
           visualAction: visual,
           popupText,
+          referencedImageIndexes,
+          transitionBridge,
+          negativePrompt,
           googleFlowPrompt: flowPrompt,
-          imageReferenceNote: sc.imageReferenceNote && refTotal === 1 ? sc.imageReferenceNote : defaultRefNote,
+          imageReferenceNote: defaultRefNote,
         };
       });
 
@@ -421,7 +549,8 @@ Syarat Wajib Format Storyboard:
         ? allReferenceImages
         : Array.from({ length: Math.max(1, totalRefCount) }, (_, i) => `Image ${i + 1}`),
       enforcePhysicsCheck,
-      tone
+      tone,
+      normalizedRoles
     );
 
     return NextResponse.json({

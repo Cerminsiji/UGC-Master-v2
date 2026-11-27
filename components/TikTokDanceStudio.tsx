@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import {
   Music,
@@ -20,8 +20,18 @@ import {
   CheckCircle2,
   Layers,
   EyeOff,
+  Upload,
+  FileVideo,
+  X,
+  Link2,
+  Lock,
 } from 'lucide-react';
-import type { DanceStoryboardResult, DanceStoryboardScene } from '@/types';
+import type {
+  DanceStoryboardResult,
+  DanceStoryboardScene,
+  ReferenceRole,
+  VisualContinuityBible,
+} from '@/types';
 import { copyToClipboard, postJsonWithRetry } from '@/utils/helpers';
 
 interface TikTokDanceStudioProps {
@@ -31,6 +41,9 @@ interface TikTokDanceStudioProps {
   currentKeySellingPoints?: string;
   currentPersona?: string;
   currentPlatform?: string;
+  referenceImages?: string[];
+  referenceRoles?: ReferenceRole[];
+  visualBible?: VisualContinuityBible;
   onCreateProjectFromDance: (result: DanceStoryboardResult) => void;
   onApplyToCurrentProject: (result: DanceStoryboardResult) => void;
   onNotify?: (msg: string) => void;
@@ -159,6 +172,9 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
   currentKeySellingPoints = '',
   currentPersona = '',
   currentPlatform = 'TikTok Shop',
+  referenceImages = [],
+  referenceRoles = [],
+  visualBible,
   onCreateProjectFromDance,
   onApplyToCurrentProject,
   onNotify,
@@ -179,6 +195,16 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
   const [targetDuration, setTargetDuration] = useState<number>(20);
   const [targetSceneCount, setTargetSceneCount] = useState<number>(6);
   const [physicsConsistencyCheck, setPhysicsConsistencyCheck] = useState<boolean>(true);
+  const [includeProjectVisualLock, setIncludeProjectVisualLock] = useState<boolean>(
+    referenceImages.length > 0 || Boolean(visualBible)
+  );
+
+  // Video Dance Reference upload + AI Analysis
+  const [danceVideoDataUrl, setDanceVideoDataUrl] = useState<string | null>(null);
+  const [danceVideoName, setDanceVideoName] = useState<string>('');
+  const [isAnalyzingVideo, setIsAnalyzingVideo] = useState<boolean>(false);
+  const [videoAnalysisSummary, setVideoAnalysisSummary] = useState<string>('');
+  const danceVideoInputRef = useRef<HTMLInputElement | null>(null);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<DanceStoryboardResult | null>(null);
@@ -192,6 +218,97 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
     } else {
       setProductName(currentProjectTitle || 'Produk Viral');
       onNotify?.(`Judul proyek aktif dimuat ke kolom produk.`);
+    }
+  };
+
+  const handleUploadDanceVideo = (fileList: FileList | null) => {
+    const file = fileList?.[0];
+    if (!file) return;
+    const maxBytes = 12 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      onNotify?.('Ukuran video referensi maksimal 12MB agar analisis cepat & akurat.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setDanceVideoDataUrl(reader.result);
+        setDanceVideoName(file.name);
+        setVideoAnalysisSummary('');
+        onNotify?.(`Video referensi "${file.name}" dimuat. Klik "Analisis Video Referensi" untuk mengekstrak beat & pose.`);
+      }
+    };
+    reader.readAsDataURL(file);
+    if (danceVideoInputRef.current) danceVideoInputRef.current.value = '';
+  };
+
+  const handleAnalyzeDanceVideo = async () => {
+    if (!danceVideoDataUrl) return;
+    setIsAnalyzingVideo(true);
+    try {
+      const resp = await postJsonWithRetry<{
+        success?: boolean;
+        error?: string;
+        analysis?: {
+          danceStyle?: string;
+          cameraMovement?: string;
+          beatTempo?: string;
+          customMotionNotes?: string;
+          loopNote?: string;
+          segments?: Array<{ beatCue?: string; choreographyMove?: string; cameraChoreo?: string; duration?: number }>;
+        };
+        data?: {
+          danceStyle?: string;
+          cameraMovement?: string;
+          beatTempo?: string;
+          customMotionNotes?: string;
+          loopNote?: string;
+          segments?: Array<{ beatCue?: string; choreographyMove?: string; move?: string; transitionBridge?: string }>;
+        };
+      }>('/api/analyze-motion-video', {
+        videoDataUrl: danceVideoDataUrl,
+        productName: productName.trim() || currentProductName || '',
+        sceneCount: targetSceneCount,
+      });
+
+      const d = resp?.analysis || resp?.data;
+      if (!resp?.success || !d) {
+        onNotify?.(resp?.error || 'Analisis video belum tersedia saat ini.');
+        return;
+      }
+
+      if (d.danceStyle) setDanceStyle(d.danceStyle);
+      if (d.beatTempo) {
+        const lowerTempo = d.beatTempo.toLowerCase();
+        if (lowerTempo.includes('fast')) setMusicVibe(MUSIC_VIBES[1]);
+        else if (lowerTempo.includes('slow')) setMusicVibe(MUSIC_VIBES[2]);
+        else setMusicVibe(MUSIC_VIBES[0]);
+      }
+      if (d.cameraMovement) {
+        const matchedCam = CAMERA_CHOREO_OPTIONS.find((opt) =>
+          opt.toLowerCase().includes(d.cameraMovement!.toLowerCase().split(' ')[0])
+        );
+        if (matchedCam) setCameraDynamic(matchedCam);
+      }
+
+      const segmentSummary = Array.isArray(d.segments)
+        ? d.segments
+            .map((seg: any, i: number) => `Bar ${i + 1} (${seg.beatCue || ''}): ${seg.choreographyMove || seg.move || ''}${seg.cameraChoreo ? ` [${seg.cameraChoreo}]` : ''}`)
+            .join(' | ')
+        : '';
+      const compiledSummary = [
+        d.customMotionNotes || '',
+        d.loopNote ? `Loop Anchor: ${d.loopNote}` : '',
+        segmentSummary,
+      ]
+        .filter(Boolean)
+        .join(' — ');
+      setVideoAnalysisSummary(compiledSummary);
+      onNotify?.('Analisis video referensi dance selesai! Beat, gaya koreo & loop anchor siap dipakai generate.');
+    } catch (err: any) {
+      onNotify?.(err?.message || 'Gagal menganalisis video referensi dance.');
+    } finally {
+      setIsAnalyzingVideo(false);
     }
   };
 
@@ -217,6 +334,10 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
         targetDuration,
         targetSceneCount,
         physicsConsistencyCheck,
+        referenceImages: includeProjectVisualLock && referenceImages.length > 0 ? referenceImages : undefined,
+        referenceRoles: includeProjectVisualLock && referenceRoles.length > 0 ? referenceRoles : undefined,
+        visualBible: includeProjectVisualLock ? visualBible : undefined,
+        videoAnalysisSummary: videoAnalysisSummary || undefined,
       });
 
       if (response?.success && response.data) {
@@ -259,7 +380,9 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
     out += `Gaya: ${result.danceStyle} | Tempo: ${result.bpmRange}\n`;
     out += `Mode Visual: Pure Visual Dance (Tanpa Floating Text & Tanpa Voice Over)\n`;
     out += `Sound: ${result.soundRecommendation}\n`;
-    out += `OOTD & Setting: ${result.outfitNotes}\n\n`;
+    out += `OOTD & Setting: ${result.outfitNotes}\n`;
+    if (result.loopAnchorNote) out += `Seamless Loop Lock: ${result.loopAnchorNote}\n`;
+    out += `\n`;
     let acc = 0;
     result.scenes.forEach((sc, i) => {
       const s = acc;
@@ -268,6 +391,7 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
       out += `[00:${String(s).padStart(2, '0')} - 00:${String(e).padStart(2, '0')}] SEGMEN ${i + 1} (${sc.beatCue || ''})\n`;
       out += `  • Koreo Tubuh: ${sc.choreographyMove || sc.visualAction}\n`;
       out += `  • Kamera: ${sc.cameraChoreo || sc.cameraAngle}\n`;
+      if (sc.transitionBridge) out += `  • Transisi Pose: ${sc.transitionBridge}\n`;
       out += `  • SFX/Beat Cue: ${sc.soundEffect}\n`;
       if (sc.notesMood) out += `  • Mood/Lighting: ${sc.notesMood}\n`;
       out += `\n`;
@@ -582,15 +706,118 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
               ))}
             </div>
 
-            <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={physicsConsistencyCheck}
-                onChange={(e) => setPhysicsConsistencyCheck(e.target.checked)}
-                className="accent-pink-500 rounded"
-              />
-              <span>Physics &amp; Biomechanical Joint Check (Anti-Morphing AI Video)</span>
-            </label>
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={physicsConsistencyCheck}
+                  onChange={(e) => setPhysicsConsistencyCheck(e.target.checked)}
+                  className="accent-pink-500 rounded"
+                />
+                <span>Physics &amp; Biomechanical Joint Check (Anti-Morphing AI Video)</span>
+              </label>
+
+              <label
+                className={`flex items-center gap-2 text-xs select-none ${
+                  referenceImages.length > 0 || visualBible
+                    ? 'text-cyan-200 cursor-pointer'
+                    : 'text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={includeProjectVisualLock}
+                  disabled={referenceImages.length === 0 && !visualBible}
+                  onChange={(e) => setIncludeProjectVisualLock(e.target.checked)}
+                  className="accent-cyan-500 rounded"
+                />
+                <Lock className="w-3.5 h-3.5 text-cyan-400" />
+                <span>
+                  Sertakan Foto Referensi &amp; Visual Bible Proyek ({referenceImages.length} foto)
+                </span>
+              </label>
+            </div>
+          </div>
+
+          {/* Upload & Analisis Video Referensi Dance (<= 12MB) */}
+          <div className="bg-[#0a0f1c] border border-fuchsia-800/40 rounded-xl p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <FileVideo className="w-4 h-4 text-fuchsia-400 shrink-0" />
+                <span className="text-xs font-bold text-fuchsia-200">
+                  Video Referensi Dance (Opsional, Maks 12MB MP4/WebM)
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  ref={danceVideoInputRef}
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => handleUploadDanceVideo(e.target.files)}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => danceVideoInputRef.current?.click()}
+                  className="flex items-center gap-1.5 text-[11px] font-bold bg-[#141c30] hover:bg-[#1d2842] text-fuchsia-200 border border-fuchsia-700/50 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{danceVideoDataUrl ? 'Ganti Video Referensi' : 'Upload Video Referensi'}</span>
+                </button>
+                {danceVideoDataUrl && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleAnalyzeDanceVideo}
+                      disabled={isAnalyzingVideo}
+                      className="flex items-center gap-1.5 text-[11px] font-bold bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer disabled:opacity-60"
+                    >
+                      {isAnalyzingVideo ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      )}
+                      <span>{isAnalyzingVideo ? 'Menganalisis Beat...' : 'Analisis Video Referensi'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDanceVideoDataUrl(null);
+                        setDanceVideoName('');
+                        setVideoAnalysisSummary('');
+                      }}
+                      className="text-slate-400 hover:text-rose-400 p-1"
+                      title="Hapus video referensi"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {danceVideoDataUrl && (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pt-1">
+                <video
+                  src={danceVideoDataUrl}
+                  controls
+                  muted
+                  className="w-full sm:w-44 h-24 rounded-lg object-cover bg-black border border-fuchsia-700/40 shrink-0"
+                />
+                <div className="flex-1 min-w-0 space-y-1 text-[11px]">
+                  <div className="font-semibold text-white truncate">{danceVideoName}</div>
+                  {videoAnalysisSummary ? (
+                    <p className="text-emerald-300 bg-emerald-950/40 border border-emerald-700/40 rounded-lg p-2 leading-relaxed line-clamp-3">
+                      {videoAnalysisSummary}
+                    </p>
+                  ) : (
+                    <p className="text-slate-400">
+                      Klik &quot;Analisis Video Referensi&quot; untuk mengekstrak gaya koreo, tempo BPM, dan pola transisi otomatis sebelum generate.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -660,6 +887,17 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Seamless Loop Frame Lock Banner */}
+            {result.loopAnchorNote && (
+              <div className="p-2.5 rounded-xl bg-indigo-950/50 border border-indigo-500/40 flex items-center gap-2 text-xs text-indigo-200">
+                <Link2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                <div>
+                  <span className="font-bold text-indigo-300 mr-1.5">Seamless Loop Lock:</span>
+                  <span>{result.loopAnchorNote}</span>
+                </div>
+              </div>
+            )}
 
             {/* Production Brief Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -825,7 +1063,31 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
                     />
                   </div>
 
-                  <div className="pt-1 border-t border-[#182135] flex items-center justify-end gap-2">
+                  {sc.transitionBridge && (
+                    <div>
+                      <label className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider mb-1 block">
+                        Transisi Pose (Start → End)
+                      </label>
+                      <input
+                        type="text"
+                        value={sc.transitionBridge}
+                        onChange={(e) => handleEditSceneField(idx, 'transitionBridge', e.target.value)}
+                        className="w-full bg-[#090d17] border border-indigo-900/50 focus:border-indigo-500 rounded-xl px-2.5 py-1.5 text-xs text-indigo-200 outline-none"
+                      />
+                    </div>
+                  )}
+
+                  <div className="pt-1 border-t border-[#182135] flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {sc.referencedImageIndexes?.map((refIdx) => (
+                        <span
+                          key={refIdx}
+                          className="text-[9px] font-mono font-bold bg-cyan-950/70 text-cyan-300 border border-cyan-800/50 px-1.5 py-0.5 rounded"
+                        >
+                          Ref #{refIdx}
+                        </span>
+                      ))}
+                    </div>
                     <button
                       type="button"
                       onClick={() =>
@@ -835,7 +1097,7 @@ export const TikTokDanceStudio: React.FC<TikTokDanceStudioProps> = ({
                           `Prompt Flow Segmen ${idx + 1}`
                         )
                       }
-                      className="flex items-center gap-1 text-[10px] font-bold text-cyan-300 hover:text-white bg-cyan-950/50 border border-cyan-800/50 px-2.5 py-1 rounded-lg shrink-0 cursor-pointer"
+                      className="flex items-center gap-1 text-[10px] font-bold text-cyan-300 hover:text-white bg-cyan-950/50 border border-cyan-800/50 px-2.5 py-1 rounded-lg shrink-0 cursor-pointer ml-auto"
                     >
                       {copiedId === `flow_${sc.id}` ? (
                         <CheckCircle2 className="w-3 h-3 text-emerald-400" />

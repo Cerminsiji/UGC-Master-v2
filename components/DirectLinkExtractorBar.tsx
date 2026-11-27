@@ -22,10 +22,10 @@ import {
   Image as ImageIcon,
   Plus,
 } from 'lucide-react';
-import { AutoDetectResult } from '@/types';
+import { AutoDetectResult, ReferenceRole } from '@/types';
 import { extractUrlFromInput } from '@/lib/link-extractor';
 import { postJsonWithRetry, filesToReferenceImages } from '@/utils/helpers';
-import { heuristicAutoDetect } from '@/lib/gemini-ugc';
+import { heuristicAutoDetect, REFERENCE_ROLE_OPTIONS } from '@/lib/gemini-ugc';
 
 interface DirectLinkExtractorBarProps {
   onApplyToProject: (data: AutoDetectResult) => void;
@@ -65,6 +65,7 @@ export function DirectLinkExtractorBar({
 }: DirectLinkExtractorBarProps) {
   const [inputValue, setInputValue] = useState('');
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [referenceRoles, setReferenceRoles] = useState<ReferenceRole[]>([]);
   const [isUploadingRefs, setIsUploadingRefs] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -79,7 +80,13 @@ export function DirectLinkExtractorBar({
     try {
       const urls = await filesToReferenceImages(files, 8);
       if (urls.length > 0) {
-        setReferenceImages((prev) => [...prev, ...urls].slice(0, 8));
+        setReferenceImages((prev) => {
+          const next = [...prev, ...urls].slice(0, 8);
+          setReferenceRoles((prevRoles) =>
+            Array.from({ length: next.length }, (_, idx) => prevRoles[idx] || (idx === 0 ? 'product' : 'detail'))
+          );
+          return next;
+        });
         setErrorMsg(null);
       }
     } finally {
@@ -90,6 +97,18 @@ export function DirectLinkExtractorBar({
 
   const handleRemoveRefImage = (idx: number) => {
     setReferenceImages((prev) => prev.filter((_, i) => i !== idx));
+    setReferenceRoles((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleRoleChange = (idx: number, nextRole: ReferenceRole) => {
+    setReferenceRoles((prev) => {
+      const updated = Array.from(
+        { length: Math.max(prev.length, referenceImages.length) },
+        (_, i) => prev[i] || (i === 0 ? 'product' : 'detail')
+      );
+      updated[idx] = nextRole;
+      return updated;
+    });
   };
 
   // Handle Clipboard Paste
@@ -132,11 +151,11 @@ export function DirectLinkExtractorBar({
         ? '🔍 Mengakses Tokopedia Affiliate & scraping metadata produk...'
         : isShopee
         ? '🔍 Mengakses Shopee & mengambil detail produk...'
-        : '🔍 Menganalisis link, teks & foto referensi produk...'
+        : '🔍 Menganalisis link, teks, ulasan & foto referensi produk...'
     );
 
     const timer1 = setTimeout(() => {
-      setExtractStep('⚡ Mengekstrak Nama Produk, Brand Resmi, USP & Harga...');
+      setExtractStep('⚡ Mengekstrak Nama Produk, Galeri Foto, Pain Point & Label OCR...');
     }, 600);
 
     const timer2 = setTimeout(() => {
@@ -160,17 +179,33 @@ export function DirectLinkExtractorBar({
           ? json.data
           : (heuristicAutoDetect(raw, detectedUrl, raw) as unknown as AutoDetectResult);
 
-      const mergedRefs =
-        referenceImages.length > 0
-          ? referenceImages
+      const apiRefs =
+        Array.isArray(baseResult.referenceImages) && baseResult.referenceImages.length > 0
+          ? baseResult.referenceImages
           : baseResult.referenceImage || baseResult.imageUrl
           ? [baseResult.referenceImage || baseResult.imageUrl!]
-          : undefined;
+          : [];
+
+      const mergedRefs = Array.from(new Set([...referenceImages, ...apiRefs])).slice(0, 8);
+      const mergedRoles: ReferenceRole[] = mergedRefs.map((_, idx) => {
+        if (idx < referenceImages.length && referenceRoles[idx]) {
+          return referenceRoles[idx];
+        }
+        const apiRoleIdx = idx - referenceImages.length;
+        if (apiRoleIdx >= 0 && Array.isArray(baseResult.referenceRoles) && baseResult.referenceRoles[apiRoleIdx]) {
+          return baseResult.referenceRoles[apiRoleIdx];
+        }
+        if (Array.isArray(baseResult.referenceRoles) && baseResult.referenceRoles[idx]) {
+          return baseResult.referenceRoles[idx];
+        }
+        return idx === 0 ? 'product' : 'detail';
+      });
 
       const result: AutoDetectResult = {
         ...baseResult,
-        referenceImages: mergedRefs,
-        referenceImage: mergedRefs?.[0] || baseResult.referenceImage || baseResult.imageUrl,
+        referenceImages: mergedRefs.length > 0 ? mergedRefs : undefined,
+        referenceRoles: mergedRefs.length > 0 ? mergedRoles : undefined,
+        referenceImage: mergedRefs[0] || baseResult.referenceImage || baseResult.imageUrl,
       };
 
       setExtractedResult(result);
@@ -191,6 +226,19 @@ export function DirectLinkExtractorBar({
     onApplyToProject(extractedResult);
     setIsApplied(true);
     setTimeout(() => setIsApplied(false), 2500);
+  };
+
+  const handleImportScrapedGallery = () => {
+    if (!extractedResult?.referenceImages || extractedResult.referenceImages.length === 0) return;
+    const scraped = extractedResult.referenceImages;
+    const combined = Array.from(new Set([...referenceImages, ...scraped])).slice(0, 8);
+    const nextRoles: ReferenceRole[] = combined.map((_, idx) => {
+      if (referenceRoles[idx]) return referenceRoles[idx];
+      if (extractedResult.referenceRoles?.[idx]) return extractedResult.referenceRoles[idx];
+      return idx === 0 ? 'product' : 'detail';
+    });
+    setReferenceImages(combined);
+    setReferenceRoles(nextRoles);
   };
 
   return (
@@ -307,38 +355,56 @@ export function DirectLinkExtractorBar({
         <div className="space-y-2.5 pt-1.5 border-t border-[#1a243a]">
           {/* Multi-Image Reference Strip */}
           {referenceImages.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap bg-[#080e1a] border border-cyan-900/50 rounded-xl p-2">
-              <span className="text-[10px] font-bold text-cyan-300 flex items-center gap-1 px-1">
+            <div className="flex items-center gap-2 flex-wrap bg-[#080e1a] border border-cyan-900/50 rounded-xl p-2.5">
+              <span className="text-[10px] font-bold text-cyan-300 flex items-center gap-1 px-1 w-full sm:w-auto">
                 <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
-                <span>{referenceImages.length} Foto Referensi (Storyboard & Google Flow):</span>
+                <span>{referenceImages.length} Foto Referensi &amp; Peran:</span>
               </span>
-              {referenceImages.map((src, i) => (
-                <div
-                  key={i}
-                  className="relative group w-11 h-11 rounded-lg overflow-hidden border border-cyan-700/60 bg-black shrink-0"
-                >
-                  <img src={src} alt={`Ref ${i + 1}`} className="w-full h-full object-cover" />
-                  <span className="absolute bottom-0 left-0 right-0 bg-black/80 text-cyan-200 text-[8px] font-mono font-bold text-center">
-                    Img {i + 1}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveRefImage(i)}
-                    className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/80 hover:bg-red-600 text-white flex items-center justify-center"
-                    title="Hapus foto ini"
+              {referenceImages.map((src, i) => {
+                const activeRole: ReferenceRole = referenceRoles[i] || (i === 0 ? 'product' : 'detail');
+                return (
+                  <div
+                    key={i}
+                    className="relative group w-[88px] rounded-xl border border-cyan-700/60 bg-[#0c1424] p-1 flex flex-col gap-1 shrink-0"
                   >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-              ))}
+                    <div className="relative w-full h-11 rounded-lg overflow-hidden bg-black">
+                      <img src={src} alt={`Ref ${i + 1}`} className="w-full h-full object-cover" />
+                      <span className="absolute bottom-0 left-0 bg-black/80 text-cyan-200 text-[8px] font-mono font-bold px-1 rounded-tr">
+                        #{i + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRefImage(i)}
+                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/80 hover:bg-red-600 text-white flex items-center justify-center"
+                        title="Hapus foto ini"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                    <select
+                      value={activeRole}
+                      onChange={(e) => handleRoleChange(i, e.target.value as ReferenceRole)}
+                      aria-label={`Peran gambar ${i + 1}`}
+                      className="w-full bg-[#070c16] border border-cyan-800/60 focus:border-cyan-400 rounded-md px-1 py-0.5 text-[9px] font-semibold text-cyan-200 outline-none cursor-pointer"
+                    >
+                      {REFERENCE_ROLE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.shortLabel}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
               {referenceImages.length < 8 && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-11 h-11 rounded-lg border border-dashed border-cyan-700/60 hover:border-cyan-400 flex flex-col items-center justify-center text-cyan-400 hover:bg-cyan-950/30 transition-colors"
+                  className="w-[72px] h-[68px] rounded-xl border border-dashed border-cyan-700/60 hover:border-cyan-400 flex flex-col items-center justify-center gap-0.5 text-cyan-400 hover:bg-cyan-950/30 transition-colors"
                   title="Tambah foto referensi lagi"
                 >
                   <Plus className="w-3.5 h-3.5" />
+                  <span className="text-[9px] font-semibold">Tambah</span>
                 </button>
               )}
             </div>
@@ -590,8 +656,58 @@ export function DirectLinkExtractorBar({
                 </div>
               </div>
 
-              {/* Status Referensi Image Google Flow */}
-              {(extractedResult.referenceImage || extractedResult.imageUrl) && (
+              {/* Label OCR & Pain Points Highlights */}
+              {(extractedResult.exactLabelText ||
+                (extractedResult.extractedPainPoints && extractedResult.extractedPainPoints.length > 0)) && (
+                <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-[#192338]">
+                  {extractedResult.exactLabelText && (
+                    <span className="text-[10px] font-mono font-bold bg-indigo-950/80 text-indigo-200 border border-indigo-600/50 px-2 py-0.5 rounded-lg">
+                      OCR Label Lock: {extractedResult.exactLabelText}
+                    </span>
+                  )}
+                  {extractedResult.extractedPainPoints?.slice(0, 4).map((pain, idx) => (
+                    <span
+                      key={idx}
+                      className="text-[10px] bg-amber-950/60 text-amber-200 border border-amber-700/50 px-2 py-0.5 rounded-lg"
+                    >
+                      Pain Point: {pain}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Scraped Gallery & Status Referensi Image Google Flow */}
+              {extractedResult.referenceImages && extractedResult.referenceImages.length > 0 ? (
+                <div className="p-2.5 rounded-xl bg-[#09111e] border border-cyan-800/50 space-y-2 text-[11px]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-cyan-400 font-bold">
+                        🌊 Galeri Referensi Terdeteksi ({extractedResult.referenceImages.length} Foto)
+                      </span>
+                      <span className="text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-700/60 px-2 py-0.5 rounded font-mono font-bold">
+                        Image-to-Video Ready
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleImportScrapedGallery}
+                      className="text-[10px] font-bold text-cyan-200 hover:text-white bg-cyan-950 hover:bg-cyan-900 border border-cyan-600/50 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                    >
+                      Muat ke Referensi ({extractedResult.referenceImages.length})
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
+                    {extractedResult.referenceImages.map((imgUrl, i) => (
+                      <div key={i} className="relative w-12 h-12 rounded-lg overflow-hidden border border-cyan-700/60 shrink-0 bg-black">
+                        <img src={imgUrl} alt={`Scraped ${i + 1}`} className="w-full h-full object-cover" />
+                        <span className="absolute bottom-0 inset-x-0 bg-black/80 text-cyan-200 text-[8px] font-mono text-center">
+                          #{i + 1}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (extractedResult.referenceImage || extractedResult.imageUrl) ? (
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#09111e] border border-cyan-800/50 text-[11px]">
                   <div className="flex items-center gap-2">
                     <span className="text-cyan-400 font-bold flex items-center gap-1 shrink-0">
@@ -605,7 +721,7 @@ export function DirectLinkExtractorBar({
                     Image-to-Video Ready
                   </span>
                 </div>
-              )}
+              ) : null}
 
               {/* Action Link to Full Studio Modal */}
               <div className="flex items-center justify-between pt-1">

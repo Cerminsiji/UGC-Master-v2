@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Type } from '@google/genai';
+import type { ReferenceRole, VisualContinuityBible } from '@/types';
 import {
   generateWithFallback,
   parseSafeJson,
   getVoiceToneDirective,
+  REFERENCE_ROLE_OPTIONS,
 } from '@/lib/gemini-ugc';
 
 const HOOK_FORMULA_BLUEPRINTS = [
@@ -83,7 +85,27 @@ async function handleGenerateHooksRequest(body: any) {
       persona = '',
       tone = '',
       targetPlatform = 'TikTok Shop',
+      referenceImages: rawReferenceImages = [],
+      referenceRoles: rawReferenceRoles = [],
+      visualBible: rawVisualBible = null,
+      painPoints = [],
     } = body || {};
+
+    const allReferenceImages: string[] = Array.isArray(rawReferenceImages)
+      ? rawReferenceImages.filter((x: unknown) => typeof x === 'string' && x.trim().length > 0)
+      : [];
+    const validRoleSet = new Set<ReferenceRole>(REFERENCE_ROLE_OPTIONS.map((r) => r.value));
+    const normalizedRoles: ReferenceRole[] = Array.from(
+      { length: Math.max(1, allReferenceImages.length) },
+      (_, idx) => {
+        const candidate = Array.isArray(rawReferenceRoles) ? rawReferenceRoles[idx] : undefined;
+        if (candidate && validRoleSet.has(candidate)) return candidate as ReferenceRole;
+        return idx === 0 ? 'product' : 'detail';
+      }
+    );
+    const visualBible: Partial<VisualContinuityBible> | null =
+      rawVisualBible && typeof rawVisualBible === 'object' ? rawVisualBible : null;
+    const painList: string[] = Array.isArray(painPoints) ? painPoints.filter(Boolean).slice(0, 5) : [];
 
     // Pick 10 varied formulas from 12 blueprints in fresh randomized order per request
     const selectedBlueprints = [...HOOK_FORMULA_BLUEPRINTS]
@@ -103,12 +125,14 @@ KONTEKS PRODUK:
 - Persona Talent: ${persona || 'Kreator UGC Natural Indonesia'}
 - Voice Tone / Gaya Bicara: ${tone || 'Santai, Mengalir & Natural'} (${toneDirective})
 - Platform Target: ${targetPlatform}
+${painList.length > 0 ? `- Pain Point / Keluhan Audiens Utama: ${painList.join(' | ')}` : ''}
+${visualBible ? `\nVISUAL CONTINUITY BIBLE (PATUHI KONSISTENSI VISUAL DI visualAction):\n- Warna/Kemasan: ${visualBible.packagingColors || '-'}\n- Label Persis: ${visualBible.exactLabelText || productName}\n- Talent: ${visualBible.talentAppearance || persona}\n- Pencahayaan/Lokasi: ${visualBible.environmentLighting || '-'}` : ''}
 
 ATURAN MUTLAK ANTI-KLISE & ANTI-MONOTON:
 1. DILARANG KERAS memakai kalimat klise "Stop scrolling!", "Jangan skip dulu!", "Tunggu dulu jangan di-scroll!", atau format berhitung "3 alasan kenapa..."!
 2. Setiap hook HARUS punya gaya kalimat pembuka, sudut visual, popupText, dan efek suara yang SANGAT BERBEDA satu sama lain (jangan pakai pola kata pembuka yang mirip-mirip!).
 3. Gunakan Bahasa Indonesia lisan yang natural, segar, emosional, selaras dengan persona "${persona || 'Kreator UGC'}" dan tone "${tone || 'Natural'}".
-4. MANDATORI HUKUM FISIKA & REALISME VISUAL: Setiap visualAction wajib mematuhi gravitasi nyata, inersia massa, genggaman 5 jari normal tanpa clipping/tembus, dan pencahayaan konsisten dengan bayangan jatuh realistis.
+4. MANDATORI HUKUM FISIKA & REALISME VISUAL: Setiap visualAction wajib mematuhi gravitasi nyata, inersia massa, genggaman 5 jari normal tanpa clipping/tembus, dan pencahayaan konsisten dengan bayangan jatuh realistis serta sesuai foto referensi & Visual Continuity Bible.
 
 Buatkan tepat 10 variasi mengikuti formula berikut:
 ${formulaListText}
@@ -117,8 +141,6 @@ Format output JSON array of objects dengan field: type, formulaGroup, hookDialog
 
     const config = {
       responseMimeType: 'application/json',
-      systemInstruction:
-        'Anda adalah pakar UGC Viral Retention Strategist. Buat 10 variasi formula hook 3 detik yang sangat kontras, non-monoton, sesuai voice tone kreator, bebas klise "Stop scrolling" dan "3 alasan", serta mematuhi hukum fisika dunia nyata pada visualAction.',
       responseSchema: {
         type: Type.ARRAY,
         items: {
@@ -130,7 +152,7 @@ Format output JSON array of objects dengan field: type, formulaGroup, hookDialog
             visualAction: {
               type: Type.STRING,
               description:
-                'Aksi visual konkret yang mematuhi hukum fisika nyata, inersia massa, kontak fisik solid tanpa clipping, 5 jari realistis, dan pencahayaan terarah konsisten.',
+                'Aksi visual konkret yang mematuhi Visual Continuity Bible, hukum fisika nyata, inersia massa, kontak fisik solid tanpa clipping, 5 jari realistis, dan pencahayaan terarah konsisten.',
             },
             popupText: { type: Type.STRING },
             sfx: { type: Type.STRING },
@@ -140,7 +162,14 @@ Format output JSON array of objects dengan field: type, formulaGroup, hookDialog
       },
     };
 
-    const rawText = await generateWithFallback(prompt, config);
+    const rawText = await generateWithFallback(
+      prompt,
+      config,
+      'Anda adalah pakar UGC Viral Retention Strategist. Buat 10 variasi formula hook 3 detik yang sangat kontras, non-monoton, sesuai voice tone kreator dan Visual Continuity Bible, bebas klise "Stop scrolling" dan "3 alasan", serta mematuhi hukum fisika dunia nyata pada visualAction.',
+      22000,
+      allReferenceImages,
+      normalizedRoles
+    );
     const parsedHooks = parseSafeJson<any[]>(rawText);
 
     if (parsedHooks && Array.isArray(parsedHooks) && parsedHooks.length > 0) {

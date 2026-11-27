@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Type } from '@google/genai';
+import type { ReferenceRole } from '@/types';
 import {
   generateWithFallback,
   parseSafeJson,
@@ -10,6 +11,7 @@ import {
   extractUrlFromInput,
   extractShareTextIntelligence,
   isLikelyShortcodeOrHash,
+  extractPainPointsFromText,
 } from '@/lib/link-extractor';
 import {
   UGC_CATEGORIES,
@@ -18,8 +20,9 @@ import {
 } from '@/data/categories';
 
 async function handleAutoDetectRequest(body: any) {
-  let { url = '', notes = '', input = '', referenceImages = [] } = body || {};
+  let { url = '', notes = '', input = '', referenceImages = [], referenceRoles = [] } = body || {};
   const attachedImages: string[] = Array.isArray(referenceImages) ? referenceImages.filter(Boolean) : [];
+  const attachedRoles: ReferenceRole[] = Array.isArray(referenceRoles) ? referenceRoles : [];
 
   const combinedSource = (input || `${url} ${notes}`).trim();
   const foundUrl = extractUrlFromInput(combinedSource);
@@ -74,6 +77,28 @@ ${shareIntel.shareBrand ? `- Brand / Koleksi: "${shareIntel.shareBrand}"` : ''}
 ${shareIntel.sharePrice ? `- Harga Produk: Rp ${shareIntel.sharePrice}` : ''}`;
   }
 
+  const scrapedGallery: string[] = Array.isArray(linkData?.images)
+    ? linkData.images.filter(Boolean)
+    : linkData?.ogImage
+    ? [linkData.ogImage]
+    : [];
+
+  const mergedGallery: string[] = [];
+  for (const img of [...attachedImages, ...scrapedGallery]) {
+    if (typeof img === 'string' && img.trim() && !mergedGallery.includes(img.trim())) {
+      mergedGallery.push(img.trim());
+    }
+    if (mergedGallery.length >= 6) break;
+  }
+
+  const mergedRoles: ReferenceRole[] = mergedGallery.map(
+    (_, idx) => attachedRoles[idx] || (idx === 0 ? 'product' : 'detail')
+  );
+
+  const localPainPoints = extractPainPointsFromText(
+    `${rawInputCombined}\n${linkData?.ogDescription || ''}\n${linkData?.metaDescription || ''}`
+  );
+
   const categoriesListText = UGC_CATEGORIES.map((c) => `- "${c.name}"`).join('\n');
   const cameraStylesListText = CAMERA_ANGLE_STYLES.map(
     (s, idx) => `${idx + 1}. "${s.name}" (${s.description})`
@@ -83,17 +108,20 @@ ${shareIntel.sharePrice ? `- Harga Produk: Rp ${shareIntel.sharePrice}` : ''}`;
   ).join('\n');
 
   const prompt = `Kamu adalah AI UGC Product & Link Analyzer profesional dengan tingkat akurasi tinggi untuk platform TikTok Shop, Tokopedia, Shopee Video, Instagram Reels, dan YouTube Shorts.
-Analisis input link produk dan/atau keterangan berikut, lalu lakukan ekstraksi data produk secara spesifik, akurat, dan mendalam:
+Analisis input link produk, ulasan/keluhan pembeli, serta foto kemasan produk (jika terlampir), lalu lakukan ekstraksi data produk secara spesifik, akurat, dan mendalam:
 
 Input Pengguna: "${rawInputCombined}"
 ${url ? `Terdeteksi URL: "${url}"` : ''}
-${notes ? `Terdeteksi Keterangan Tambahan: "${notes}"` : ''}
+${notes ? `Terdeteksi Keterangan Tambahan / Ulasan: "${notes}"` : ''}
 ${linkContext}
+${mergedGallery.length > 0 ? `Jumlah Foto Produk Terlampir/Terscraping: ${mergedGallery.length} foto.` : ''}
 
 ATURAN UTAMA:
-1. DILARANG KERAS menghasilkan nama generik seperti "Produk Unggulan Pilihan", "Produk Pilihan", atau "Produk Ini" jika input atau URL memuat indikasi nama barang (contoh: Sago, Coffee, Diet, Somethinc, Skintific, Serum, Ceramide, Keyboard, dsb).
-2. Jika ada nama brand resmi (misal: Sago, Somethinc, Skintific, Erigo, Aerostreet, Baseus, Wardah, Kahf), cantumkan brand di "brandName" dan nama produk lengkap di "productName".
-3. Bersihkan kata-kata sampah marketplace seperti "Jual", "Beli", "Termurah", "Original 100%", "Bebas Ongkir", "COD", "Ready Stock".
+1. DILARANG KERAS menghasilkan nama generik seperti "Produk Unggulan Pilihan", "Produk Pilihan", atau "Produk Ini" jika input, foto kemasan, atau URL memuat indikasi nama barang.
+2. VISION OCR KEMASAN: Jika ada foto produk terlampir, baca teks merek, varian, ukuran (ml/gr), atau klaim persis pada label kemasan lalu tulis di field "exactLabelText".
+3. EKSTRAKSI PAIN POINT / ULASAN PEMBELI: Jika input atau deskripsi memuat keluhan konsumen, keraguan pembeli, atau masalah kulit/rumah tangga, ekstrak 2-4 poin singkat ke array "extractedPainPoints" dan jadikan solusi nya di "keySellingPoints".
+4. Jika ada nama brand resmi, cantumkan brand di "brandName" dan nama produk lengkap di "productName".
+5. Bersihkan kata-kata sampah marketplace seperti "Jual", "Beli", "Termurah", "Original 100%", "Bebas Ongkir", "COD", "Ready Stock".
 
 Daftar ${UGC_CATEGORIES.length} Kategori UGC yang WAJIB dipilih salah satu yang paling cocok:
 ${categoriesListText}
@@ -131,22 +159,24 @@ Daftar ${VOICE_TONE_OPTIONS.length} Pilihan Voice Tone (Gaya Bicara Kreator) yan
 ${voiceTonesListText}
 
 Tugas Anda:
-1. productName: Nama produk yang bersih, spesifik, dan siap pakai (contoh: "Somethinc Niacinamide Barrier Serum", "Sago Slimming Green Coffee Diet", "Keychron K2 Wireless Keyboard").
-2. brandName: Brand atau nama merk resmi jika terdeteksi (contoh: "Somethinc", "Sago", "Skintific", "Erigo").
-3. category: Pilih 1 persis dari ${UGC_CATEGORIES.length} kategori di atas yang paling tepat untuk mempromosikan produk ini.
-4. productDescription: Deskripsi produk yang menarik, menjelaskan manfaat utama dan cara kerjanya secara ringkas.
-5. targetAudience: Target audiens spesifik (misal: "Pria dan wanita 20-35 tahun yang ingin badan ideal tanpa lapar").
-6. keySellingPoints: Poin keunggulan utama (USP) yang persuasif dan memicu checkout di keranjang belanja / klik keranjang di bawah.
-7. tone: Pilih 1 nama Voice Tone PERSIS dari daftar ${VOICE_TONE_OPTIONS.length} pilihan di atas yang paling cocok untuk produk & audiensnya.
-8. targetPlatform: Platform yang cocok ("TikTok Shop", "Tokopedia", "Shopee Video", "Instagram Reels", "YouTube Shorts").
-9. targetDuration: Rekomendasi durasi (integer: 15, 30, 45, atau 60 detik).
-10. detectedTags: Array 3-5 kata kunci relevan (misal: ["dietsehat", "kopidiet", "slimming", "racuntiktok"]).
-11. detectionSummary: Penjelasan ringkas ramah 1 kalimat tentang apa yang berhasil dideteksi dari link ini.
-12. persona: Pilih 1 persona talent yang paling ideal dari daftar 24 persona di atas.
-13. personaExplanation: 1 kalimat penjelasan singkat mengapa persona talent ini sangat cocok untuk membawakan produk tersebut.
-14. cameraAngleStyle: Pilih 1 nama Gaya Sinematik Kamera PERSIS dari daftar ${CAMERA_ANGLE_STYLES.length} gaya di atas.
-15. cameraStyleExplanation: 1 kalimat penjelasan singkat mengapa gaya sudut kamera ini memaksimalkan visualisasi dan conversion rate produk.
-16. preferredCameraAngles: Array 3-5 sudut kamera spesifik yang disarankan (contoh: ["Extreme Close-up / Macro (Tekstur & Detail)", "POV / Handheld (First-Person)", "Over the Shoulder (OTS)", "Front Camera / Selfie Mode (Curhat Langsung)"]).`;
+1. productName: Nama produk bersih & spesifik.
+2. brandName: Merk resmi jika terdeteksi.
+3. exactLabelText: Teks label persis pada kemasan (hasil Vision OCR foto jika ada, atau nama produk + ukuran).
+4. category: Pilih 1 persis dari ${UGC_CATEGORIES.length} kategori di atas.
+5. productDescription: Deskripsi produk menarik & ringkas.
+6. targetAudience: Target audiens spesifik.
+7. keySellingPoints: Poin keunggulan utama (USP) yang persuasif & aman regulasi.
+8. extractedPainPoints: Array 2-4 poin keluhan / masalah audiens yang diselesaikan produk ini.
+9. tone: Pilih 1 nama Voice Tone PERSIS dari daftar di atas.
+10. targetPlatform: Platform cocok ("TikTok Shop", "Tokopedia", "Shopee Video", "Instagram Reels", "YouTube Shorts").
+11. targetDuration: Rekomendasi durasi integer (15, 30, 45, atau 60).
+12. detectedTags: Array 3-5 kata kunci relevan.
+13. detectionSummary: Ringkasan 1 kalimat hasil ekstraksi.
+14. persona: Pilih 1 persona paling ideal dari 24 daftar di atas.
+15. personaExplanation: 1 kalimat alasan pemilihan persona.
+16. cameraAngleStyle: Pilih 1 nama Gaya Kamera PERSIS dari daftar di atas.
+17. cameraStyleExplanation: 1 kalimat alasan gaya sudut kamera.
+18. preferredCameraAngles: Array 3-5 sudut kamera spesifik.`;
 
   const config = {
     responseMimeType: 'application/json',
@@ -155,10 +185,15 @@ Tugas Anda:
       properties: {
         productName: { type: Type.STRING },
         brandName: { type: Type.STRING },
+        exactLabelText: { type: Type.STRING },
         category: { type: Type.STRING },
         productDescription: { type: Type.STRING },
         targetAudience: { type: Type.STRING },
         keySellingPoints: { type: Type.STRING },
+        extractedPainPoints: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+        },
         persona: { type: Type.STRING },
         personaExplanation: { type: Type.STRING },
         tone: { type: Type.STRING },
@@ -197,9 +232,10 @@ Tugas Anda:
   const rawText = await generateWithFallback(
     prompt,
     config,
-    'You are a professional UGC Ecommerce strategist in Southeast Asia. Analyze the input link/text and any attached product reference images to return pure JSON with accurate product extraction.',
-    20000,
-    attachedImages
+    'You are a professional UGC Ecommerce strategist & Vision OCR packaging reader in Southeast Asia. Analyze input links, buyer pain points/reviews, and attached packaging photos to return pure JSON.',
+    22000,
+    mergedGallery,
+    mergedRoles
   );
 
   const parsed = parseSafeJson<any>(rawText);
@@ -219,8 +255,24 @@ Tugas Anda:
     if (linkData?.finalUrl || url) {
       parsed.productUrl = linkData?.finalUrl || url;
     }
-    if (linkData?.ogImage) {
-      parsed.imageUrl = linkData.ogImage;
+    if (linkData?.ogImage || mergedGallery[0]) {
+      parsed.imageUrl = linkData?.ogImage || mergedGallery[0];
+    }
+    if (mergedGallery.length > 0) {
+      parsed.referenceImages = mergedGallery;
+      parsed.referenceRoles = mergedRoles;
+      if (!parsed.referenceImage) parsed.referenceImage = mergedGallery[0];
+    }
+    if (!parsed.exactLabelText) {
+      parsed.exactLabelText = parsed.brandName
+        ? `${parsed.brandName} ${parsed.productName}`.trim()
+        : parsed.productName;
+    }
+    if (
+      (!Array.isArray(parsed.extractedPainPoints) || parsed.extractedPainPoints.length === 0) &&
+      localPainPoints.length > 0
+    ) {
+      parsed.extractedPainPoints = localPainPoints;
     }
     if (linkData?.price || shareIntel.sharePrice) {
       const rawP = linkData?.price || shareIntel.sharePrice;
@@ -245,8 +297,18 @@ Tugas Anda:
   if (linkData?.brand && !(heuristicData as any).brandName) {
     (heuristicData as any).brandName = linkData.brand;
   }
-  if (linkData?.ogImage) {
-    (heuristicData as any).imageUrl = linkData.ogImage;
+  if (linkData?.ogImage || mergedGallery[0]) {
+    (heuristicData as any).imageUrl = linkData?.ogImage || mergedGallery[0];
+  }
+  if (mergedGallery.length > 0) {
+    (heuristicData as any).referenceImages = mergedGallery;
+    (heuristicData as any).referenceRoles = mergedRoles;
+    if (!(heuristicData as any).referenceImage) {
+      (heuristicData as any).referenceImage = mergedGallery[0];
+    }
+  }
+  if (localPainPoints.length > 0 && !(heuristicData as any).extractedPainPoints?.length) {
+    (heuristicData as any).extractedPainPoints = localPainPoints;
   }
   if (linkData?.price) {
     (heuristicData as any).price = String(linkData.price).startsWith('Rp')

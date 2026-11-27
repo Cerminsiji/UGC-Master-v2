@@ -1,4 +1,5 @@
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import type { ReferenceRole, VisualContinuityBible } from '../types';
 import {
   detectKnownBrand,
   isGenericMarketplaceFallback,
@@ -6,7 +7,146 @@ import {
   cleanMarketplaceProductName,
   extractShareTextIntelligence,
   inferProductBrandOrCollection,
+  extractPainPointsFromText,
 } from './link-extractor';
+
+export const REFERENCE_ROLE_OPTIONS: Array<{
+  value: ReferenceRole;
+  label: string;
+  shortLabel: string;
+  promptHint: string;
+}> = [
+  {
+    value: 'product',
+    label: 'Produk Utama',
+    shortLabel: 'Produk',
+    promptHint: 'Main Product Packaging & Silhouette (exact colors, proportions, cap & branding)',
+  },
+  {
+    value: 'detail',
+    label: 'Detail / Label / Tekstur',
+    shortLabel: 'Detail',
+    promptHint: 'Close-Up Label Typography, Texture, Applicator & Ingredients Seal',
+  },
+  {
+    value: 'talent',
+    label: 'Karakter / Talent',
+    shortLabel: 'Talent',
+    promptHint: 'Consistent Creator Face, Hair/Hijab & Wardrobe Identity',
+  },
+  {
+    value: 'environment',
+    label: 'Lokasi / Setting',
+    shortLabel: 'Lokasi',
+    promptHint: 'Consistent Room Backdrop, Desk Props & Directional Lighting Temperature',
+  },
+  {
+    value: 'style',
+    label: 'Gaya / Komposisi',
+    shortLabel: 'Gaya',
+    promptHint: 'Visual Framing, Color Grade & Camera Aesthetic Reference',
+  },
+];
+
+export function getReferenceRoleLabel(role?: ReferenceRole, short = false): string {
+  const found = REFERENCE_ROLE_OPTIONS.find((r) => r.value === role) || REFERENCE_ROLE_OPTIONS[0];
+  return short ? found.shortLabel : found.label;
+}
+
+export function selectSceneReferenceIndexes(
+  cameraAngle: string,
+  roles: ReferenceRole[] = [],
+  totalRefs: number,
+  sceneIndex: number,
+  totalScenes: number
+): number[] {
+  if (totalRefs <= 0) return [1];
+  if (totalRefs === 1) return [1];
+
+  const normalizedRoles: ReferenceRole[] = Array.from({ length: totalRefs }, (_, idx) => {
+    const r = roles[idx];
+    return r || (idx === 0 ? 'product' : 'detail');
+  });
+
+  const angleLower = (cameraAngle || '').toLowerCase();
+  const isMacroOrDetail =
+    angleLower.includes('macro') ||
+    angleLower.includes('detail') ||
+    angleLower.includes('swatch') ||
+    angleLower.includes('unboxing') ||
+    angleLower.includes('pour') ||
+    angleLower.includes('flat lay') ||
+    angleLower.includes('top-down');
+  const isHandsOnlyShot =
+    angleLower.includes('hands-only') ||
+    angleLower.includes('tangan') ||
+    angleLower.includes('faceless');
+  const isTalentShot =
+    !isHandsOnlyShot &&
+    (angleLower.includes('selfie') ||
+      angleLower.includes('face') ||
+      angleLower.includes('medium') ||
+      angleLower.includes('shoulder') ||
+      angleLower.includes('ots') ||
+      angleLower.includes('mirror') ||
+      angleLower.includes('eye') ||
+      angleLower.includes('walk') ||
+      sceneIndex === 0 ||
+      sceneIndex === totalScenes - 1);
+
+  const picked = new Set<number>();
+
+  // Always include primary product reference(s) (or fallback Image 1)
+  const productIdx = normalizedRoles.findIndex((r) => r === 'product');
+  picked.add(productIdx >= 0 ? productIdx + 1 : 1);
+
+  if (isMacroOrDetail) {
+    normalizedRoles.forEach((r, idx) => {
+      if (r === 'detail' || r === 'product') picked.add(idx + 1);
+    });
+  }
+
+  if (isTalentShot) {
+    normalizedRoles.forEach((r, idx) => {
+      if (r === 'talent') picked.add(idx + 1);
+    });
+  }
+
+  // Always anchor room lighting if environment image is provided
+  normalizedRoles.forEach((r, idx) => {
+    if (r === 'environment' && (sceneIndex === 0 || isTalentShot || totalRefs <= 3)) {
+      picked.add(idx + 1);
+    }
+  });
+
+  if (picked.size === 1 && totalRefs > 1) {
+    // Include either style or next complementary product/detail image
+    const extraIdx = normalizedRoles.findIndex(
+      (r, idx) => idx + 1 !== Array.from(picked)[0] && (r === 'detail' || r === 'style' || r === 'product')
+    );
+    if (extraIdx >= 0) picked.add(extraIdx + 1);
+    else picked.add(((sceneIndex % totalRefs) + 1));
+  }
+
+  return Array.from(picked).sort((a, b) => a - b);
+}
+
+export function formatReferenceTagsForScene(
+  indexes: number[],
+  roles: ReferenceRole[] = [],
+  productName: string
+): string {
+  const cleanIndexes = (indexes && indexes.length > 0 ? indexes : [1]).filter(
+    (n, i, arr) => Number.isFinite(n) && n >= 1 && arr.indexOf(n) === i
+  );
+  return cleanIndexes
+    .map((n) => {
+      const role = roles[n - 1] || (n === 1 ? 'product' : 'detail');
+      const roleLabel = getReferenceRoleLabel(role, true);
+      return `[Image ${n} (${roleLabel}): ${productName}]`;
+    })
+    .join(' ');
+}
 
 // List of active supported Gemini models with automatic cascading fallback
 export const CANDIDATE_MODELS = [
@@ -64,40 +204,137 @@ function buildModelConfig(model: string, baseConfig: any, systemInstruction?: st
   return cfg;
 }
 
-// High-speed multi-model generator with clean config, strict timeouts, backoff retry, and multimodal referenceImages support
+function isPrivateOrLocalHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase().trim();
+  if (!h || h === 'localhost' || h === '0.0.0.0' || h.endsWith('.local') || h.endsWith('.internal')) {
+    return true;
+  }
+  if (h === '::1' || h === '[::1]' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) {
+    return true;
+  }
+  const ipv4Match = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const a = Number(ipv4Match[1]);
+    const b = Number(ipv4Match[2]);
+    if (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function fetchRemoteImageAsInlineData(
+  imageUrl: string
+): Promise<{ mimeType: string; data: string } | null> {
+  try {
+    const parsed = new URL(imageUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (isPrivateOrLocalHostname(parsed.hostname)) return null;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(parsed.toString(), {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; UGCStudioBot/1.0)',
+          Accept: 'image/webp,image/png,image/jpeg,image/*;q=0.8',
+        },
+        redirect: 'follow',
+      });
+      if (!res.ok) return null;
+
+      const finalHost = new URL(res.url).hostname;
+      if (isPrivateOrLocalHostname(finalHost)) return null;
+
+      const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (!contentType.startsWith('image/') || contentType.includes('svg')) return null;
+
+      const contentLen = Number(res.headers.get('content-length') || '0');
+      if (contentLen > 4 * 1024 * 1024) return null;
+
+      const arrayBuf = await res.arrayBuffer();
+      if (!arrayBuf || arrayBuf.byteLength === 0 || arrayBuf.byteLength > 4 * 1024 * 1024) {
+        return null;
+      }
+      return {
+        mimeType: contentType,
+        data: Buffer.from(arrayBuf).toString('base64'),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null;
+  }
+}
+
+// High-speed multi-model generator with clean config, strict timeouts, backoff retry, and role-tagged multimodal referenceImages support
 export async function generateWithFallback(
   prompt: string,
   config: any,
   systemInstruction?: string,
   timeoutMs = 22000,
-  referenceImages?: string[]
+  referenceImages?: string[],
+  referenceRoles?: ReferenceRole[]
 ): Promise<string | null> {
   const ai = getGeminiClient();
   if (!ai) return null;
 
   const effectiveTimeoutMs = Math.max(timeoutMs, 22000);
 
-  // Extract valid base64 inlineData parts if referenceImages are provided
-  const inlineImageParts: Array<{ inlineData: { mimeType: string; data: string } }> = [];
+  // Convert both data:image/... and safe remote http(s):// image URLs into interleaved role-labeled parts
+  const multimodalParts: Array<
+    { text: string } | { inlineData: { mimeType: string; data: string } }
+  > = [];
+
   if (Array.isArray(referenceImages) && referenceImages.length > 0) {
-    for (const imgStr of referenceImages.slice(0, 6)) {
-      if (typeof imgStr === 'string' && imgStr.startsWith('data:image/')) {
-        const match = imgStr.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
-        if (match && match[1] && match[2]) {
-          inlineImageParts.push({
-            inlineData: {
-              mimeType: match[1],
-              data: match[2],
-            },
-          });
+    const sliced = referenceImages.slice(0, 6);
+    const resolvedImages = await Promise.all(
+      sliced.map(async (imgStr) => {
+        if (typeof imgStr !== 'string') return null;
+        const trimmed = imgStr.trim();
+        if (trimmed.startsWith('data:image/')) {
+          const match = trimmed.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+          if (match && match[1] && match[2]) {
+            return { mimeType: match[1], data: match[2] };
+          }
+          return null;
         }
-      }
-    }
+        if (/^https?:\/\//i.test(trimmed)) {
+          return await fetchRemoteImageAsInlineData(trimmed);
+        }
+        return null;
+      })
+    );
+
+    resolvedImages.forEach((imgData, idx) => {
+      if (!imgData) return;
+      const role = referenceRoles?.[idx] || (idx === 0 ? 'product' : 'detail');
+      const roleMeta = REFERENCE_ROLE_OPTIONS.find((r) => r.value === role) || REFERENCE_ROLE_OPTIONS[0];
+      multimodalParts.push({
+        text: `[Reference Image #${idx + 1} | Role: ${roleMeta.label} (${roleMeta.promptHint})]`,
+      });
+      multimodalParts.push({
+        inlineData: {
+          mimeType: imgData.mimeType,
+          data: imgData.data,
+        },
+      });
+    });
   }
 
   const contentsPayload: any =
-    inlineImageParts.length > 0
-      ? { parts: [...inlineImageParts, { text: prompt }] }
+    multimodalParts.length > 0
+      ? { parts: [...multimodalParts, { text: prompt }] }
       : prompt;
 
   for (const model of CANDIDATE_MODELS) {
@@ -160,6 +397,73 @@ export async function generateWithFallback(
     }
   }
 
+  return null;
+}
+
+export function extractVideoDataPart(
+  dataUrl: string,
+  maxBytes = 15 * 1024 * 1024
+): { mimeType: string; data: string } | null {
+  if (!dataUrl || typeof dataUrl !== 'string') return null;
+  const trimmed = dataUrl.trim();
+  const match = trimmed.match(/^data:(video\/(?:mp4|webm|quicktime|x-m4v));base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match || !match[1] || !match[2]) return null;
+  const mimeType = match[1].toLowerCase() === 'video/x-m4v' ? 'video/mp4' : match[1].toLowerCase();
+  const base64Data = match[2];
+  const approxBytes = Math.floor((base64Data.length * 3) / 4);
+  if (approxBytes <= 0 || approxBytes > maxBytes) {
+    return null;
+  }
+  return { mimeType, data: base64Data };
+}
+
+export async function generateWithMultimodalParts(
+  parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }>,
+  config: any,
+  systemInstruction?: string,
+  timeoutMs = 35000
+): Promise<string | null> {
+  const ai = getGeminiClient();
+  if (!ai) return null;
+
+  const effectiveTimeoutMs = Math.max(timeoutMs, 25000);
+  for (const model of CANDIDATE_MODELS) {
+    const requestConfig = buildModelConfig(model, config, systemInstruction);
+    const maxAttempts = 2;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await withTimeout(
+          ai.models.generateContent({
+            model,
+            contents: { parts },
+            config: requestConfig,
+          }),
+          effectiveTimeoutMs,
+          `Timeout on model ${model}`
+        );
+        const text = response.text?.trim();
+        if (text) return text;
+        break;
+      } catch (err: any) {
+        const msg = String(err?.message || err || '');
+        const isNotFound = err?.status === 404 || msg.includes('NOT_FOUND') || msg.includes('404');
+        if (isNotFound) break;
+        const isTransient =
+          err?.status === 429 ||
+          err?.status === 503 ||
+          msg.includes('429') ||
+          msg.includes('503') ||
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('Timeout on model');
+        if (isTransient && attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 900 * attempt));
+          continue;
+        }
+        break;
+      }
+    }
+  }
   return null;
 }
 
@@ -1124,7 +1428,8 @@ export function generateRichFallback(
   platform: string = 'TikTok Shop',
   referenceImages: string[] = [],
   physicsConsistencyCheck: boolean = true,
-  tone: string = 'Santai, Mengalir & Natural (Teman Curhat)'
+  tone: string = 'Santai, Mengalir & Natural (Teman Curhat)',
+  referenceRoles: ReferenceRole[] = []
 ) {
   const normCat = (category || '').toLowerCase();
   const safeName = productName || 'Produk Pilihan';
@@ -1544,18 +1849,26 @@ export function generateRichFallback(
         ? dynamicScene1.popupText
         : `DETAIL ${safeName.toUpperCase().slice(0, 20)} ✨`;
 
-    const refIndexForScene = (i % refCount) + 1;
-    const refTag =
-      refCount > 1
-        ? `[Image ${refIndexForScene} of ${refCount} Reference: ${safeName}]`
-        : `[Image 1 Reference: ${safeName}]`;
+    const referencedImageIndexes = selectSceneReferenceIndexes(
+      angle,
+      referenceRoles,
+      refCount,
+      i,
+      selectedBase.length
+    );
+    const refTag = formatReferenceTagsForScene(referencedImageIndexes, referenceRoles, safeName);
 
     let flowPrompt = sc.googleFlowPrompt || '';
+    const defaultNegPrompt =
+      'no altered brand text, no distorted logo or label typography, no extra fingers, no clipping hands, no floating object, no sudden lighting shift, no morphing';
+
     if (!flowPrompt) {
-      flowPrompt = `${refTag} Scene ${i + 1} (${angle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - ${physicsTokens}.`;
+      flowPrompt = `${refTag} Scene ${i + 1} (${angle}): ${sc.visualAction} - On-Screen Pop-up Text Overlay: "${popupText}" - ${physicsTokens}, ${defaultNegPrompt}.`;
     } else {
-      if (refCount > 1) {
+      if (/\[Image 1 Reference:[^\]]*\]/i.test(flowPrompt)) {
         flowPrompt = flowPrompt.replace(/\[Image 1 Reference:[^\]]*\]/i, refTag);
+      } else if (!/\[Image\s+\d+/i.test(flowPrompt)) {
+        flowPrompt = `${refTag} ${flowPrompt}`;
       }
       if (!/on-screen pop-up text overlay|text overlay|popup text/i.test(flowPrompt)) {
         flowPrompt = `${flowPrompt} - On-Screen Pop-up Text Overlay: "${popupText}"`;
@@ -1568,10 +1881,20 @@ export function generateRichFallback(
       }
     }
 
+    const refIndexDesc = referencedImageIndexes
+      .map((n) => `#${n} (${getReferenceRoleLabel(referenceRoles[n - 1] || (n === 1 ? 'product' : 'detail'), true)})`)
+      .join(', ');
     const refNote =
       refCount > 1
-        ? `Pastikan Produk sesuai Gambar referensi #${refIndexForScene} (dari ${refCount} foto referensi terlampir)`
+        ? `Kunci visual mengikuti Gambar Referensi ${refIndexDesc}`
         : 'Pastikan Produk sesuai Gambar referensi yang sudah di attached';
+
+    const transitionBridge =
+      i === 0
+        ? `Mulai dengan pengenalan ${safeName} → akhiri dengan transisi mengarah ke adegan detail berikutnya.`
+        : i === selectedBase.length - 1
+        ? `Lanjutkan pose akhir adegan ${i} (produk di tangan) → tutup dengan gestur menunjuk ${cartName} sambil mempertahankan posisi produk stabil.`
+        : `Sambung mulus dari pose akhir adegan ${i} dengan pencahayaan searah sama → akhiri pada posisi produk siap untuk adegan ${i + 2}.`;
 
     return {
       ...sc,
@@ -1580,16 +1903,32 @@ export function generateRichFallback(
       popupText,
       googleFlowPrompt: flowPrompt,
       imageReferenceNote: refNote,
+      referencedImageIndexes,
+      transitionBridge,
+      negativePrompt: defaultNegPrompt,
     };
   });
 
   const scenes = ensureVariedStoryboardScenes(mappedScenes, safeName, safeUSP, platform);
+
+  const visualBible: VisualContinuityBible = {
+    packagingColors: `Warna & aksen kemasan asli ${safeName} sesuai foto referensi terlampir`,
+    exactLabelText: safeName,
+    productShapeMaterial: `Bentuk fisik, tutup, dan material kemasan asli ${safeName} tanpa distorsi`,
+    talentAppearance: isHandsOnly
+      ? 'Faceless (hanya tangan rapi dengan 5 jari anatomis proporsional)'
+      : 'Talent konsisten wajah, gaya rambut/hijab, dan outfit dari awal hingga akhir',
+    environmentLighting: 'Single unified 45° directional window/softbox light, warm natural ambient occlusion, matching cast shadows',
+    negativePromptGlobal:
+      'no altered brand text, no gibberish label, no packaging distortion, no extra fingers, no clipping, no floating zero-G motion, no lighting jump',
+  };
 
   return {
     title: `Storyboard ${category || 'UGC'} - ${safeName}`,
     targetAudienceSummary: targetAudience || 'Pengguna aktif TikTok & Reels yang mencari produk viral berkualitas',
     hookTip: `Strategi R&D Hook [${chosenArchetype.name}]: ${chosenArchetype.psychology}`,
     caption: formatShortCaption(safeName, category, safeUSP, platform, tone),
+    visualBible,
     scenes,
   };
 }
@@ -2066,13 +2405,36 @@ export function heuristicAutoDetect(rawInputCombined: string, inputUrl = '', inp
   // Ensure tags are clean and unique
   const finalTags = Array.from(new Set(detectedTags.filter(Boolean))).slice(0, 5);
 
+  const galleryImages: string[] = [];
+  if (Array.isArray(linkData?.images)) {
+    for (const img of linkData.images) {
+      if (typeof img === 'string' && img.trim() && !galleryImages.includes(img.trim())) {
+        galleryImages.push(img.trim());
+      }
+    }
+  }
+  const primaryRefImage = linkData?.ogImage || linkData?.imageUrl || linkData?.image || galleryImages[0] || undefined;
+  if (primaryRefImage && !galleryImages.includes(primaryRefImage)) {
+    galleryImages.unshift(primaryRefImage);
+  }
+  const slicedGallery = galleryImages.slice(0, 5);
+  const galleryRoles: ReferenceRole[] = slicedGallery.map((_, idx) => (idx === 0 ? 'product' : 'detail'));
+  const painPoints =
+    Array.isArray(linkData?.extractedPainPoints) && linkData.extractedPainPoints.length > 0
+      ? linkData.extractedPainPoints
+      : extractPainPointsFromText(`${rawInputCombined}\n${linkData?.ogDescription || ''}\n${linkData?.metaDescription || ''}`);
+
   return {
     productName: detectedName,
     brandName: detectedBrand,
     price: detectedPrice || undefined,
     productUrl: detectedUrl,
-    imageUrl: linkData?.ogImage || linkData?.imageUrl || linkData?.image || undefined,
-    referenceImage: linkData?.ogImage || linkData?.imageUrl || linkData?.image || undefined,
+    imageUrl: primaryRefImage,
+    referenceImage: primaryRefImage,
+    referenceImages: slicedGallery.length > 0 ? slicedGallery : undefined,
+    referenceRoles: galleryRoles.length > 0 ? galleryRoles : undefined,
+    exactLabelText: detectedBrand ? `${detectedBrand} ${detectedName}`.trim() : detectedName,
+    extractedPainPoints: painPoints.length > 0 ? painPoints : undefined,
     category: detectedCat,
     productDescription: detectedDesc,
     targetAudience: detectedAudience,
