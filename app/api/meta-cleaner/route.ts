@@ -452,6 +452,7 @@ interface OrganicJobProfile {
   noiseY: number;
   noiseC: number;
   postNoiseY: number;
+  postNoiseC: number;
   hueAmp1: number;
   hueAmp2: number;
   contrast: number;
@@ -496,12 +497,13 @@ function generateOrganicJobProfile(
   const hasWarmth = humanizationPreset === 'warmth' || humanizationPreset === 'full_human';
 
   const noiseY = hasGrain
-    ? randFloat(2.15, 2.55, 2)
+    ? randFloat(2.40, 2.85, 2)
     : isAgg
-      ? randFloat(1.75, 2.05, 2)
-      : randFloat(1.45, 1.75, 2);
-  const noiseC = hasGrain ? randFloat(0.60, 0.85, 2) : randFloat(0.45, 0.65, 2);
-  const postNoiseY = hasGrain ? randFloat(1.45, 1.75, 2) : randFloat(1.25, 1.50, 2);
+      ? randFloat(2.05, 2.40, 2)
+      : randFloat(1.85, 2.15, 2);
+  const noiseC = hasGrain ? randFloat(0.65, 0.90, 2) : randFloat(0.50, 0.70, 2);
+  const postNoiseY = hasGrain ? randFloat(1.75, 2.10, 2) : randFloat(1.55, 1.85, 2);
+  const postNoiseC = hasGrain ? randFloat(0.30, 0.45, 2) : randFloat(0.20, 0.35, 2);
 
   return {
     trimStart: randFloat(0.04, 0.09, 3),
@@ -522,6 +524,7 @@ function generateOrganicJobProfile(
     noiseY,
     noiseC,
     postNoiseY,
+    postNoiseC,
     hueAmp1: Number((rotSign * randFloat(0.38, 0.62, 3)).toFixed(3)),
     hueAmp2: Number((-rotSign * randFloat(0.28, 0.48, 3)).toFixed(3)),
     contrast: randFloat(1.012, 1.024, 3),
@@ -532,13 +535,13 @@ function generateOrganicJobProfile(
     wbB: hasWarmth ? randFloat(0.990, 0.999, 3) : randFloat(1.004, 1.010, 3),
     psyRd: `${randFloat(0.95, 1.15, 2)},${randFloat(0.08, 0.14, 2)}`,
     aqMode: crypto.randomInt(2, 4),
-    aqStrength: String(randFloat(1.00, 1.18, 2)),
-    deblock: `${crypto.randomInt(0, 2) === 0 ? -2 : -1},${crypto.randomInt(0, 2) === 0 ? -2 : -1}`,
+    aqStrength: String(randFloat(1.05, 1.20, 2)),
+    deblock: `-2,${crypto.randomInt(0, 2) === 0 ? -2 : -1}`,
     keyint: crypto.randomInt(52, 89),
     minKeyint: crypto.randomInt(14, 25),
     bframes: crypto.randomInt(2, 4),
     refs: crypto.randomInt(2, 4),
-    crf: String(crypto.randomInt(21, 23)),
+    crf: String(crypto.randomInt(20, 22)),
     pitchRatio: pitchChoice,
     seedL: crypto.randomInt(100000, 999999),
     seedR: crypto.randomInt(100000, 999999),
@@ -580,7 +583,8 @@ function buildSafeModeVideoFilter(
   srcFps = 0,
   pulldownDetected = false,
   effectiveFps = 0,
-  jobProfile?: OrganicJobProfile
+  jobProfile?: OrganicJobProfile,
+  extraColorTail = ''
 ): string {
   const p = jobProfile || generateOrganicJobProfile();
   const [targetW, targetH] = computeTargetDimensions(width, height, upscale1080p);
@@ -608,7 +612,8 @@ function buildSafeModeVideoFilter(
     `colorchannelmixer=rr=${p.wbR}:rg=-0.005:rb=-0.002:gr=-0.003:gg=${p.wbG}:gb=-0.002:br=-0.002:bg=-0.003:bb=${p.wbB}`,
     `eq=contrast=${p.contrast}:brightness='0.0014*sin(t*0.79)+0.0009*cos(t*1.81)':saturation=${p.saturation}:gamma=${p.gamma}:eval=frame`,
     `cas=strength=${p.casStrength}`,
-    `noise=c0s=${p.postNoiseY}:c1s=0:c2s=0:allf=t`,
+    ...(extraColorTail ? [extraColorTail] : []),
+    `noise=c0s=${p.postNoiseY}:c1s=${p.postNoiseC}:c2s=${p.postNoiseC}:allf=t`,
     'setsar=1',
   ].join(',');
 }
@@ -621,7 +626,8 @@ function buildUnifiedVideoFilter(
   srcFps = 0,
   pulldownDetected = false,
   effectiveFps = 0,
-  jobProfile?: OrganicJobProfile
+  jobProfile?: OrganicJobProfile,
+  extraColorTail = ''
 ): string {
   const p = jobProfile || generateOrganicJobProfile();
   const trimPrefix =
@@ -654,7 +660,8 @@ function buildUnifiedVideoFilter(
     `colorchannelmixer=rr=${p.wbR}:rg=-0.006:rb=-0.002:gr=-0.003:gg=${p.wbG}:gb=-0.002:br=-0.003:bg=-0.004:bb=${p.wbB}`,
     `eq=contrast=${p.contrast}:brightness='0.0020*sin(t*0.85)+0.0012*cos(t*2.01)':saturation=${p.saturation}:gamma=${p.gamma}:eval=frame`,
     `cas=strength=${p.casStrength}`,
-    `noise=c0s=${p.postNoiseY}:c1s=0:c2s=0:allf=t`,
+    ...(extraColorTail ? [extraColorTail] : []),
+    `noise=c0s=${p.postNoiseY}:c1s=${p.postNoiseC}:c2s=${p.postNoiseC}:allf=t`,
     'setsar=1',
   ].join(',');
 }
@@ -1548,13 +1555,13 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
 
     const bAdaptMode = '1';
     const x264ParamString =
-      `ref=${jobProfile.refs}:bframes=${jobProfile.bframes}:b-adapt=${bAdaptMode}:b-pyramid=normal:weightp=1:psy-rd=${jobProfile.psyRd}:aq-mode=${jobProfile.aqMode}:aq-strength=${jobProfile.aqStrength}:deblock=${jobProfile.deblock}:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=${jobProfile.keyint}:min-keyint=${jobProfile.minKeyint}`;
+      `ref=${jobProfile.refs}:bframes=${jobProfile.bframes}:b-adapt=${bAdaptMode}:b-pyramid=normal:weightp=1:psy-rd=${jobProfile.psyRd}:aq-mode=${jobProfile.aqMode}:aq-strength=${jobProfile.aqStrength}:deblock=${jobProfile.deblock}:no-dct-decimate=1:no-fast-pskip=1:deadzone-inter=10:deadzone-intra=8:pbratio=1.20:nal-hrd=none:force-cfr=1:open-gop=0:scenecut=40:keyint=${jobProfile.keyint}:min-keyint=${jobProfile.minKeyint}`;
 
     const movflagsStr = '+faststart';
     const shouldUpscale = upscale1080p && cameraProfileField !== 'neutral';
     const targetMaxBps = shouldUpscale
-      ? Math.max(2_800_000, Math.min(4_500_000, Math.round((srcBitrate || 3_800_000) * 0.90)))
-      : Math.max(2_000_000, Math.min(3_800_000, Math.round((srcBitrate || 3_400_000) * 0.85)));
+      ? Math.max(5_200_000, Math.min(6_800_000, Math.round((srcBitrate || 5_200_000) * 1.05)))
+      : Math.max(3_800_000, Math.min(5_200_000, Math.round((srcBitrate || 4_000_000) * 1.0)));
     const maxrateK = `${Math.max(2000, Math.floor(targetMaxBps / 1000))}k`;
     const bufsizeK = `${Math.max(4000, Math.floor((targetMaxBps * 2) / 1000))}k`;
 
@@ -1565,19 +1572,18 @@ async function processCleanerJob(params: CleanerJobParams): Promise<CleanerJobRe
           `[DEEP SCAN AI BITSTREAM] Analisis byte-level aktif (Preset: ${humanizationPreset.toUpperCase()}, Scramble: ${synthidScrambleMode.toUpperCase()}).`
         );
       }
-      const presetFilterAppend =
-        humanizationPreset === 'warmth' || humanizationPreset === 'full_human'
-          ? ',colorbalance=rs=0.02:gs=0.008:bs=-0.02'
-          : '';
-      const scramblePhaseFilterAppend =
-        synthidScrambleMode === 'aggressive'
-          ? `,hue=h='${jobProfile.hueAmp1}*sin(t*1.17)+${jobProfile.hueAmp2}*cos(t*2.73)'`
-          : '';
+      const extraColorParts: string[] = [];
+      if (humanizationPreset === 'warmth' || humanizationPreset === 'full_human') {
+        extraColorParts.push('colorbalance=rs=0.02:gs=0.008:bs=-0.02');
+      }
+      if (synthidScrambleMode === 'aggressive') {
+        extraColorParts.push(`hue=h='${jobProfile.hueAmp1}*sin(t*1.17)+${jobProfile.hueAmp2}*cos(t*2.73)'`);
+      }
+      const extraColorTail = extraColorParts.join(',');
 
-      const baseVideoFilter = isAllInOne
-        ? buildUnifiedVideoFilter(vidW, vidH, probedDurationSec, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile)
-        : buildSafeModeVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile);
-      const dynamicSynthIdVideoFilter = baseVideoFilter + presetFilterAppend + scramblePhaseFilterAppend;
+      const dynamicSynthIdVideoFilter = isAllInOne
+        ? buildUnifiedVideoFilter(vidW, vidH, probedDurationSec, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile, extraColorTail)
+        : buildSafeModeVideoFilter(vidW, vidH, shouldUpscale, srcFps, pulldownDetected, effectiveFps, jobProfile, extraColorTail);
       const encodePreset = probedDurationSec <= 12 ? 'fast' : 'faster';
       const expectedOutDur =
         probedDurationSec > 0

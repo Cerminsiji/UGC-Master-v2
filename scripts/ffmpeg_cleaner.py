@@ -116,19 +116,20 @@ def generate_organic_job_profile(
     has_warmth = humanization_preset in ("warmth", "full_human")
 
     noise_y = (
-        round(rng.uniform(2.15, 2.55), 2)
+        round(rng.uniform(2.40, 2.85), 2)
         if has_grain
-        else (round(rng.uniform(1.75, 2.05), 2) if is_agg else round(rng.uniform(1.45, 1.75), 2))
+        else (round(rng.uniform(2.05, 2.40), 2) if is_agg else round(rng.uniform(1.85, 2.15), 2))
     )
-    noise_c = round(rng.uniform(0.60, 0.85), 2) if has_grain else round(rng.uniform(0.45, 0.65), 2)
-    post_noise_y = round(rng.uniform(1.45, 1.75), 2) if has_grain else round(rng.uniform(1.25, 1.50), 2)
+    noise_c = round(rng.uniform(0.65, 0.90), 2) if has_grain else round(rng.uniform(0.50, 0.70), 2)
+    post_noise_y = round(rng.uniform(1.75, 2.10), 2) if has_grain else round(rng.uniform(1.55, 1.85), 2)
+    post_noise_c = round(rng.uniform(0.30, 0.45), 2) if has_grain else round(rng.uniform(0.20, 0.35), 2)
 
     keyint = rng.randint(52, 88)
     min_keyint = rng.randint(14, 24)
     bframes = rng.choice((2, 3))
     refs = rng.choice((2, 3))
     aq_mode = rng.choice((2, 3))
-    crf_val = str(rng.choice((21, 22)))
+    crf_val = str(rng.choice((20, 21)))
 
     return {
         "trim_start": round(rng.uniform(0.04, 0.09), 3),
@@ -149,6 +150,7 @@ def generate_organic_job_profile(
         "noise_y": noise_y,
         "noise_c": noise_c,
         "post_noise_y": post_noise_y,
+        "post_noise_c": post_noise_c,
         "hue_amp1": round(rot_sign * rng.uniform(0.38, 0.62), 3),
         "hue_amp2": round(-rot_sign * rng.uniform(0.28, 0.48), 3),
         "contrast": round(rng.uniform(1.012, 1.024), 3),
@@ -159,8 +161,8 @@ def generate_organic_job_profile(
         "wb_b": round(rng.uniform(0.990, 0.999) if has_warmth else rng.uniform(1.004, 1.010), 3),
         "psy_rd": f"{round(rng.uniform(0.95, 1.15), 2)},{round(rng.uniform(0.08, 0.14), 2)}",
         "aq_mode": aq_mode,
-        "aq_strength": str(round(rng.uniform(1.00, 1.18), 2)),
-        "deblock": f"{rng.choice((-2, -1))},{rng.choice((-2, -1))}",
+        "aq_strength": str(round(rng.uniform(1.05, 1.20), 2)),
+        "deblock": f"-2,{rng.choice((-2, -1))}",
         "keyint": keyint,
         "min_keyint": min_keyint,
         "bframes": bframes,
@@ -196,6 +198,7 @@ def build_safe_mode_video_filter(
     pulldown_detected: bool = False,
     effective_fps: float = 0.0,
     job_profile: dict | None = None,
+    extra_tail: str = "",
 ) -> str:
     """
     Safe Mode Temporal Re-Encoding Filtergraph V 2.3:
@@ -230,7 +233,8 @@ def build_safe_mode_video_filter(
         f"colorchannelmixer=rr={p['wb_r']}:rg=-0.005:rb=-0.002:gr=-0.003:gg={p['wb_g']}:gb=-0.002:br=-0.002:bg=-0.003:bb={p['wb_b']},"
         f"eq=contrast={p['contrast']}:brightness='0.0014*sin(t*0.79)+0.0009*cos(t*1.81)':saturation={p['saturation']}:gamma={p['gamma']}:eval=frame,"
         f"cas=strength={p['cas_strength']},"
-        f"noise=c0s={p['post_noise_y']}:c1s=0:c2s=0:allf=t,"
+        f"{extra_tail}"
+        f"noise=c0s={p['post_noise_y']}:c1s={p['post_noise_c']}:c2s={p['post_noise_c']}:allf=t,"
         "setsar=1"
     )
 
@@ -244,6 +248,7 @@ def build_unified_video_filter(
     pulldown_detected: bool = False,
     effective_fps: float = 0.0,
     job_profile: dict | None = None,
+    extra_tail: str = "",
 ) -> str:
     """
     Unified All-in-One Pipeline V 2.3 (Zero-Pulldown Organic Mobile Capture):
@@ -287,7 +292,8 @@ def build_unified_video_filter(
         f"colorchannelmixer=rr={p['wb_r']}:rg=-0.006:rb=-0.002:gr=-0.003:gg={p['wb_g']}:gb=-0.002:br=-0.003:bg=-0.004:bb={p['wb_b']},"
         f"eq=contrast={p['contrast']}:brightness='0.0020*sin(t*0.85)+0.0012*cos(t*2.01)':saturation={p['saturation']}:gamma={p['gamma']}:eval=frame,"
         f"cas=strength={p['cas_strength']},"
-        f"noise=c0s={p['post_noise_y']}:c1s=0:c2s=0:allf=t,"
+        f"{extra_tail}"
+        f"noise=c0s={p['post_noise_y']}:c1s={p['post_noise_c']}:c2s={p['post_noise_c']}:allf=t,"
         "setsar=1"
     )
 
@@ -1338,9 +1344,9 @@ def process_video(
     target_w, target_h = _compute_target_dimensions(vid_w, vid_h, use_upscale)
 
     if use_upscale:
-        target_max_bps = max(2_800_000, min(4_500_000, int((src_bitrate or 3_800_000) * 0.90)))
+        target_max_bps = max(5_200_000, min(6_800_000, int((src_bitrate or 5_200_000) * 1.05)))
     else:
-        target_max_bps = max(2_000_000, min(3_800_000, int((src_bitrate or 3_400_000) * 0.85)))
+        target_max_bps = max(3_800_000, min(5_200_000, int((src_bitrate or 4_000_000) * 1.0)))
     maxrate_k = f"{max(2000, target_max_bps // 1000)}k"
     bufsize_k = f"{max(4000, (target_max_bps * 2) // 1000)}k"
 
@@ -1355,23 +1361,21 @@ def process_video(
         expected_out_dur = max(0.0, duration_sec)
         expected_frames = metrics["total_frames"]
 
+    extra_color_tail = ""
+    if humanization_preset in ("warmth", "full_human"):
+        extra_color_tail += "colorbalance=rs=0.02:gs=0.008:bs=-0.02,"
+    if synthid_scramble == "aggressive":
+        extra_color_tail += f"hue=h='{job_profile['hue_amp1']}*sin(t*1.17)+{job_profile['hue_amp2']}*cos(t*2.63)',"
+
     video_filter_str = ""
     if mode == "all_in_one":
         video_filter_str = build_unified_video_filter(
-            vid_w, vid_h, duration_sec, use_upscale, src_fps, pulldown_detected, effective_fps, job_profile
+            vid_w, vid_h, duration_sec, use_upscale, src_fps, pulldown_detected, effective_fps, job_profile, extra_color_tail
         )
     elif mode == "safe_mode":
         video_filter_str = build_safe_mode_video_filter(
-            vid_w, vid_h, use_upscale, src_fps, pulldown_detected, effective_fps, job_profile
+            vid_w, vid_h, use_upscale, src_fps, pulldown_detected, effective_fps, job_profile, extra_color_tail
         )
-
-    # Calibrated color warmth & hue subcarrier drift apply to visual re-encode modes
-    if video_filter_str:
-        if humanization_preset in ("warmth", "full_human"):
-            video_filter_str += ",colorbalance=rs=0.02:gs=0.008:bs=-0.02"
-
-        if synthid_scramble == "aggressive":
-            video_filter_str += f",hue=h='{job_profile['hue_amp1']}*sin(t*1.17)+{job_profile['hue_amp2']}*cos(t*2.63)'"
 
     res_label = f"{vid_w}x{vid_h} -> {target_w}x{target_h}" if (target_w and (target_w != vid_w or target_h != vid_h)) else (f"{vid_w}x{vid_h}" if vid_w else "Auto")
     fps_mode_label = (
@@ -1468,7 +1472,8 @@ def process_video(
         x264_params = (
             f"ref={job_profile['refs']}:bframes={job_profile['bframes']}:b-adapt={b_adapt_mode}:b-pyramid=normal:weightp=1:"
             f"psy-rd={job_profile['psy_rd']}:aq-mode={job_profile['aq_mode']}:aq-strength={job_profile['aq_strength']}:"
-            f"deblock={job_profile['deblock']}:nal-hrd=none:force-cfr=1:"
+            f"deblock={job_profile['deblock']}:no-dct-decimate=1:no-fast-pskip=1:deadzone-inter=10:deadzone-intra=8:pbratio=1.20:"
+            f"nal-hrd=none:force-cfr=1:"
             f"open-gop=0:scenecut=40:keyint={job_profile['keyint']}:min-keyint={job_profile['min_keyint']}"
         )
 
